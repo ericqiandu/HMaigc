@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -73,5 +74,19 @@ func TestProductionStoryboardTaskInputUsesSucceededReferenceAssets(t *testing.T)
 	if taskType != "canvas_image" || len(input.ReferenceImages) != 2 ||
 		input.ReferenceImages[0].ID != "reference-hero" || input.ReferenceImages[1].ID != "reference-watch" {
 		t.Fatalf("storyboard task input = %#v", input)
+	}
+	rawManifest, err := json.Marshal(input.Metadata[referenceManifestMetadataKey])
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := agentruntime.DecodeReferenceManifest(rawManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Entries) != 2 || manifest.Entries[0].AssetKey != "hero" || manifest.Entries[1].AssetKey != "watch" {
+		t.Fatalf("reference manifest = %#v", manifest)
+	}
+	if manifest.Entries[0].ArtifactID == "" || manifest.Entries[0].RevisionID == "" || manifest.Entries[0].ResourceID != "reference-hero" {
+		t.Fatalf("hero manifest identity = %#v", manifest.Entries[0])
 	}
 }

@@ -219,11 +219,14 @@ func (s *Service) productionRenderTaskInput(
 		input.Config.Count = strconv.Itoa(arguments.ImageConfig.Count)
 		input.Config.TransparentBackground = strconv.FormatBool(arguments.ImageConfig.TransparentBackground)
 		if artifact.Kind == model.AgentProductionArtifactStoryboardImage {
-			references, err := s.productionShotReferenceResources(scope, arguments, artifact)
+			references, manifestEntries, err := s.productionShotReferenceResources(scope, arguments, artifact)
 			if err != nil {
 				return canvasGenerationInput{}, "", err
 			}
 			input.ReferenceImages = references
+			if err := attachReferenceManifest(&input, manifestEntries); err != nil {
+				return canvasGenerationInput{}, "", err
+			}
 		}
 		return input, "canvas_image", nil
 	}
@@ -254,10 +257,25 @@ func (s *Service) productionRenderTaskInput(
 		if resource.Status != model.ResourceStatusReady || resource.Kind != "image" {
 			return canvasGenerationInput{}, "", errProductionPrerequisiteAssetMissing
 		}
+		storyboardArtifact, err := s.productionStoryboardArtifactForResource(scope, arguments, artifact, resource.ID)
+		if err != nil {
+			return canvasGenerationInput{}, "", err
+		}
+		assetKey := storyboardArtifact.ID
+		resourceURL := "/api/resources/" + resource.ID + "/file"
 		input.ReferenceImages = []providerMedia{{
-			ID: resource.ID, Name: resource.ID, Type: "image", URL: "/api/resources/" + resource.ID + "/file",
+			ID: resource.ID, Name: assetKey, Type: "image", URL: resourceURL,
 			StorageKey: "resource:" + resource.ID, MimeType: resource.MimeType,
 		}}
+		if err := attachReferenceManifest(&input, []agentruntime.ReferenceManifestEntry{{
+			AssetKey: assetKey, SourceNodeID: storyboardArtifact.CanvasNodeID, TargetNodeID: artifact.CanvasNodeID,
+			MediaType: agentruntime.ReferenceMediaImage, SemanticRole: "storyboard", Handle: "first_frame",
+			ArtifactID: storyboardArtifact.ID, RevisionID: storyboardArtifact.ID,
+			ResourceID: resource.ID, ResourceURL: resourceURL,
+			SourceRevision: strconv.Itoa(storyboardArtifact.Attempt), Ordinal: 1,
+		}}); err != nil {
+			return canvasGenerationInput{}, "", err
+		}
 	default:
 		return canvasGenerationInput{}, "", errAgentRuntimeProductionRenderInput
 	}
@@ -268,14 +286,14 @@ func (s *Service) productionShotReferenceResources(
 	scope agentruntime.Scope,
 	arguments agentruntime.ProductionRenderArguments,
 	storyboardArtifact model.AgentProductionArtifact,
-) ([]providerMedia, error) {
+) ([]providerMedia, []agentruntime.ReferenceManifestEntry, error) {
 	plan, err := s.repo.AgentProductionPlanVersionForScope(scope, arguments.PlanKey, arguments.PlanVersion)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var shots []agentruntime.ShotPlanDraft
 	if err := json.Unmarshal([]byte(plan.ShotsJSON), &shots); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var referenceKeys []string
 	for _, shot := range shots {
@@ -285,11 +303,19 @@ func (s *Service) productionShotReferenceResources(
 		}
 	}
 	if len(referenceKeys) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	artifacts, err := s.repo.AgentProductionArtifactsForVersion(scope, arguments.PlanKey, arguments.PlanVersion)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	var referenceDrafts []agentruntime.ReferenceAssetDraft
+	if err := json.Unmarshal([]byte(plan.ReferencesJSON), &referenceDrafts); err != nil {
+		return nil, nil, err
+	}
+	referenceRoles := make(map[string]string, len(referenceDrafts))
+	for _, reference := range referenceDrafts {
+		referenceRoles[reference.ReferenceKey] = reference.Role
 	}
 	referenceArtifacts := make(map[string]model.AgentProductionArtifact, len(referenceKeys))
 	for _, artifact := range artifacts {
@@ -298,24 +324,72 @@ func (s *Service) productionShotReferenceResources(
 		}
 	}
 	media := make([]providerMedia, 0, len(referenceKeys))
-	for _, referenceKey := range referenceKeys {
+	manifestEntries := make([]agentruntime.ReferenceManifestEntry, 0, len(referenceKeys))
+	for index, referenceKey := range referenceKeys {
 		artifact, exists := referenceArtifacts[referenceKey]
 		if !exists || (artifact.Status != model.AgentProductionArtifactSucceeded && artifact.Status != model.AgentProductionArtifactCommitted) || artifact.ResourceID == "" {
-			return nil, errProductionPrerequisiteAssetMissing
+			return nil, nil, errProductionPrerequisiteAssetMissing
 		}
 		resource, err := s.productionResourceForScope(scope, artifact.ResourceID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if resource.Status != model.ResourceStatusReady || resource.Kind != "image" {
-			return nil, errProductionPrerequisiteAssetMissing
+			return nil, nil, errProductionPrerequisiteAssetMissing
 		}
+		resourceURL := "/api/resources/" + resource.ID + "/file"
 		media = append(media, providerMedia{
-			ID: resource.ID, Name: referenceKey, Type: "image", URL: "/api/resources/" + resource.ID + "/file",
+			ID: resource.ID, Name: referenceKey, Type: "image", URL: resourceURL,
 			StorageKey: "resource:" + resource.ID, MimeType: resource.MimeType,
 		})
+		semanticRole := strings.TrimSpace(referenceRoles[referenceKey])
+		if semanticRole == "" {
+			semanticRole = "reference"
+		}
+		manifestEntries = append(manifestEntries, agentruntime.ReferenceManifestEntry{
+			AssetKey: referenceKey, SourceNodeID: artifact.CanvasNodeID, TargetNodeID: storyboardArtifact.CanvasNodeID,
+			MediaType: agentruntime.ReferenceMediaImage, SemanticRole: semanticRole,
+			ArtifactID: artifact.ID, RevisionID: artifact.ID,
+			ResourceID: resource.ID, ResourceURL: resourceURL,
+			SourceRevision: strconv.Itoa(artifact.Attempt), Ordinal: index + 1,
+		})
 	}
-	return media, nil
+	return media, manifestEntries, nil
+}
+
+func attachReferenceManifest(input *canvasGenerationInput, entries []agentruntime.ReferenceManifestEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	manifest, err := agentruntime.NewReferenceManifest(entries)
+	if err != nil {
+		return err
+	}
+	if input.Metadata == nil {
+		input.Metadata = make(map[string]interface{}, 1)
+	}
+	input.Metadata[referenceManifestMetadataKey] = manifest
+	return nil
+}
+
+func (s *Service) productionStoryboardArtifactForResource(
+	scope agentruntime.Scope,
+	arguments agentruntime.ProductionRenderArguments,
+	videoArtifact model.AgentProductionArtifact,
+	resourceID string,
+) (model.AgentProductionArtifact, error) {
+	artifacts, err := s.repo.AgentProductionArtifactsForVersion(scope, arguments.PlanKey, arguments.PlanVersion)
+	if err != nil {
+		return model.AgentProductionArtifact{}, err
+	}
+	for _, artifact := range artifacts {
+		if artifact.ShotKey == videoArtifact.ShotKey && artifact.Kind == model.AgentProductionArtifactStoryboardImage &&
+			(artifact.Status == model.AgentProductionArtifactSucceeded || artifact.Status == model.AgentProductionArtifactCommitted) &&
+			artifact.ResourceID == resourceID {
+			return artifact, nil
+		}
+	}
+	return model.AgentProductionArtifact{}, errProductionPrerequisiteAssetMissing
 }
 
 func (s *Service) productionStoryboardResource(scope agentruntime.Scope, arguments agentruntime.ProductionRenderArguments, videoArtifact model.AgentProductionArtifact) (*model.Resource, error) {
