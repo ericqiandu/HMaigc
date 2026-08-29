@@ -23,7 +23,7 @@ import { CanvasVideoSuperResolutionPopover } from "./canvas-video-super-resoluti
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
-import { reconcileCanvasResourceMentions, selectVideoReferenceCandidates, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { mergeCanvasResourceReferenceCandidates, reconcileCanvasResourceMentions, selectVideoReferenceCandidates, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import "./canvas-audio-composer.css";
 import "./canvas-video-composer.css";
 import "./canvas-media-composer.css";
@@ -43,6 +43,7 @@ type CanvasNodePromptPanelProps = {
     mentionReferences?: CanvasResourceReference[];
     availableReferences: CanvasResourceReference[];
     onReferenceConnect: (sourceNodeId: string, targetNodeId: string) => boolean;
+    canReferenceConnect: (sourceNodeId: string, targetNodeId: string) => boolean;
     onImageSettingsOpenChange?: (open: boolean) => void;
     workspaceMode?: CanvasWorkspaceMode;
 };
@@ -60,6 +61,7 @@ export function CanvasNodePromptPanel({
     mentionReferences = [],
     availableReferences,
     onReferenceConnect,
+    canReferenceConnect,
     onImageSettingsOpenChange,
     workspaceMode = "professional",
 }: CanvasNodePromptPanelProps) {
@@ -155,6 +157,14 @@ export function CanvasNodePromptPanel({
     }, [node.id]);
 
     const skillReferences = useMemo(() => mentionReferences.filter((item) => item.kind === "skill"), [mentionReferences]);
+    const mentionCandidates = useMemo(
+        () => mergeCanvasResourceReferenceCandidates(availableReferences, mentionReferences).filter((reference) => reference.kind === "skill" || reference.active || (reference.nodeId !== node.id && canReferenceConnect(reference.nodeId, node.id))),
+        [availableReferences, canReferenceConnect, mentionReferences, node.id],
+    );
+    const selectMentionReference = useCallback(
+        (reference: CanvasResourceReference) => reference.kind === "skill" || reference.active || onReferenceConnect(reference.nodeId, node.id),
+        [node.id, onReferenceConnect],
+    );
 
     const updatePrompt = (value: string) => {
         setPrompt(value);
@@ -369,7 +379,8 @@ export function CanvasNodePromptPanel({
                 <CanvasResourceMentionTextarea
                     editorHandleRef={promptEditorRef}
                     value={prompt}
-                    references={mentionReferences}
+                    references={mentionCandidates}
+                    onReferenceSelect={selectMentionReference}
                     highlightAudioPauseTokens={isAudioMode}
                     onChange={updatePrompt}
                     containerClassName="min-h-0 flex-1"
@@ -405,7 +416,8 @@ export function CanvasNodePromptPanel({
                         <CanvasResourceMentionTextarea
                             editorHandleRef={expandedPromptEditorRef}
                             value={prompt}
-                            references={mentionReferences}
+                            references={mentionCandidates}
+                            onReferenceSelect={selectMentionReference}
                             highlightAudioPauseTokens={isAudioMode}
                             onChange={updatePrompt}
                             containerClassName="min-h-0 flex-1"

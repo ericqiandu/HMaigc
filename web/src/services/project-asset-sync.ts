@@ -1,6 +1,6 @@
 import { canvasNodeToAsset, declaredCanvasNodeAssetCategory, findCanvasNodeAsset, type CanvasAssetSource } from "@/lib/canvas/canvas-node-asset";
 import { linkProjectAsset, updateProjectAssetCategory } from "@/services/api/projects";
-import { saveRemoteUserDataNow } from "@/services/user-data-sync";
+import { saveRemoteAssetNow } from "@/services/user-data-sync";
 import { useAssetStore, type AssetCategory, type AssetStatus } from "@/stores/use-asset-store";
 import type { CanvasNodeData } from "@/types/canvas";
 
@@ -51,8 +51,8 @@ async function persistCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions): Pr
     if (!options.domainProjectId) return { assetId: asset.id, created, linkedToProject: false };
     const linkedProjectIds = Array.isArray(asset.metadata?.projectIds) ? asset.metadata.projectIds.filter((id): id is string => typeof id === "string") : [];
 
-    // 项目关联依赖后端 assets 记录，先强制完成素材同步，不能依赖延迟自动同步的时序。
-    await saveRemoteUserDataNow();
+    // 项目关联依赖后端 assets 记录，只提交当前素材，避免上传链路扫描全部画布和素材。
+    asset = await saveRemoteAssetNow(asset.id);
     const { asset: linkedAsset } = await linkProjectAsset(options.domainProjectId, {
         assetId: asset.id,
         category: declaredCategory || asset.category || "other",
@@ -66,6 +66,6 @@ async function persistCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions): Pr
         primaryVersionId: linked.primaryVersionId,
         metadata: { ...asset.metadata, projectIds: [...new Set([...linkedProjectIds, options.domainProjectId])] },
     });
-    await saveRemoteUserDataNow();
+    await saveRemoteAssetNow(asset.id);
     return { assetId: asset.id, created, linkedToProject: true };
 }

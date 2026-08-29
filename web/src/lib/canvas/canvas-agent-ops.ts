@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid";
 
 import { getNodeSpec } from "@/constant/canvas";
+import { validateDirectedCanvasConnection } from "@/lib/canvas/canvas-project-domain";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type ViewportTransform } from "@/types/canvas";
 
 export type CanvasAgentOp =
@@ -162,10 +163,11 @@ export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasA
         if (op.type === "connect_nodes") {
             if (!op.fromNodeId || !op.toNodeId) return;
             const exists = connections.some((conn) => conn.fromNodeId === op.fromNodeId && conn.toNodeId === op.toNodeId && conn.fromHandleId === op.fromHandleId && conn.toHandleId === op.toHandleId);
-            const from = nodes.find((node) => node.id === op.fromNodeId);
-            const to = nodes.find((node) => node.id === op.toNodeId);
-            const hasNodes = Boolean(from && to && from.type !== CanvasNodeType.Frame && to.type !== CanvasNodeType.Frame);
-            if (!exists && hasNodes) connections = [...connections, { id: op.id || nanoid(), fromNodeId: op.fromNodeId, toNodeId: op.toNodeId, fromHandleId: op.fromHandleId, toHandleId: op.toHandleId }];
+            if (!exists) {
+                const validation = validateDirectedCanvasConnection(op.fromNodeId, op.toNodeId, nodes);
+                if (!validation.ok) throw new Error(validation.message);
+                connections = [...connections, { id: op.id || nanoid(), ...validation.connection, fromHandleId: op.fromHandleId, toHandleId: op.toHandleId }];
+            }
         }
         if (op.type === "set_viewport" && op.viewport) viewport = op.viewport;
         if (op.type === "select_nodes") selectedNodeIds = (op.ids || []).filter((id) => nodes.some((node) => node.id === id));

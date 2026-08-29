@@ -11,7 +11,7 @@ import type { CanvasConnection, CanvasNodeData, ConnectionHandle, Position, Sele
 
 type DisplayConnection = { connection: CanvasConnection; from: CanvasNodeData; to: CanvasNodeData };
 type SelectedConnectionAction = { connectionId: string; position: Position };
-type DragPreview = { x: number; y: number; nodeIds: Set<string> } | null;
+type DragPreview = { nodeIds: Set<string> } | null;
 type NodeBounds = { left: number; top: number; width: number; height: number; count: number } | null;
 
 type CanvasProjectWorldLayersProps = {

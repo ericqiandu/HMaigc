@@ -105,6 +105,9 @@ func applyCanvasMutationPatch(
 	if err != nil {
 		return "", "", err
 	}
+	if err := validateConnectionTypes(nodes, connections); err != nil {
+		return "", "", err
+	}
 	if err := validateConnectionEndpoints(nodes, connections); err != nil {
 		return "", "", err
 	}
@@ -134,6 +137,33 @@ func applyCanvasMutationPatch(
 		return "", "", BadAuthRequest("画布数据不能超过 5MB")
 	}
 	return string(encoded), title, nil
+}
+
+func validateConnectionTypes(nodes []json.RawMessage, connections []json.RawMessage) error {
+	nodeTypes := make(map[string]string, len(nodes))
+	for _, raw := range nodes {
+		var node struct {
+			ID   string `json:"id"`
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(raw, &node); err != nil {
+			return BadAuthRequest("节点数据格式无效")
+		}
+		nodeTypes[node.ID] = node.Type
+	}
+	for _, raw := range connections {
+		var connection struct {
+			FromNodeID string `json:"fromNodeId"`
+			ToNodeID   string `json:"toNodeId"`
+		}
+		if err := json.Unmarshal(raw, &connection); err != nil {
+			return BadAuthRequest("连线数据格式无效")
+		}
+		if nodeTypes[connection.FromNodeID] == "video" && (nodeTypes[connection.ToNodeID] == "image" || nodeTypes[connection.ToNodeID] == "audio") {
+			return BadAuthRequest("视频节点的输出不能连接图片或音频节点")
+		}
+	}
+	return nil
 }
 
 func applyEntityPatch(source json.RawMessage, upserts []json.RawMessage, deletes []string) ([]json.RawMessage, error) {

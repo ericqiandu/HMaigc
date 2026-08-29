@@ -4,7 +4,8 @@ import { nanoid } from "nanoid";
 import { readImageMeta } from "@/lib/image-utils";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { importResourceFromUrl, isResourceUrl, resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, resolveResourceUrl, uploadResourceFile } from "@/services/api/resources";
-import { cacheResourceObjectUrl, getCachedResourceBlob, getCachedResourceObjectUrl, primeResourceBlobCache } from "@/services/resource-blob-cache";
+import { getCachedResourceBlob, primeResourceBlobCache } from "@/services/resource-blob-cache";
+import { persistMediaByUserScope } from "@/services/media-upload-policy";
 
 export type UploadedImage = {
     url: string;
@@ -19,59 +20,61 @@ const store = localforage.createInstance({ name: "infinite-canvas", storeName: "
 const objectUrls = new Map<string, string>();
 
 export async function uploadImage(input: string | Blob): Promise<UploadedImage> {
+    const scope = getActiveUserScope();
     if (typeof input === "string" && shouldImportRemoteImage(input)) {
-        try {
+        if (scope !== "guest") {
             const resource = await importResourceFromUrl(input, "image");
             return {
-                url: resource.publicUrl || resourceFileUrl(resource.id),
+                url: resourceFileUrl(resource.id),
                 storageKey: resourceStorageKey(resource.id),
                 width: resource.width || 1024,
                 height: resource.height || 1024,
                 bytes: resource.size || 0,
                 mimeType: resource.mimeType || "image/png",
             };
-        } catch {
-            // Keep the browser-side path as a fallback for CORS-enabled HTTPS images.
         }
     }
     const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
     const previewUrl = URL.createObjectURL(blob);
     const meta = await readImageMeta(previewUrl);
-    try {
-        const resource = await uploadResourceFile(blob, "image", { width: meta.width, height: meta.height, fileName: input instanceof File ? input.name : undefined });
-        await primeResourceBlobCache(resourceStorageKey(resource.id), blob).catch(() => "");
-        URL.revokeObjectURL(previewUrl);
-        return {
-            url: resource.publicUrl || resourceFileUrl(resource.id),
-            storageKey: resourceStorageKey(resource.id),
-            width: resource.width || meta.width,
-            height: resource.height || meta.height,
-            bytes: resource.size || blob.size,
-            mimeType: resource.mimeType || blob.type || meta.mimeType,
-        };
-    } catch {
-        // OSS is optional during local/self-hosted setup. Keep the existing local fallback.
-    }
-    const storageKey = `image:${getActiveUserScope()}:${nanoid()}`;
-    await store.setItem(storageKey, blob);
-    const url = previewUrl;
-    objectUrls.set(storageKey, url);
-    return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType };
+    return persistMediaByUserScope(
+        scope,
+        async () => {
+            try {
+                const resource = await uploadResourceFile(blob, "image", { width: meta.width, height: meta.height, fileName: input instanceof File ? input.name : undefined });
+                return {
+                    url: resourceFileUrl(resource.id),
+                    storageKey: resourceStorageKey(resource.id),
+                    width: resource.width || meta.width,
+                    height: resource.height || meta.height,
+                    bytes: resource.size || blob.size,
+                    mimeType: resource.mimeType || blob.type || meta.mimeType,
+                };
+            } finally {
+                URL.revokeObjectURL(previewUrl);
+            }
+        },
+        async () => {
+            const storageKey = `image:${scope}:${nanoid()}`;
+            try {
+                await store.setItem(storageKey, blob);
+            } catch (error) {
+                URL.revokeObjectURL(previewUrl);
+                throw error;
+            }
+            objectUrls.set(storageKey, previewUrl);
+            return { url: previewUrl, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType };
+        },
+    );
 }
 
 function shouldImportRemoteImage(input: string) {
     return /^https?:\/\//i.test(input) && !isResourceUrl(input);
 }
 
-export async function resolveImageUrl(storageKey?: string, fallback = "", options?: { cacheMiss?: boolean }) {
+export async function resolveImageUrl(storageKey?: string, fallback = "") {
     if (!storageKey) return fallback;
     if (resourceIdFromStorageKey(storageKey)) {
-        const cached = await getCachedResourceObjectUrl(storageKey).catch(() => "");
-        if (cached) return cached;
-        if (options?.cacheMiss) {
-            const populated = await cacheResourceObjectUrl(storageKey).catch(() => "");
-            if (populated) return populated;
-        }
         return resolveResourceUrl(storageKey, fallback);
     }
     const cached = objectUrls.get(storageKey);

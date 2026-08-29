@@ -60,6 +60,16 @@ export function selectVideoReferenceCandidates(references: CanvasResourceReferen
     return references.filter((reference) => reference.nodeId !== targetNodeId && Boolean(reference.previewUrl) && (reference.kind === "image" || reference.kind === "video" || reference.kind === "audio"));
 }
 
+export function mergeCanvasResourceReferenceCandidates(availableReferences: CanvasResourceReference[], activeReferences: CanvasResourceReference[]) {
+    const referencesById = new Map<string, CanvasResourceReference>();
+    availableReferences.forEach((reference) => referencesById.set(reference.id, reference));
+    activeReferences.forEach((reference) => {
+        const available = referencesById.get(reference.id);
+        referencesById.set(reference.id, available ? { ...available, ...reference, active: available.active || reference.active } : reference);
+    });
+    return [...referencesById.values()].sort((left, right) => Number(right.active) - Number(left.active));
+}
+
 export type CanvasResourceGraph = {
     nodeById: Map<string, CanvasNodeData>;
     incomingByNodeId: Map<string, CanvasNodeData[]>;

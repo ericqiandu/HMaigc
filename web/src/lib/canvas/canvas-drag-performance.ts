@@ -1,7 +1,15 @@
 import { FRAME_HEADER_HEIGHT, canFrameContain, isFrameNode } from "@/lib/canvas/canvas-frame";
 import type { CanvasNodeData, Position } from "@/types/canvas";
 
-const DRAG_PREVIEW_SYNC_INTERVAL_MS = 50;
+export type CanvasLiveConnectionDragTarget = {
+    paths: Array<{ element: SVGPathElement; initialPath: string }>;
+    gradient: SVGLinearGradientElement | null;
+    initialGradient: { x1: string | null; y1: string | null; x2: string | null; y2: string | null } | null;
+    start: Position;
+    end: Position;
+    movesStart: boolean;
+    movesEnd: boolean;
+};
 
 export type FrameDropContext = {
     draggedNodes: Array<{ centerX: number; centerY: number }>;
@@ -52,6 +60,66 @@ export function clearCanvasLiveNodeDrag(targets: readonly HTMLElement[]) {
     }
 }
 
-export function shouldSyncCanvasDragPreview(now: number, lastSync: number) {
-    return now - lastSync >= DRAG_PREVIEW_SYNC_INTERVAL_MS;
+export function createCanvasConnectionPathD(start: Position, end: Position) {
+    const curvature = Math.max(Math.abs(end.x - start.x) * 0.5, 50);
+    return `M ${start.x} ${start.y} C ${start.x + curvature} ${start.y}, ${end.x - curvature} ${end.y}, ${end.x} ${end.y}`;
+}
+
+export function resolveCanvasLiveConnectionDragTargets(surface: HTMLElement | null, draggedNodeIds: ReadonlySet<string>): CanvasLiveConnectionDragTarget[] {
+    if (!surface || draggedNodeIds.size === 0) return [];
+    return Array.from(surface.querySelectorAll<SVGGElement>("[data-canvas-connection-id]"))
+        .flatMap((group) => {
+            const fromNodeId = group.dataset.fromNodeId || "";
+            const toNodeId = group.dataset.toNodeId || "";
+            const movesStart = draggedNodeIds.has(fromNodeId);
+            const movesEnd = draggedNodeIds.has(toNodeId);
+            if (!movesStart && !movesEnd) return [];
+            const start = { x: Number(group.dataset.startX), y: Number(group.dataset.startY) };
+            const end = { x: Number(group.dataset.endX), y: Number(group.dataset.endY) };
+            if (![start.x, start.y, end.x, end.y].every(Number.isFinite)) return [];
+            const gradient = group.querySelector<SVGLinearGradientElement>("linearGradient");
+            return [{
+                paths: Array.from(group.querySelectorAll<SVGPathElement>("path")).map((element) => ({ element, initialPath: element.getAttribute("d") || "" })),
+                gradient,
+                initialGradient: gradient
+                    ? { x1: gradient.getAttribute("x1"), y1: gradient.getAttribute("y1"), x2: gradient.getAttribute("x2"), y2: gradient.getAttribute("y2") }
+                    : null,
+                start,
+                end,
+                movesStart,
+                movesEnd,
+            }];
+        });
+}
+
+export function applyCanvasLiveConnectionDrag(targets: readonly CanvasLiveConnectionDragTarget[], offset: Position) {
+    for (const target of targets) {
+        const start = target.movesStart ? { x: target.start.x + offset.x, y: target.start.y + offset.y } : target.start;
+        const end = target.movesEnd ? { x: target.end.x + offset.x, y: target.end.y + offset.y } : target.end;
+        const path = createCanvasConnectionPathD(start, end);
+        target.paths.forEach(({ element }) => element.setAttribute("d", path));
+        if (target.gradient) {
+            target.gradient.setAttribute("x1", String(start.x));
+            target.gradient.setAttribute("y1", String(start.y));
+            target.gradient.setAttribute("x2", String(end.x));
+            target.gradient.setAttribute("y2", String(end.y));
+        }
+    }
+}
+
+export function clearCanvasLiveConnectionDrag(targets: readonly CanvasLiveConnectionDragTarget[]) {
+    for (const target of targets) {
+        target.paths.forEach(({ element, initialPath }) => element.setAttribute("d", initialPath));
+        if (target.gradient && target.initialGradient) {
+            restoreAttribute(target.gradient, "x1", target.initialGradient.x1);
+            restoreAttribute(target.gradient, "y1", target.initialGradient.y1);
+            restoreAttribute(target.gradient, "x2", target.initialGradient.x2);
+            restoreAttribute(target.gradient, "y2", target.initialGradient.y2);
+        }
+    }
+}
+
+function restoreAttribute(element: Element, name: string, value: string | null) {
+    if (value == null) element.removeAttribute(name);
+    else element.setAttribute(name, value);
 }
