@@ -989,16 +989,21 @@ type UserAnnouncementRead struct {
 }
 
 type TaskAudience string
+type TaskExecutionKind string
 
 const (
 	TaskAudienceCustomer TaskAudience = "customer"
 	TaskAudienceInternal TaskAudience = "internal"
+
+	TaskExecutionProvider           TaskExecutionKind = "provider"
+	TaskExecutionLocalMediaAssembly TaskExecutionKind = "local_media_assembly"
 )
 
 type Task struct {
 	ID                           string              `json:"id" gorm:"primaryKey;size:36"`
 	UserID                       string              `json:"userId" gorm:"index;size:36;index:idx_tasks_user_created,priority:1;index:idx_tasks_user_capability_status,priority:1"`
 	Audience                     TaskAudience        `json:"audience" gorm:"not null;default:customer;size:16;index;check:task_audience_valid,audience IN ('customer','internal')"`
+	ExecutionKind                TaskExecutionKind   `json:"executionKind" gorm:"not null;default:provider;size:32;index;check:task_execution_kind_valid,execution_kind IN ('provider','local_media_assembly')"`
 	SessionID                    string              `json:"sessionId" gorm:"index;size:36"`
 	ProjectID                    string              `json:"projectId" gorm:"index;size:80"`
 	Type                         string              `json:"type" gorm:"index;size:64"`

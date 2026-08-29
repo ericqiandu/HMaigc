@@ -49,6 +49,8 @@ type Service struct {
 	workerID                  string
 	operationsClient          opsprotocol.Client
 	mediaDurationProbe        mediaDurationProbe
+	mediaFileProbe            mediaFileProbe
+	mediaAssembler            MediaAssembler
 	agentRuntimeSkillResolver func(context.Context, string, string) (*Skill, error)
 }
 
@@ -186,7 +188,7 @@ type agentStoryboardShot struct {
 
 func New(repo *repository.Repository, dataDir string) *Service {
 	coordinator, err := newRuntimeCoordinator(repo.Dialect())
-	return &Service{repo: repo, dataDir: dataDir, activeCancels: make(map[string]context.CancelFunc), coordinator: coordinator, runtimeErr: err, workerID: newID()}
+	return &Service{repo: repo, dataDir: dataDir, activeCancels: make(map[string]context.CancelFunc), coordinator: coordinator, runtimeErr: err, workerID: newID(), mediaAssembler: execMediaAssembler{}}
 }
 
 func (s *Service) ConfigureOperationsClient(client opsprotocol.Client) {
@@ -999,6 +1001,11 @@ func (s *Service) ProcessNextTask() error {
 }
 
 func (s *Service) processClaimedTask(task *model.Task) error {
+	persistedTask, err := s.repo.Task(task.ID)
+	if err != nil {
+		return err
+	}
+	task = persistedTask
 	_ = s.log(task.UserID, task.ID, "info", "后端任务开始处理", "")
 	runID := ""
 	if task.Type == agentRuntimeModelTaskType {
@@ -1050,6 +1057,24 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	defer close(leaseDone)
 	s.registerActiveTask(task.ID, cancel)
 	defer s.unregisterActiveTask(task.ID)
+	if task.ExecutionKind == model.TaskExecutionLocalMediaAssembly {
+		if task.Audience != model.TaskAudienceInternal || task.Type != agentMediaAssemblyTaskType || task.BillingOrderID != "" {
+			failure := repository.ErrInternalTaskFactConflict
+			if failErr := s.repo.FailClaimedTaskFacts(task.ID, task.UserID, task.LeaseOwner, failure, time.Now().UTC()); failErr != nil {
+				return errors.Join(failure, failErr)
+			}
+			return failure
+		}
+		_ = s.repo.UpdateTaskProgress(task.ID, "本地媒体装配中", 35)
+		return s.processClaimedMediaAssembly(ctx, task)
+	}
+	if task.ExecutionKind != model.TaskExecutionProvider || strings.TrimSpace(task.BillingOrderID) == "" {
+		failure := errors.New("供应商任务执行事实无效或缺少计费订单")
+		if failErr := s.repo.FailClaimedTaskFacts(task.ID, task.UserID, task.LeaseOwner, failure, time.Now().UTC()); failErr != nil {
+			return errors.Join(failure, failErr)
+		}
+		return failure
+	}
 
 	reconcilingCancellation := task.Status == model.TaskStatusCancelled
 	tokenBilledTask := false
@@ -1223,7 +1248,7 @@ func taskExecutionTimeoutWithPolicy(taskType string, policy RuntimeTaskPolicy) t
 	switch {
 	case taskType == "agent_storyboard" || taskType == "agent_storyboard_rows":
 		return time.Duration(policy.StoryboardTimeoutMinutes) * time.Minute
-	case strings.HasPrefix(taskType, "canvas_video") || strings.HasPrefix(taskType, "video_"):
+	case taskType == agentMediaAssemblyTaskType || strings.HasPrefix(taskType, "canvas_video") || strings.HasPrefix(taskType, "video_"):
 		return time.Duration(policy.VideoTimeoutMinutes) * time.Minute
 	case strings.HasPrefix(taskType, "canvas_image"):
 		return time.Duration(policy.ImageTimeoutMinutes) * time.Minute

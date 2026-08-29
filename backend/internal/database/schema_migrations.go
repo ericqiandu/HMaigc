@@ -42,6 +42,11 @@ func MigrateBaseSchema(db *gorm.DB) error {
 		Update("audience", model.TaskAudienceInternal).Error; err != nil {
 		return fmt.Errorf("回填 Agent 内部任务受众失败: %w", err)
 	}
+	if err := db.Model(&model.Task{}).
+		Where("type = ? AND (audience <> ? OR execution_kind <> ?)", "agent_media_assembly", model.TaskAudienceInternal, model.TaskExecutionLocalMediaAssembly).
+		Updates(model.Task{Audience: model.TaskAudienceInternal, ExecutionKind: model.TaskExecutionLocalMediaAssembly}).Error; err != nil {
+		return fmt.Errorf("回填本地媒体装配任务执行事实失败: %w", err)
+	}
 	if db.Dialector.Name() != "postgres" {
 		return nil
 	}

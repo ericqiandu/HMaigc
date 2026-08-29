@@ -96,6 +96,51 @@ func TestTaskAudienceMigrationBackfillsCustomerAndInternalTasks(t *testing.T) {
 	}
 }
 
+func TestUnbilledInternalTaskExecutionKindMigration(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE tasks (
+		id text PRIMARY KEY,
+		user_id text,
+		type text,
+		status text,
+		created_at datetime,
+		updated_at datetime
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := db.Exec(`INSERT INTO tasks (id, user_id, type, status, created_at, updated_at) VALUES
+		(?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)`,
+		"provider-task", "user-1", "canvas_video", model.TaskStatusQueued, now, now,
+		"assembly-task", "user-1", "agent_media_assembly", model.TaskStatusQueued, now, now,
+	).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	var tasks []model.Task
+	if err := db.Order("id asc").Find(&tasks).Error; err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]model.Task{}
+	for _, task := range tasks {
+		byID[task.ID] = task
+	}
+	if byID["provider-task"].ExecutionKind != model.TaskExecutionProvider {
+		t.Fatalf("provider execution kind = %q", byID["provider-task"].ExecutionKind)
+	}
+	if byID["assembly-task"].ExecutionKind != model.TaskExecutionLocalMediaAssembly {
+		t.Fatalf("assembly execution kind = %q", byID["assembly-task"].ExecutionKind)
+	}
+	if byID["assembly-task"].Audience != model.TaskAudienceInternal {
+		t.Fatalf("assembly audience = %q", byID["assembly-task"].Audience)
+	}
+}
+
 func TestWatermarkPolicySchemaCreatesTablesTaskFactsAndExactIndexes(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

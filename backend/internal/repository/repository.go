@@ -1,12 +1,14 @@
 package repository
 
 import (
+	"encoding/json"
 	"errors"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/gorm"
@@ -15,6 +17,7 @@ import (
 
 var ErrDailyUploadLimitExceeded = errors.New("daily upload limit exceeded")
 var ErrCanvasProjectConflict = errors.New("canvas project conflict")
+var ErrInternalTaskFactConflict = errors.New("internal task fact conflict")
 
 type Repository struct {
 	db                       *gorm.DB
@@ -501,6 +504,211 @@ func (r *Repository) CancelTaskIfStatus(userID string, id string, expected model
 			"status": model.TaskStatusCancelled, "stage": "任务已取消", "completed_at": &now, "updated_at": now,
 		})
 	return result.RowsAffected == 1, result.Error
+}
+
+type MediaAssemblyFinalization struct {
+	TaskID       string
+	UserID       string
+	LeaseOwner   string
+	Scope        agentruntime.Scope
+	ArtifactID   string
+	Draft        agentruntime.ArtifactDraft
+	ResourceID   string
+	PlanDigest   string
+	PlanRevision agentruntime.ArtifactRevisionRef
+	CompletedAt  time.Time
+}
+
+type mediaAssemblyTaskResult struct {
+	ResourceID       string `json:"resourceId"`
+	PlanDigest       string `json:"planDigest"`
+	ArtifactRevision struct {
+		ArtifactID string `json:"artifactId"`
+		RevisionID string `json:"revisionId"`
+	} `json:"artifactRevision"`
+}
+
+func (r *Repository) CreateInternalUnbilledTaskOnce(task *model.Task) (*model.Task, error) {
+	if task == nil || task.ID == "" || task.UserID == "" || task.ProjectID == "" ||
+		task.Audience != model.TaskAudienceInternal || task.ExecutionKind != model.TaskExecutionLocalMediaAssembly ||
+		task.Type != "agent_media_assembly" || task.Capability != "video" || task.BillingOrderID != "" ||
+		task.Status != model.TaskStatusQueued || task.InputJSON == "" {
+		return nil, ErrInternalTaskFactConflict
+	}
+	createErr := r.db.Create(task).Error
+	if createErr == nil {
+		copy := *task
+		return &copy, nil
+	}
+	if !isUniqueConstraintError(createErr) {
+		return nil, createErr
+	}
+	var existing model.Task
+	if err := r.db.First(&existing, "id = ?", task.ID).Error; err != nil {
+		return nil, err
+	}
+	if existing.UserID != task.UserID || existing.ProjectID != task.ProjectID || existing.Audience != task.Audience ||
+		existing.ExecutionKind != task.ExecutionKind || existing.Type != task.Type || existing.Capability != task.Capability ||
+		existing.BillingOrderID != "" || existing.InputJSON != task.InputJSON || existing.Operation != task.Operation {
+		return nil, ErrInternalTaskFactConflict
+	}
+	return &existing, nil
+}
+
+func (r *Repository) CancelInternalMediaAssemblyTask(scope agentruntime.Scope, taskID string, now time.Time) (*model.Task, error) {
+	if err := validateProductionRepositoryScope(scope, true); err != nil {
+		return nil, err
+	}
+	if taskID == "" || now.IsZero() {
+		return nil, ErrInternalTaskFactConflict
+	}
+	result := r.db.Model(&model.Task{}).
+		Where("id = ? AND user_id = ? AND project_id = ? AND audience = ? AND execution_kind = ? AND type = ? AND status IN ?",
+			taskID, scope.ActorUserID, scope.CanvasID, model.TaskAudienceInternal, model.TaskExecutionLocalMediaAssembly,
+			"agent_media_assembly", []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).
+		Select("status", "stage", "completed_at", "updated_at").
+		Updates(model.Task{Status: model.TaskStatusCancelled, Stage: "任务已取消", CompletedAt: &now, UpdatedAt: now})
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	var task model.Task
+	if err := r.db.First(&task, "id = ? AND user_id = ? AND project_id = ? AND audience = ? AND execution_kind = ? AND type = ?",
+		taskID, scope.ActorUserID, scope.CanvasID, model.TaskAudienceInternal, model.TaskExecutionLocalMediaAssembly, "agent_media_assembly").Error; err != nil {
+		return nil, err
+	}
+	if result.RowsAffected == 0 && task.Status != model.TaskStatusCancelled {
+		return nil, ErrInternalTaskFactConflict
+	}
+	return &task, nil
+}
+
+func (r *Repository) FinalizeMediaAssembly(input MediaAssemblyFinalization) (*model.AgentArtifactRevision, error) {
+	if err := validateProductionRepositoryScope(input.Scope, true); err != nil {
+		return nil, err
+	}
+	if input.TaskID == "" || input.UserID != input.Scope.ActorUserID || input.LeaseOwner == "" ||
+		input.ArtifactID == "" || input.ResourceID == "" || input.PlanDigest == "" || input.PlanRevision.Validate() != nil ||
+		input.CompletedAt.IsZero() || agentruntime.ValidateArtifactDraft(input.Draft) != nil || len(input.Draft.UpstreamRevisions) != 1 ||
+		input.Draft.UpstreamRevisions[0] != input.PlanRevision {
+		return nil, ErrInternalTaskFactConflict
+	}
+	var revision *model.AgentArtifactRevision
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var task model.Task
+		query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ? AND user_id = ?", input.TaskID, input.UserID)
+		if query.Error != nil {
+			return query.Error
+		}
+		if task.Audience != model.TaskAudienceInternal || task.ExecutionKind != model.TaskExecutionLocalMediaAssembly ||
+			task.Type != "agent_media_assembly" || task.BillingOrderID != "" || task.ProjectID != input.Scope.CanvasID {
+			return ErrInternalTaskFactConflict
+		}
+		if task.LeaseOwner != input.LeaseOwner || (task.Status != model.TaskStatusRunning && task.Status != model.TaskStatusCancelled) {
+			return ErrTaskCompletionStateConflict
+		}
+		planCurrent, currentErr := assemblyPlanRevisionIsCurrentTx(tx, input.Scope, input.PlanRevision)
+		if currentErr != nil {
+			return currentErr
+		}
+		var appendErr error
+		if task.Status == model.TaskStatusCancelled || !planCurrent {
+			revision, appendErr = appendUnadoptedArtifactRevisionTx(tx, input.Scope, input.ArtifactID, input.Draft, "", input.CompletedAt)
+		} else {
+			revision, appendErr = appendArtifactRevisionTx(tx, input.Scope, input.ArtifactID, 0, input.Draft, "")
+		}
+		if appendErr != nil {
+			return appendErr
+		}
+		resultFact := mediaAssemblyTaskResult{ResourceID: input.ResourceID, PlanDigest: input.PlanDigest}
+		resultFact.ArtifactRevision.ArtifactID = revision.ArtifactID
+		resultFact.ArtifactRevision.RevisionID = revision.ID
+		resultJSON, marshalErr := json.Marshal(resultFact)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		stage := "任务已取消（迟到产物未采纳）"
+		nextStatus := model.TaskStatusCancelled
+		if task.Status == model.TaskStatusRunning {
+			nextStatus = model.TaskStatusSucceeded
+			stage = "装配完成"
+			if !planCurrent {
+				stage = "装配完成（计划已过期，产物未采纳）"
+			}
+		}
+		updates := model.Task{
+			Status: nextStatus, Stage: stage, ResultJSON: string(resultJSON), Progress: 100,
+			LeaseOwner: "", LeaseExpiresAt: nil, UpdatedAt: input.CompletedAt,
+		}
+		columns := []string{"status", "stage", "result_json", "progress", "lease_owner", "lease_expires_at", "updated_at"}
+		if task.Status == model.TaskStatusRunning {
+			updates.CompletedAt = &input.CompletedAt
+			columns = append(columns, "completed_at")
+		}
+		updated := tx.Model(&model.Task{}).
+			Where("id = ? AND status = ? AND lease_owner = ?", task.ID, task.Status, task.LeaseOwner).
+			Select(columns).
+			Updates(updates)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return ErrTaskCompletionStateConflict
+		}
+		return nil
+	})
+	return revision, err
+}
+
+func assemblyPlanRevisionIsCurrentTx(tx *gorm.DB, scope agentruntime.Scope, reference agentruntime.ArtifactRevisionRef) (bool, error) {
+	var revision model.AgentArtifactRevision
+	if err := productionArtifactRevisionScopeQuery(tx.Clauses(clause.Locking{Strength: "UPDATE"}), scope).
+		Where("id = ? AND artifact_id = ?", reference.RevisionID, reference.ArtifactID).
+		Take(&revision).Error; err != nil {
+		return false, err
+	}
+	var artifact model.AgentArtifact
+	if err := productionArtifactScopeQuery(tx.Clauses(clause.Locking{Strength: "UPDATE"}), scope).
+		Where("id = ?", reference.ArtifactID).Take(&artifact).Error; err != nil {
+		return false, err
+	}
+	return revision.LifecycleStatus != model.AgentArtifactRevisionStale &&
+		artifact.LifecycleStatus == model.AgentArtifactLifecycleActive && artifact.HeadRevision == revision.Revision, nil
+}
+
+func (r *Repository) FailMediaAssemblyTask(taskID string, userID string, leaseOwner string, failure error, now time.Time) error {
+	if taskID == "" || userID == "" || leaseOwner == "" || failure == nil || now.IsZero() {
+		return ErrInternalTaskFactConflict
+	}
+	encoded, _ := json.Marshal(map[string]string{"error": failure.Error()})
+	result := r.db.Model(&model.Task{}).
+		Where("id = ? AND user_id = ? AND audience = ? AND execution_kind = ? AND type = ? AND status = ? AND lease_owner = ?",
+			taskID, userID, model.TaskAudienceInternal, model.TaskExecutionLocalMediaAssembly, "agent_media_assembly", model.TaskStatusRunning, leaseOwner).
+		Select("status", "stage", "error", "result_json", "completed_at", "lease_owner", "lease_expires_at", "updated_at").
+		Updates(model.Task{Status: model.TaskStatusFailed, Stage: "装配失败", Error: failure.Error(), ResultJSON: string(encoded), CompletedAt: &now, LeaseOwner: "", LeaseExpiresAt: nil, UpdatedAt: now})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrTaskCompletionStateConflict
+	}
+	return nil
+}
+
+func (r *Repository) FailClaimedTaskFacts(taskID string, userID string, leaseOwner string, failure error, now time.Time) error {
+	if taskID == "" || userID == "" || leaseOwner == "" || failure == nil || now.IsZero() {
+		return ErrInternalTaskFactConflict
+	}
+	result := r.db.Model(&model.Task{}).
+		Where("id = ? AND user_id = ? AND status = ? AND lease_owner = ?", taskID, userID, model.TaskStatusRunning, leaseOwner).
+		Select("status", "stage", "error", "completed_at", "lease_owner", "lease_expires_at", "updated_at").
+		Updates(model.Task{Status: model.TaskStatusFailed, Stage: "任务执行事实无效", Error: failure.Error(), CompletedAt: &now, LeaseOwner: "", LeaseExpiresAt: nil, UpdatedAt: now})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrTaskCompletionStateConflict
+	}
+	return nil
 }
 
 func (r *Repository) Tasks(userID string, limit int, projectID string, activeOnly bool) ([]model.Task, error) {
