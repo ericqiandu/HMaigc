@@ -1,8 +1,11 @@
 package repository
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -314,11 +317,15 @@ func (r *Repository) ClaimNextTask(owner string, leaseDuration time.Duration) (*
 	var task model.Task
 	now := time.Now()
 	leaseExpiresAt := now.Add(leaseDuration)
-	err := r.db.Transaction(func(tx *gorm.DB) error {
+	leaseToken, err := newTaskLeaseToken()
+	if err != nil {
+		return nil, err
+	}
+	err = r.db.Transaction(func(tx *gorm.DB) error {
 		query := tx.Where(`
-			status = ?
-			OR (status = ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?))
-			OR (status = ? AND provider_request_id <> '' AND result_json = '' AND poll_stage IN ? AND (next_poll_at IS NULL OR next_poll_at <= ?) AND (lease_expires_at IS NULL OR lease_expires_at <= ?))
+			(cancel_requested_at IS NULL AND (status = ?
+			OR (status = ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?))))
+			OR (status = ? AND cancel_requested_at IS NOT NULL AND provider_request_id <> '' AND result_json = '' AND poll_stage IN ? AND (next_poll_at IS NULL OR next_poll_at <= ?) AND (lease_expires_at IS NULL OR lease_expires_at <= ?))
 		`, model.TaskStatusQueued, model.TaskStatusRunning, now, model.TaskStatusCancelled, []string{"accepted", "cancel_reconcile"}, now, now).
 			Order("created_at asc").Limit(1)
 		if r.Dialect() == "postgres" {
@@ -332,12 +339,13 @@ func (r *Repository) ClaimNextTask(owner string, leaseDuration time.Duration) (*
 			task = model.Task{}
 			return nil
 		}
-		claim := tx.Model(&model.Task{}).Where("id = ?", task.ID)
+		claim := tx.Model(&model.Task{}).
+			Where("id = ? AND lease_generation = ? AND lease_token = ?", task.ID, task.LeaseGeneration, task.LeaseToken)
 		if r.Dialect() != "postgres" {
 			claim = claim.Where(`
-				status = ?
-				OR (status = ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?))
-				OR (status = ? AND provider_request_id <> '' AND result_json = '' AND poll_stage IN ? AND (next_poll_at IS NULL OR next_poll_at <= ?) AND (lease_expires_at IS NULL OR lease_expires_at <= ?))
+				(cancel_requested_at IS NULL AND (status = ?
+				OR (status = ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?))))
+				OR (status = ? AND cancel_requested_at IS NOT NULL AND provider_request_id <> '' AND result_json = '' AND poll_stage IN ? AND (next_poll_at IS NULL OR next_poll_at <= ?) AND (lease_expires_at IS NULL OR lease_expires_at <= ?))
 			`, model.TaskStatusQueued, model.TaskStatusRunning, now, model.TaskStatusCancelled, []string{"accepted", "cancel_reconcile"}, now, now)
 		}
 		updated := claim.
@@ -349,6 +357,8 @@ func (r *Repository) ClaimNextTask(owner string, leaseDuration time.Duration) (*
 				"started_at":       gorm.Expr("COALESCE(started_at, ?)", now),
 				"lease_owner":      owner,
 				"lease_expires_at": leaseExpiresAt,
+				"lease_generation": gorm.Expr("lease_generation + ?", 1),
+				"lease_token":      leaseToken,
 				"updated_at":       now,
 			})
 		if updated.Error != nil {
@@ -366,57 +376,144 @@ func (r *Repository) ClaimNextTask(owner string, leaseDuration time.Duration) (*
 	return &task, nil
 }
 
-func (r *Repository) RenewTaskLease(id string, owner string, leaseDuration time.Duration) error {
+func newTaskLeaseToken() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", fmt.Errorf("生成任务租约令牌失败: %w", err)
+	}
+	return hex.EncodeToString(bytes), nil
+}
+
+func validTaskLease(owner string, generation uint64, token string) bool {
+	return strings.TrimSpace(owner) != "" && generation > 0 && len(token) == 64
+}
+
+func taskLeaseQuery(db *gorm.DB, id string, statuses []model.TaskStatus, owner string, generation uint64, token string) *gorm.DB {
+	return db.Model(&model.Task{}).Where(
+		"id = ? AND status IN ? AND lease_owner = ? AND lease_generation = ? AND lease_token = ?",
+		id, statuses, owner, generation, token,
+	)
+}
+
+func (r *Repository) RenewTaskLease(id string, owner string, generation uint64, token string, leaseDuration time.Duration) error {
+	if !validTaskLease(owner, generation, token) {
+		return ErrTaskCompletionStateConflict
+	}
 	result := r.db.Model(&model.Task{}).
-		Where("id = ? AND status IN ? AND lease_owner = ?", id, []model.TaskStatus{model.TaskStatusRunning, model.TaskStatusCancelled}, owner).
+		Where("id = ? AND status IN ? AND lease_owner = ? AND lease_generation = ? AND lease_token = ?", id, []model.TaskStatus{model.TaskStatusRunning, model.TaskStatusCancelled}, owner, generation, token).
 		Updates(map[string]any{"lease_expires_at": time.Now().Add(leaseDuration), "updated_at": time.Now()})
 	if result.Error != nil {
 		return result.Error
 	}
 	if result.RowsAffected != 1 {
-		return errors.New("任务租约已失效")
+		return ErrTaskCompletionStateConflict
 	}
 	return nil
 }
 
-func (r *Repository) ScheduleCancelledTaskReconciliation(id string, owner string, next time.Time) error {
+func (r *Repository) ScheduleCancelledTaskReconciliation(id string, owner string, generation uint64, token string, next time.Time) error {
+	if !validTaskLease(owner, generation, token) {
+		return ErrTaskCompletionStateConflict
+	}
 	result := r.db.Model(&model.Task{}).
-		Where("id = ? AND status = ? AND lease_owner = ? AND provider_request_id <> ''", id, model.TaskStatusCancelled, owner).
+		Where("id = ? AND status = ? AND lease_owner = ? AND lease_generation = ? AND lease_token = ? AND provider_request_id <> ''", id, model.TaskStatusCancelled, owner, generation, token).
 		Updates(map[string]any{
 			"poll_stage": "cancel_reconcile", "next_poll_at": next,
-			"lease_owner": "", "lease_expires_at": nil, "updated_at": time.Now(),
+			"lease_owner": "", "lease_expires_at": nil, "lease_token": "", "updated_at": time.Now(),
 		})
 	if result.Error != nil {
 		return result.Error
 	}
 	if result.RowsAffected != 1 {
-		return errors.New("取消任务核对租约已失效")
+		return ErrTaskCompletionStateConflict
 	}
 	return nil
 }
 
-func (r *Repository) UpdateTaskProviderState(id string, providerRequestID string, pollStage string, nextPollAt *time.Time) error {
+// ClaimCancelledTaskResult replaces an invalidated producer lease with a new,
+// target-specific recovery lease. It is used only when that producer already
+// holds a real late provider result; normal progress and completion remain
+// rejected under the old lease generation.
+func (r *Repository) ClaimCancelledTaskResult(id string, userID string, producerGeneration uint64, owner string, leaseDuration time.Duration) (*model.Task, error) {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(userID) == "" || strings.TrimSpace(owner) == "" ||
+		producerGeneration == 0 || producerGeneration == ^uint64(0) || leaseDuration <= 0 {
+		return nil, ErrTaskCompletionStateConflict
+	}
+	token, err := newTaskLeaseToken()
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	var task model.Task
+	err = r.db.Transaction(func(tx *gorm.DB) error {
+		updated := tx.Model(&model.Task{}).
+			Where("id = ? AND user_id = ? AND status = ? AND cancel_requested_at IS NOT NULL AND result_json = '' AND lease_owner = '' AND lease_token = '' AND lease_generation = ?", id, userID, model.TaskStatusCancelled, producerGeneration+1).
+			Updates(map[string]any{
+				"lease_owner":      owner,
+				"lease_expires_at": now.Add(leaseDuration),
+				"lease_generation": gorm.Expr("lease_generation + ?", 1),
+				"lease_token":      token,
+				"updated_at":       now,
+			})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return ErrTaskCompletionStateConflict
+		}
+		return tx.First(&task, "id = ?", id).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
+func (r *Repository) UpdateTaskProviderState(id string, owner string, generation uint64, token string, providerRequestID string, pollStage string, nextPollAt *time.Time) error {
+	if !validTaskLease(owner, generation, token) {
+		return ErrTaskCompletionStateConflict
+	}
 	updates := map[string]any{"poll_stage": pollStage, "next_poll_at": nextPollAt, "updated_at": time.Now()}
 	if strings.TrimSpace(providerRequestID) != "" {
 		updates["provider_request_id"] = strings.TrimSpace(providerRequestID)
 	}
-	return r.db.Model(&model.Task{}).Where("id = ?", id).Updates(updates).Error
+	result := taskLeaseQuery(r.db, id, []model.TaskStatus{model.TaskStatusRunning, model.TaskStatusCancelled}, owner, generation, token).Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrTaskCompletionStateConflict
+	}
+	return nil
 }
 
-func (r *Repository) UpdateTaskProgress(id string, stage string, progress int) error {
-	return r.db.Model(&model.Task{}).Where("id = ?", id).Updates(map[string]any{
+func (r *Repository) UpdateTaskProgress(id string, owner string, generation uint64, token string, stage string, progress int) error {
+	if !validTaskLease(owner, generation, token) {
+		return ErrTaskCompletionStateConflict
+	}
+	result := taskLeaseQuery(r.db, id, []model.TaskStatus{model.TaskStatusRunning}, owner, generation, token).Updates(map[string]any{
 		"stage": stage, "progress": progress, "updated_at": time.Now(),
-	}).Error
+	})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrTaskCompletionStateConflict
+	}
+	return nil
 }
 
 func (r *Repository) SaveTaskCompletion(task *model.Task, session *model.Session, message *model.Message, results []model.Result) error {
+	if task == nil || !validTaskLease(task.LeaseOwner, task.LeaseGeneration, task.LeaseToken) {
+		return ErrTaskCompletionStateConflict
+	}
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		updated := tx.Model(&model.Task{}).
-			Where("id = ? AND user_id = ? AND status = ? AND lease_owner = ?", task.ID, task.UserID, model.TaskStatusRunning, task.LeaseOwner).
+			Where("id = ? AND user_id = ? AND status = ? AND lease_owner = ? AND lease_generation = ? AND lease_token = ?", task.ID, task.UserID, model.TaskStatusRunning, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken).
 			Updates(map[string]any{
 				"status": task.Status, "stage": task.Stage, "progress": task.Progress,
 				"result_json": task.ResultJSON, "input_json": task.InputJSON, "completed_at": task.CompletedAt,
-				"lease_owner": "", "lease_expires_at": nil, "updated_at": time.Now(),
+				"lease_owner": "", "lease_expires_at": nil, "lease_token": "", "updated_at": time.Now(),
 			})
 		if updated.Error != nil {
 			return updated.Error
@@ -444,20 +541,23 @@ func (r *Repository) SaveTaskCompletion(task *model.Task, session *model.Session
 }
 
 func (r *Repository) SaveCancelledTaskResult(task *model.Task, result model.Result, billingError string) error {
+	if task == nil || !validTaskLease(task.LeaseOwner, task.LeaseGeneration, task.LeaseToken) {
+		return ErrTaskCompletionStateConflict
+	}
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		updated := tx.Model(&model.Task{}).
-			Where("id = ? AND user_id = ? AND status = ?", task.ID, task.UserID, model.TaskStatusCancelled).
+			Where("id = ? AND user_id = ? AND status = ? AND lease_owner = ? AND lease_generation = ? AND lease_token = ?", task.ID, task.UserID, model.TaskStatusCancelled, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken).
 			Updates(map[string]any{
 				"stage": "任务已取消（已保留生成结果）", "progress": 100,
 				"result_json": task.ResultJSON, "input_json": task.InputJSON,
 				"poll_stage": "cancel_reconciled", "next_poll_at": nil,
-				"lease_owner": "", "lease_expires_at": nil, "updated_at": time.Now(),
+				"lease_owner": "", "lease_expires_at": nil, "lease_token": "", "updated_at": time.Now(),
 			})
 		if updated.Error != nil {
 			return updated.Error
 		}
 		if updated.RowsAffected != 1 {
-			return errors.New("取消任务状态已变化，不能保存上游结果")
+			return ErrTaskCompletionStateConflict
 		}
 		var existing model.Result
 		err := tx.Where("task_id = ? AND kind = ?", result.TaskID, result.Kind).First(&existing).Error
@@ -497,26 +597,37 @@ func (r *Repository) SaveCancelledTaskResult(task *model.Task, result model.Resu
 	})
 }
 
-func (r *Repository) CancelTaskIfStatus(userID string, id string, expected model.TaskStatus, now time.Time) (bool, error) {
+func (r *Repository) CancelTaskIfStatus(userID string, id string, expected model.TaskStatus, reasonCode string, now time.Time) (bool, error) {
+	reasonCode = strings.TrimSpace(reasonCode)
+	if reasonCode == "" || now.IsZero() {
+		return false, errors.New("取消任务事实无效")
+	}
 	result := r.db.Model(&model.Task{}).
 		Where("id = ? AND user_id = ? AND status = ?", id, userID, expected).
 		Updates(map[string]any{
-			"status": model.TaskStatusCancelled, "stage": "任务已取消", "completed_at": &now, "updated_at": now,
+			"status": model.TaskStatusCancelled, "stage": "任务已取消", "completed_at": &now,
+			"cancel_requested_at": &now, "cancel_reason_code": reasonCode,
+			"poll_stage":       gorm.Expr("CASE WHEN provider_request_id <> '' THEN ? ELSE poll_stage END", "cancel_reconcile"),
+			"next_poll_at":     gorm.Expr("CASE WHEN provider_request_id <> '' THEN ? ELSE next_poll_at END", now),
+			"lease_generation": gorm.Expr("lease_generation + ?", 1), "lease_token": "", "lease_owner": "", "lease_expires_at": nil,
+			"updated_at": now,
 		})
 	return result.RowsAffected == 1, result.Error
 }
 
 type MediaAssemblyFinalization struct {
-	TaskID       string
-	UserID       string
-	LeaseOwner   string
-	Scope        agentruntime.Scope
-	ArtifactID   string
-	Draft        agentruntime.ArtifactDraft
-	ResourceID   string
-	PlanDigest   string
-	PlanRevision agentruntime.ArtifactRevisionRef
-	CompletedAt  time.Time
+	TaskID          string
+	UserID          string
+	LeaseOwner      string
+	LeaseGeneration uint64
+	LeaseToken      string
+	Scope           agentruntime.Scope
+	ArtifactID      string
+	Draft           agentruntime.ArtifactDraft
+	ResourceID      string
+	PlanDigest      string
+	PlanRevision    agentruntime.ArtifactRevisionRef
+	CompletedAt     time.Time
 }
 
 type mediaAssemblyTaskResult struct {
@@ -566,8 +677,12 @@ func (r *Repository) CancelInternalMediaAssemblyTask(scope agentruntime.Scope, t
 		Where("id = ? AND user_id = ? AND project_id = ? AND audience = ? AND execution_kind = ? AND type = ? AND status IN ?",
 			taskID, scope.ActorUserID, scope.CanvasID, model.TaskAudienceInternal, model.TaskExecutionLocalMediaAssembly,
 			agentruntime.MediaAssemblyTaskType, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).
-		Select("status", "stage", "completed_at", "updated_at").
-		Updates(model.Task{Status: model.TaskStatusCancelled, Stage: "任务已取消", CompletedAt: &now, UpdatedAt: now})
+		Updates(map[string]any{
+			"status": model.TaskStatusCancelled, "stage": "任务已取消", "completed_at": &now,
+			"cancel_requested_at": &now, "cancel_reason_code": "user_requested",
+			"lease_generation": gorm.Expr("lease_generation + ?", 1), "lease_token": "", "lease_owner": "", "lease_expires_at": nil,
+			"updated_at": now,
+		})
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -586,7 +701,7 @@ func (r *Repository) FinalizeMediaAssembly(input MediaAssemblyFinalization) (*mo
 	if err := validateProductionRepositoryScope(input.Scope, true); err != nil {
 		return nil, err
 	}
-	if input.TaskID == "" || input.UserID != input.Scope.ActorUserID || input.LeaseOwner == "" ||
+	if input.TaskID == "" || input.UserID != input.Scope.ActorUserID || !validTaskLease(input.LeaseOwner, input.LeaseGeneration, input.LeaseToken) ||
 		input.ArtifactID == "" || input.ResourceID == "" || input.PlanDigest == "" || input.PlanRevision.Validate() != nil ||
 		input.CompletedAt.IsZero() || agentruntime.ValidateArtifactDraft(input.Draft) != nil || len(input.Draft.UpstreamRevisions) != 1 ||
 		input.Draft.UpstreamRevisions[0] != input.PlanRevision {
@@ -603,7 +718,8 @@ func (r *Repository) FinalizeMediaAssembly(input MediaAssemblyFinalization) (*mo
 			task.Type != agentruntime.MediaAssemblyTaskType || task.BillingOrderID != "" || task.ProjectID != input.Scope.CanvasID {
 			return ErrInternalTaskFactConflict
 		}
-		if task.LeaseOwner != input.LeaseOwner || (task.Status != model.TaskStatusRunning && task.Status != model.TaskStatusCancelled) {
+		if task.LeaseOwner != input.LeaseOwner || task.LeaseGeneration != input.LeaseGeneration || task.LeaseToken != input.LeaseToken ||
+			(task.Status != model.TaskStatusRunning && task.Status != model.TaskStatusCancelled) {
 			return ErrTaskCompletionStateConflict
 		}
 		planCurrent, currentErr := assemblyPlanRevisionIsCurrentTx(tx, input.Scope, input.PlanRevision)
@@ -637,15 +753,15 @@ func (r *Repository) FinalizeMediaAssembly(input MediaAssemblyFinalization) (*mo
 		}
 		updates := model.Task{
 			Status: nextStatus, Stage: stage, ResultJSON: string(resultJSON), Progress: 100,
-			LeaseOwner: "", LeaseExpiresAt: nil, UpdatedAt: input.CompletedAt,
+			LeaseOwner: "", LeaseExpiresAt: nil, LeaseToken: "", UpdatedAt: input.CompletedAt,
 		}
-		columns := []string{"status", "stage", "result_json", "progress", "lease_owner", "lease_expires_at", "updated_at"}
+		columns := []string{"status", "stage", "result_json", "progress", "lease_owner", "lease_expires_at", "lease_token", "updated_at"}
 		if task.Status == model.TaskStatusRunning {
 			updates.CompletedAt = &input.CompletedAt
 			columns = append(columns, "completed_at")
 		}
 		updated := tx.Model(&model.Task{}).
-			Where("id = ? AND status = ? AND lease_owner = ?", task.ID, task.Status, task.LeaseOwner).
+			Where("id = ? AND status = ? AND lease_owner = ? AND lease_generation = ? AND lease_token = ?", task.ID, task.Status, task.LeaseOwner, input.LeaseGeneration, input.LeaseToken).
 			Select(columns).
 			Updates(updates)
 		if updated.Error != nil {
@@ -675,16 +791,16 @@ func assemblyPlanRevisionIsCurrentTx(tx *gorm.DB, scope agentruntime.Scope, refe
 		artifact.LifecycleStatus == model.AgentArtifactLifecycleActive && artifact.HeadRevision == revision.Revision, nil
 }
 
-func (r *Repository) FailMediaAssemblyTask(taskID string, userID string, leaseOwner string, failure error, now time.Time) error {
-	if taskID == "" || userID == "" || leaseOwner == "" || failure == nil || now.IsZero() {
+func (r *Repository) FailMediaAssemblyTask(taskID string, userID string, leaseOwner string, leaseGeneration uint64, leaseToken string, failure error, now time.Time) error {
+	if taskID == "" || userID == "" || !validTaskLease(leaseOwner, leaseGeneration, leaseToken) || failure == nil || now.IsZero() {
 		return ErrInternalTaskFactConflict
 	}
 	encoded, _ := json.Marshal(map[string]string{"error": failure.Error()})
 	result := r.db.Model(&model.Task{}).
-		Where("id = ? AND user_id = ? AND audience = ? AND execution_kind = ? AND type = ? AND status = ? AND lease_owner = ?",
-			taskID, userID, model.TaskAudienceInternal, model.TaskExecutionLocalMediaAssembly, agentruntime.MediaAssemblyTaskType, model.TaskStatusRunning, leaseOwner).
-		Select("status", "stage", "error", "result_json", "completed_at", "lease_owner", "lease_expires_at", "updated_at").
-		Updates(model.Task{Status: model.TaskStatusFailed, Stage: "装配失败", Error: failure.Error(), ResultJSON: string(encoded), CompletedAt: &now, LeaseOwner: "", LeaseExpiresAt: nil, UpdatedAt: now})
+		Where("id = ? AND user_id = ? AND audience = ? AND execution_kind = ? AND type = ? AND status = ? AND lease_owner = ? AND lease_generation = ? AND lease_token = ?",
+			taskID, userID, model.TaskAudienceInternal, model.TaskExecutionLocalMediaAssembly, agentruntime.MediaAssemblyTaskType, model.TaskStatusRunning, leaseOwner, leaseGeneration, leaseToken).
+		Select("status", "stage", "error", "result_json", "completed_at", "lease_owner", "lease_expires_at", "lease_token", "updated_at").
+		Updates(model.Task{Status: model.TaskStatusFailed, Stage: "装配失败", Error: failure.Error(), ResultJSON: string(encoded), CompletedAt: &now, LeaseOwner: "", LeaseExpiresAt: nil, LeaseToken: "", UpdatedAt: now})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -694,14 +810,14 @@ func (r *Repository) FailMediaAssemblyTask(taskID string, userID string, leaseOw
 	return nil
 }
 
-func (r *Repository) FailClaimedTaskFacts(taskID string, userID string, leaseOwner string, failure error, now time.Time) error {
-	if taskID == "" || userID == "" || leaseOwner == "" || failure == nil || now.IsZero() {
+func (r *Repository) FailClaimedTaskFacts(taskID string, userID string, leaseOwner string, leaseGeneration uint64, leaseToken string, failure error, now time.Time) error {
+	if taskID == "" || userID == "" || !validTaskLease(leaseOwner, leaseGeneration, leaseToken) || failure == nil || now.IsZero() {
 		return ErrInternalTaskFactConflict
 	}
 	result := r.db.Model(&model.Task{}).
-		Where("id = ? AND user_id = ? AND status = ? AND lease_owner = ?", taskID, userID, model.TaskStatusRunning, leaseOwner).
-		Select("status", "stage", "error", "completed_at", "lease_owner", "lease_expires_at", "updated_at").
-		Updates(model.Task{Status: model.TaskStatusFailed, Stage: "任务执行事实无效", Error: failure.Error(), CompletedAt: &now, LeaseOwner: "", LeaseExpiresAt: nil, UpdatedAt: now})
+		Where("id = ? AND user_id = ? AND status = ? AND lease_owner = ? AND lease_generation = ? AND lease_token = ?", taskID, userID, model.TaskStatusRunning, leaseOwner, leaseGeneration, leaseToken).
+		Select("status", "stage", "error", "completed_at", "lease_owner", "lease_expires_at", "lease_token", "updated_at").
+		Updates(model.Task{Status: model.TaskStatusFailed, Stage: "任务执行事实无效", Error: failure.Error(), CompletedAt: &now, LeaseOwner: "", LeaseExpiresAt: nil, LeaseToken: "", UpdatedAt: now})
 	if result.Error != nil {
 		return result.Error
 	}

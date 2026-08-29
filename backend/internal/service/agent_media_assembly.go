@@ -260,12 +260,13 @@ func (s *Service) processClaimedMediaAssembly(ctx context.Context, task *model.T
 		ResourceID: resource.ID, ModelRequestIdentity: "local-assembly:" + input.PlanDigest,
 		UpstreamRevisions: []agentruntime.ArtifactRevisionRef{input.PlanRevision},
 	}
-	_, err = s.repo.FinalizeMediaAssembly(repository.MediaAssemblyFinalization{
-		TaskID: task.ID, UserID: task.UserID, LeaseOwner: task.LeaseOwner, Scope: input.Scope,
-		ArtifactID: input.OutputArtifactID, Draft: finalDraft, ResourceID: resource.ID,
-		PlanDigest: input.PlanDigest, PlanRevision: input.PlanRevision, CompletedAt: time.Now().UTC(),
-	})
+	_, err = s.finalizeMediaAssemblyResult(task, input, finalDraft, resource.ID)
 	if err != nil {
+		latest, loadErr := s.repo.Task(task.ID)
+		if loadErr == nil && latest.Status == model.TaskStatusCancelled {
+			_ = s.log(task.UserID, task.ID, "error", "已取消任务的迟到媒体产物保存失败", taskFailureMessage(err))
+			return err
+		}
 		return s.failClaimedMediaAssembly(task, err)
 	}
 	latest, loadErr := s.repo.Task(task.ID)
@@ -281,13 +282,55 @@ func (s *Service) processClaimedMediaAssembly(ctx context.Context, task *model.T
 	return nil
 }
 
+func (s *Service) finalizeMediaAssemblyResult(
+	producerTask *model.Task,
+	input mediaAssemblyTaskInput,
+	draft agentruntime.ArtifactDraft,
+	resourceID string,
+) (*model.AgentArtifactRevision, error) {
+	completionTask := producerTask
+	for attempt := 0; attempt < 2; attempt++ {
+		revision, err := s.repo.FinalizeMediaAssembly(repository.MediaAssemblyFinalization{
+			TaskID: completionTask.ID, UserID: completionTask.UserID,
+			LeaseOwner: completionTask.LeaseOwner, LeaseGeneration: completionTask.LeaseGeneration, LeaseToken: completionTask.LeaseToken,
+			Scope: input.Scope, ArtifactID: input.OutputArtifactID, Draft: draft, ResourceID: resourceID,
+			PlanDigest: input.PlanDigest, PlanRevision: input.PlanRevision, CompletedAt: time.Now().UTC(),
+		})
+		if err == nil {
+			return revision, nil
+		}
+		if attempt > 0 || !errors.Is(err, repository.ErrTaskCompletionStateConflict) {
+			return nil, err
+		}
+		latest, loadErr := s.repo.Task(producerTask.ID)
+		if loadErr != nil {
+			return nil, errors.Join(err, loadErr)
+		}
+		if latest.Status != model.TaskStatusCancelled {
+			return nil, err
+		}
+		recoveryTask, claimErr := s.repo.ClaimCancelledTaskResult(
+			producerTask.ID,
+			producerTask.UserID,
+			producerTask.LeaseGeneration,
+			s.workerID,
+			taskLeaseDuration,
+		)
+		if claimErr != nil {
+			return nil, errors.Join(err, claimErr)
+		}
+		completionTask = recoveryTask
+	}
+	return nil, repository.ErrTaskCompletionStateConflict
+}
+
 func (s *Service) failClaimedMediaAssembly(task *model.Task, failure error) error {
 	latest, loadErr := s.repo.Task(task.ID)
 	if loadErr == nil && latest.Status == model.TaskStatusCancelled {
 		_ = s.log(task.UserID, task.ID, "warn", "本地媒体装配已取消", taskFailureMessage(failure))
 		return nil
 	}
-	if err := s.repo.FailMediaAssemblyTask(task.ID, task.UserID, task.LeaseOwner, failure, time.Now().UTC()); err != nil {
+	if err := s.repo.FailMediaAssemblyTask(task.ID, task.UserID, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken, failure, time.Now().UTC()); err != nil {
 		return errors.Join(failure, err)
 	}
 	_ = s.log(task.UserID, task.ID, "error", "本地媒体装配失败", taskFailureMessage(failure))

@@ -23,8 +23,8 @@ const (
 
 // FinalizeFailedTaskAndBilling 将任务终态与计费结果放进同一事务；任一侧失败时保留运行态，等待租约到期后重试。
 func (r *Repository) FinalizeFailedTaskAndBilling(task *model.Task, action FailedTaskBillingAction, errorText string) error {
-	if task == nil || strings.TrimSpace(task.ID) == "" {
-		return errors.New("task is required")
+	if task == nil || strings.TrimSpace(task.ID) == "" || !validTaskLease(task.LeaseOwner, task.LeaseGeneration, task.LeaseToken) {
+		return ErrTaskCompletionStateConflict
 	}
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		if err := r.finalizeFailedBillingTx(tx, task.BillingOrderID, task.ID, action, errorText); err != nil {
@@ -32,17 +32,17 @@ func (r *Repository) FinalizeFailedTaskAndBilling(task *model.Task, action Faile
 		}
 		now := time.Now()
 		updatedTask := tx.Model(&model.Task{}).
-			Where("id = ? AND status = ? AND lease_owner = ?", task.ID, model.TaskStatusRunning, task.LeaseOwner).
+			Where("id = ? AND status = ? AND lease_owner = ? AND lease_generation = ? AND lease_token = ?", task.ID, model.TaskStatusRunning, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken).
 			Updates(map[string]any{
 				"status": model.TaskStatusFailed, "stage": task.Stage, "progress": task.Progress,
-				"error": task.Error, "completed_at": &now, "lease_owner": "", "lease_expires_at": nil,
+				"error": task.Error, "completed_at": &now, "lease_owner": "", "lease_expires_at": nil, "lease_token": "",
 				"updated_at": now,
 			})
 		if updatedTask.Error != nil {
 			return updatedTask.Error
 		}
 		if updatedTask.RowsAffected != 1 {
-			return errors.New("task lease is no longer owned by this worker")
+			return ErrTaskCompletionStateConflict
 		}
 		return nil
 	})

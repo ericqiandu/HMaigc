@@ -426,6 +426,7 @@ func (r *Repository) RetryTaskWithBilling(userID string, taskID string, order *m
 			"status": model.TaskStatusQueued, "stage": "等待队列调度", "progress": 5, "error": "", "result_json": "",
 			"capability": policy.Capability, "started_at": nil, "completed_at": nil, "updated_at": time.Now(),
 			"provider_request_id": "", "poll_stage": "", "next_poll_at": nil, "lease_owner": "", "lease_expires_at": nil,
+			"lease_token": "", "cancel_requested_at": nil, "cancel_reason_code": "",
 			"watermark_capability": watermarkTask.WatermarkCapability, "watermark_directive": watermarkTask.WatermarkDirective,
 			"watermark_parameter_applied": watermarkTask.WatermarkParameterApplied, "watermark_parameter_value": watermarkTask.WatermarkParameterValue,
 			"watermark_policy_publication_id": watermarkTask.WatermarkPolicyPublicationID, "watermark_policy_version": watermarkTask.WatermarkPolicyVersion,
@@ -480,7 +481,7 @@ func (r *Repository) ResumeTaskWithUncertainBilling(userID string, taskID string
 			Updates(map[string]any{
 				"status": model.TaskStatusQueued, "stage": "等待上游结果核对", "progress": 35, "error": "", "result_json": "",
 				"started_at": nil, "completed_at": nil, "updated_at": now, "poll_stage": "provider_resume", "next_poll_at": nil,
-				"lease_owner": "", "lease_expires_at": nil,
+				"lease_owner": "", "lease_expires_at": nil, "lease_token": "", "cancel_requested_at": nil, "cancel_reason_code": "",
 			})
 		if updated.Error != nil {
 			return updated.Error

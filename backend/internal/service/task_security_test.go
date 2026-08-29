@@ -26,7 +26,9 @@ func TestTaskSecurityRejectsMissingEnvelopeBeforeBillingOrExecution(t *testing.T
 		ID: "task-without-envelope", UserID: "user-1", ProjectID: "canvas-1", Type: "canvas_image",
 		Audience: model.TaskAudienceCustomer, ExecutionKind: model.TaskExecutionProvider,
 		Status: model.TaskStatusRunning, Stage: "运行中", BillingOrderID: "billing-1", InputJSON: `{}`,
-		LeaseOwner: "worker-1", LeaseExpiresAt: ptr(now.Add(time.Minute)), CreatedAt: now, UpdatedAt: now,
+		LeaseOwner: "worker-1", LeaseExpiresAt: ptr(now.Add(time.Minute)), LeaseGeneration: 1,
+		LeaseToken: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		CreatedAt:  now, UpdatedAt: now,
 	}
 	order := model.BillingOrder{
 		ID: task.BillingOrderID, UserID: task.UserID, TaskID: task.ID,

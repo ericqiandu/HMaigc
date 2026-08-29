@@ -39,7 +39,9 @@ func TestProcessClaimedTaskKeepsTaskRetryableWhenRefundCannotComplete(t *testing
 	task := model.Task{
 		ID: order.TaskID, UserID: account.UserID, Type: "unsupported_test_task",
 		Status: model.TaskStatusRunning, BillingOrderID: order.ID, LeaseOwner: svc.workerID,
-		LeaseExpiresAt: &leaseExpiry, CreatedAt: now, UpdatedAt: now,
+		LeaseExpiresAt: &leaseExpiry, LeaseGeneration: 1,
+		LeaseToken: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		CreatedAt:  now, UpdatedAt: now,
 	}
 	if err := svc.sealTaskExecutionEnvelope(&task, &order, now); err != nil {
 		t.Fatal(err)
@@ -108,8 +110,9 @@ func TestFailedTaskAndRefundCommitOrRollbackTogether(t *testing.T) {
 	leaseExpiry := now.Add(time.Minute)
 	storedTask := model.Task{
 		ID: order.TaskID, UserID: account.UserID, Type: "test", Status: model.TaskStatusRunning,
-		BillingOrderID: order.ID, LeaseOwner: "current-worker", LeaseExpiresAt: &leaseExpiry,
-		CreatedAt: now, UpdatedAt: now,
+		BillingOrderID: order.ID, LeaseOwner: "current-worker", LeaseExpiresAt: &leaseExpiry, LeaseGeneration: 1,
+		LeaseToken: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		CreatedAt:  now, UpdatedAt: now,
 	}
 	if err := db.Create(&storedTask).Error; err != nil {
 		t.Fatal(err)

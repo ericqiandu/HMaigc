@@ -234,11 +234,14 @@ func TestLateProviderSuccessPersistsUnadoptedArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner := "late-result-test-worker"
-	run, _, err = fixture.service.repo.ClaimAgentSpecialistRun(
+	run, claimedTask, err := fixture.service.repo.ClaimAgentSpecialistRun(
 		fixture.scope, run.ID, task.ID, task.BillingOrderID, owner, time.Minute,
 	)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if claimedTask.LeaseGeneration == 0 || claimedTask.LeaseToken == "" {
+		t.Fatalf("specialist claim lease = generation %d token %q", claimedTask.LeaseGeneration, claimedTask.LeaseToken)
 	}
 	state, err := fixture.service.repo.LoadAgentCheckpoint(fixture.scope)
 	if err != nil {
@@ -256,10 +259,27 @@ func TestLateProviderSuccessPersistsUnadoptedArtifact(t *testing.T) {
 		SkillVersions: fixture.request.LoadedSkills,
 	}
 	completion := repository.CompleteAgentSpecialistRunInput{
-		Scope: fixture.scope, SpecialistRunID: run.ID, LeaseOwner: owner, ProviderRequestID: "provider-late-success",
-		ResultJSON: `{"summary":"迟到结果已入账本"}`, ResultSummary: "迟到结果已入账本", Drafts: []agentruntime.ArtifactDraft{draft},
+		Scope: fixture.scope, SpecialistRunID: run.ID, LeaseOwner: owner,
+		LeaseGeneration: claimedTask.LeaseGeneration, LeaseToken: claimedTask.LeaseToken,
+		ProviderRequestID: "provider-late-success",
+		ResultJSON:        `{"summary":"迟到结果已入账本"}`, ResultSummary: "迟到结果已入账本", Drafts: []agentruntime.ArtifactDraft{draft},
 		InputTokens: 30, CachedTokens: 5, OutputTokens: 12, Now: time.Now().UTC(),
 	}
+	if _, _, err := fixture.service.repo.CompleteAgentSpecialistRun(completion); !errors.Is(err, repository.ErrAgentSpecialistTaskLease) {
+		t.Fatalf("stale specialist completion error = %v, want %v", err, repository.ErrAgentSpecialistTaskLease)
+	}
+	recoveryTask, err := fixture.service.repo.ClaimCancelledTaskResult(
+		claimedTask.ID,
+		claimedTask.UserID,
+		claimedTask.LeaseGeneration,
+		owner,
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion.LeaseGeneration = recoveryTask.LeaseGeneration
+	completion.LeaseToken = recoveryTask.LeaseToken
 	completed, revisions, err := fixture.service.repo.CompleteAgentSpecialistRun(completion)
 	if err != nil {
 		t.Fatal(err)

@@ -83,7 +83,7 @@ func TestSaveTaskCompletionPersistsRelatedRowsTogether(t *testing.T) {
 	}
 	session := model.Session{ID: "session-1", UserID: "user-1", Status: model.SessionStatusActive}
 	originalInputJSON := `{"mode":"text","secret":"must-remain-signed-at-rest"}`
-	task := model.Task{ID: "task-1", UserID: "user-1", SessionID: session.ID, Status: model.TaskStatusRunning, LeaseOwner: "worker-1", InputJSON: originalInputJSON}
+	task := model.Task{ID: "task-1", UserID: "user-1", SessionID: session.ID, Status: model.TaskStatusRunning, LeaseOwner: "worker-1", LeaseGeneration: 1, LeaseToken: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", InputJSON: originalInputJSON}
 	if err := db.Create(&session).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,15 @@ func TestSaveCancelledTaskResultKeepsCancelledStatusAndPersistsAssetFact(t *test
 		t.Fatal(err)
 	}
 	originalInputJSON := `{"mode":"video","secret":"must-remain-signed-at-rest"}`
-	task := model.Task{ID: "cancelled-task", UserID: "user", Status: model.TaskStatusCancelled, BillingOrderID: "billing", ProviderRequestID: "provider-task", InputJSON: originalInputJSON}
+	now := time.Now().UTC()
+	leaseExpiresAt := now.Add(time.Minute)
+	task := model.Task{
+		ID: "cancelled-task", UserID: "user", Status: model.TaskStatusCancelled,
+		BillingOrderID: "billing", ProviderRequestID: "provider-task", InputJSON: originalInputJSON,
+		CancelRequestedAt: &now, CancelReasonCode: "user_requested",
+		LeaseOwner: "reconcile-worker", LeaseExpiresAt: &leaseExpiresAt, LeaseGeneration: 2,
+		LeaseToken: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
 	if err := db.Create(&task).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +207,7 @@ func TestCancelledProviderTaskRemainsClaimableForResultReconciliation(t *testing
 		t.Fatal(err)
 	}
 	past := time.Now().Add(-time.Minute)
-	task := model.Task{ID: "cancel-reconcile", UserID: "user", Status: model.TaskStatusCancelled, ProviderRequestID: "provider-task", PollStage: "cancel_reconcile", NextPollAt: &past}
+	task := model.Task{ID: "cancel-reconcile", UserID: "user", Status: model.TaskStatusCancelled, ProviderRequestID: "provider-task", PollStage: "cancel_reconcile", NextPollAt: &past, CancelRequestedAt: &past, CancelReasonCode: "user_requested"}
 	if err := db.Create(&task).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +219,7 @@ func TestCancelledProviderTaskRemainsClaimableForResultReconciliation(t *testing
 	if claimed == nil || claimed.ID != task.ID || claimed.Status != model.TaskStatusCancelled || claimed.LeaseOwner != "reconcile-worker" {
 		t.Fatalf("cancel reconciliation claim = %#v", claimed)
 	}
-	if err := repo.RenewTaskLease(task.ID, "reconcile-worker", time.Minute); err != nil {
+	if err := repo.RenewTaskLease(claimed.ID, claimed.LeaseOwner, claimed.LeaseGeneration, claimed.LeaseToken, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 }

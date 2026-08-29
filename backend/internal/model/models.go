@@ -1033,6 +1033,10 @@ type Task struct {
 	NextPollAt                   *time.Time          `json:"nextPollAt,omitempty" gorm:"index"`
 	LeaseOwner                   string              `json:"-" gorm:"index;size:120"`
 	LeaseExpiresAt               *time.Time          `json:"-" gorm:"index;index:idx_tasks_claim,priority:2"`
+	LeaseGeneration              uint64              `json:"-" gorm:"not null;default:0"`
+	LeaseToken                   string              `json:"-" gorm:"not null;default:'';size:64"`
+	CancelRequestedAt            *time.Time          `json:"cancelRequestedAt,omitempty" gorm:"index"`
+	CancelReasonCode             string              `json:"cancelReasonCode,omitempty" gorm:"size:64"`
 	InputJSON                    string              `json:"inputJson" gorm:"type:text"`
 	ResultJSON                   string              `json:"resultJson" gorm:"type:text"`
 	Error                        string              `json:"error"`

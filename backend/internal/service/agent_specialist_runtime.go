@@ -90,17 +90,17 @@ func (s *Service) RunSpecialist(ctx context.Context, scope agentruntime.Scope, p
 		return SpecialistCompletion{}, err
 	}
 	if err := s.verifyTaskExecutionEnvelope(task, time.Now().UTC()); err != nil {
-		failErr := s.failSpecialistAfterClaim(scope, *run, owner, "specialist_task_envelope_invalid", "Specialist 执行信封校验失败", repository.FailedTaskBillingRefund)
+		failErr := s.failSpecialistAfterClaim(scope, *run, *task, "specialist_task_envelope_invalid", "Specialist 执行信封校验失败", repository.FailedTaskBillingRefund)
 		return SpecialistCompletion{}, errors.Join(err, failErr)
 	}
 	if err := s.BeginTokenBillingRequest(task.BillingOrderID); err != nil {
-		failErr := s.failSpecialistAfterClaim(scope, *run, owner, "specialist_billing_start_failed", "Specialist 计费请求未能开始", repository.FailedTaskBillingRefund)
+		failErr := s.failSpecialistAfterClaim(scope, *run, *task, "specialist_billing_start_failed", "Specialist 计费请求未能开始", repository.FailedTaskBillingRefund)
 		return SpecialistCompletion{}, errors.Join(err, failErr)
 	}
 
 	resolved, err := s.resolveTextTaskProviderConfig(*task, config)
 	if err != nil {
-		failErr := s.failSpecialistAfterClaim(scope, *run, owner, "specialist_model_unavailable", "Specialist 冻结模型配置不可执行", repository.FailedTaskBillingRefund)
+		failErr := s.failSpecialistAfterClaim(scope, *run, *task, "specialist_model_unavailable", "Specialist 冻结模型配置不可执行", repository.FailedTaskBillingRefund)
 		return SpecialistCompletion{}, errors.Join(err, failErr)
 	}
 	runContext, cancelRun := context.WithCancel(ctx)
@@ -124,28 +124,54 @@ func (s *Service) RunSpecialist(ctx context.Context, scope agentruntime.Scope, p
 				providerErr = errors.Join(providerErr, evidenceErr)
 			}
 		}
-		failErr := s.failSpecialistAfterClaim(scope, *run, owner, "specialist_provider_failed", "Specialist 模型请求失败", action)
+		failErr := s.failSpecialistAfterClaim(scope, *run, *task, "specialist_provider_failed", "Specialist 模型请求失败", action)
 		return SpecialistCompletion{}, errors.Join(providerErr, failErr)
 	}
 	if err := s.persistAgentRuntimeTokenBillingEvidence(*task, result, "等待 Specialist 结果持久化后核对"); err != nil {
-		failErr := s.failSpecialistAfterClaim(scope, *run, owner, "specialist_billing_evidence_failed", "Specialist 计费事实保存失败", repository.FailedTaskBillingUncertain)
+		failErr := s.failSpecialistAfterClaim(scope, *run, *task, "specialist_billing_evidence_failed", "Specialist 计费事实保存失败", repository.FailedTaskBillingUncertain)
 		return SpecialistCompletion{}, errors.Join(err, failErr)
 	}
 
 	specialistResult, err := parseAndValidateSpecialistResult(result.Text, request, result.ProviderRequestID)
 	if err != nil {
-		failErr := s.failSpecialistAfterClaim(scope, *run, owner, "specialist_output_invalid", "Specialist 结构化结果无效", repository.FailedTaskBillingUncertain)
+		failErr := s.failSpecialistAfterClaim(scope, *run, *task, "specialist_output_invalid", "Specialist 结构化结果无效", repository.FailedTaskBillingUncertain)
 		return SpecialistCompletion{}, errors.Join(ErrSpecialistOutputInvalid, err, failErr)
 	}
 	resultJSON, err := json.Marshal(specialistResult)
 	if err != nil {
 		return SpecialistCompletion{}, err
 	}
-	completed, revisions, err := s.repo.CompleteAgentSpecialistRun(repository.CompleteAgentSpecialistRunInput{
-		Scope: scope, SpecialistRunID: run.ID, LeaseOwner: owner, ProviderRequestID: result.ProviderRequestID,
-		ResultJSON: string(resultJSON), ResultSummary: specialistResult.Summary, Drafts: specialistResult.Artifacts,
+	completionInput := repository.CompleteAgentSpecialistRunInput{
+		Scope: scope, SpecialistRunID: run.ID, LeaseOwner: task.LeaseOwner,
+		LeaseGeneration: task.LeaseGeneration, LeaseToken: task.LeaseToken,
+		ProviderRequestID: result.ProviderRequestID,
+		ResultJSON:        string(resultJSON), ResultSummary: specialistResult.Summary, Drafts: specialistResult.Artifacts,
 		InputTokens: result.Usage.InputTokens, CachedTokens: result.Usage.CachedTokens, OutputTokens: result.Usage.OutputTokens, Now: time.Now().UTC(),
-	})
+	}
+	completed, revisions, err := s.repo.CompleteAgentSpecialistRun(completionInput)
+	if errors.Is(err, repository.ErrAgentSpecialistTaskLease) {
+		latestTask, loadErr := s.repo.Task(task.ID)
+		if loadErr != nil {
+			return SpecialistCompletion{}, errors.Join(err, loadErr)
+		}
+		if latestTask.Status != model.TaskStatusCancelled || latestTask.CancelRequestedAt == nil {
+			return SpecialistCompletion{}, err
+		}
+		recoveryTask, claimErr := s.repo.ClaimCancelledTaskResult(
+			task.ID,
+			task.UserID,
+			task.LeaseGeneration,
+			owner,
+			taskLeaseDuration,
+		)
+		if claimErr != nil {
+			return SpecialistCompletion{}, errors.Join(err, claimErr)
+		}
+		completionInput.LeaseOwner = recoveryTask.LeaseOwner
+		completionInput.LeaseGeneration = recoveryTask.LeaseGeneration
+		completionInput.LeaseToken = recoveryTask.LeaseToken
+		completed, revisions, err = s.repo.CompleteAgentSpecialistRun(completionInput)
+	}
 	if err != nil {
 		return SpecialistCompletion{}, err
 	}
@@ -431,9 +457,11 @@ func parseAndValidateSpecialistResult(raw string, request agentruntime.Specialis
 	return result, nil
 }
 
-func (s *Service) failSpecialistAfterClaim(scope agentruntime.Scope, run model.AgentSpecialistRun, owner string, code string, message string, action repository.FailedTaskBillingAction) error {
+func (s *Service) failSpecialistAfterClaim(scope agentruntime.Scope, run model.AgentSpecialistRun, task model.Task, code string, message string, action repository.FailedTaskBillingAction) error {
 	_, err := s.repo.FailAgentSpecialistRun(repository.FailAgentSpecialistRunInput{
-		Scope: scope, SpecialistRunID: run.ID, LeaseOwner: owner, ErrorCode: code, ErrorText: message, BillingAction: action, Now: time.Now().UTC(),
+		Scope: scope, SpecialistRunID: run.ID, LeaseOwner: task.LeaseOwner,
+		LeaseGeneration: task.LeaseGeneration, LeaseToken: task.LeaseToken,
+		ErrorCode: code, ErrorText: message, BillingAction: action, Now: time.Now().UTC(),
 	})
 	return err
 }

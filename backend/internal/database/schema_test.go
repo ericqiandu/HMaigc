@@ -156,6 +156,52 @@ func TestTaskEnvelopeSchemaCreatesExecutionAuditFacts(t *testing.T) {
 	}
 }
 
+func TestCancellationIntentAndLeaseGenerationSchemaCreatesDurableTaskFacts(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"cancel_requested_at", "cancel_reason_code", "lease_generation", "lease_token"} {
+		if !db.Migrator().HasColumn(&model.Task{}, column) {
+			t.Fatalf("tasks.%s was not migrated", column)
+		}
+	}
+	assertSQLiteNotNullEmptyDefault(t, db, "tasks", "lease_token")
+}
+
+func TestCancellationIntentMigrationBackfillsExistingCancelledTasks(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE tasks (
+		id text PRIMARY KEY,
+		status text,
+		completed_at datetime,
+		created_at datetime,
+		updated_at datetime
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := db.Exec("INSERT INTO tasks(id, status, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", "legacy-cancelled", model.TaskStatusCancelled, now, now.Add(-time.Minute), now).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	var task model.Task
+	if err := db.First(&task, "id = ?", "legacy-cancelled").Error; err != nil {
+		t.Fatal(err)
+	}
+	if task.CancelRequestedAt == nil || !task.CancelRequestedAt.Equal(now) || task.CancelReasonCode != "legacy_cancelled" {
+		t.Fatalf("legacy cancellation facts = %#v", task)
+	}
+}
+
 func TestWatermarkPolicySchemaCreatesTablesTaskFactsAndExactIndexes(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

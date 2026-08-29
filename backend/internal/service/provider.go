@@ -140,11 +140,13 @@ type providerAnalyticsContext struct {
 	ProviderRequestID          string
 	ConcurrencyLimit           int
 	LeaseOwner                 string
+	LeaseGeneration            uint64
+	LeaseToken                 string
 	AsyncCreate                bool
 }
 
 func withProviderAnalytics(ctx context.Context, service *Service, task model.Task) context.Context {
-	metadata := providerAnalyticsContext{Service: service, UserID: task.UserID, TaskID: task.ID, BillingOrderID: task.BillingOrderID, Capability: capabilityFromTaskType(task.Type), Operation: task.Operation, Model: task.Model, ProviderRequestID: task.ProviderRequestID, LeaseOwner: task.LeaseOwner}
+	metadata := providerAnalyticsContext{Service: service, UserID: task.UserID, TaskID: task.ID, BillingOrderID: task.BillingOrderID, Capability: capabilityFromTaskType(task.Type), Operation: task.Operation, Model: task.Model, ProviderRequestID: task.ProviderRequestID, LeaseOwner: task.LeaseOwner, LeaseGeneration: task.LeaseGeneration, LeaseToken: task.LeaseToken}
 	var input canvasGenerationInput
 	if json.Unmarshal([]byte(task.InputJSON), &input) == nil {
 		metadata.ChannelID = firstNonEmpty(input.Config.ChannelID, systemChannelIDFromBaseURL(input.Config.BaseURL))
@@ -1272,7 +1274,7 @@ func doBinary(req *http.Request) ([]byte, string, error) {
 		return nil, "", err
 	}
 	if metadata, ok := req.Context().Value(providerAnalyticsKey{}).(providerAnalyticsContext); ok && metadata.AsyncCreate && metadata.Service != nil {
-		if err := metadata.Service.repo.BeginProviderCreate(metadata.TaskID, metadata.LeaseOwner); err != nil {
+		if err := metadata.Service.repo.BeginProviderCreate(metadata.TaskID, metadata.LeaseOwner, metadata.LeaseGeneration, metadata.LeaseToken); err != nil {
 			return nil, "", &KuaiziCompatibleCreateError{err: fmt.Errorf("提交供应商创建边界失败：%w", err)}
 		}
 	}
@@ -1388,7 +1390,7 @@ func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode in
 		}
 	}
 	metadata.Service.EnrichAPICallLog(&log, responseBody)
-	if err := metadata.Service.logProviderCall(log, metadata.LeaseOwner, metadata.AsyncCreate); err != nil {
+	if err := metadata.Service.logProviderCall(log, metadata.LeaseOwner, metadata.LeaseGeneration, metadata.LeaseToken, metadata.AsyncCreate); err != nil {
 		if !channelSlotFailure {
 			_ = metadata.Service.MarkBillingUncertain(metadata.BillingOrderID, "上游调用日志写入失败，费用状态待核对")
 		}

@@ -47,6 +47,14 @@ func MigrateBaseSchema(db *gorm.DB) error {
 		Updates(model.Task{Audience: model.TaskAudienceInternal, ExecutionKind: model.TaskExecutionLocalMediaAssembly}).Error; err != nil {
 		return fmt.Errorf("回填本地媒体装配任务执行事实失败: %w", err)
 	}
+	if err := db.Model(&model.Task{}).
+		Where("status = ? AND cancel_requested_at IS NULL", model.TaskStatusCancelled).
+		Updates(map[string]any{
+			"cancel_requested_at": gorm.Expr("COALESCE(completed_at, updated_at, created_at, ?)", time.Now().UTC()),
+			"cancel_reason_code":  "legacy_cancelled",
+		}).Error; err != nil {
+		return fmt.Errorf("回填历史任务取消事实失败: %w", err)
+	}
 	if db.Dialector.Name() != "postgres" {
 		return nil
 	}

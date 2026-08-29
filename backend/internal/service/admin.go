@@ -634,10 +634,10 @@ func (s *Service) LogAPICall(log model.ApiCallLog) error {
 		log.CreatedAt = time.Now()
 	}
 	s.estimateCallCost(&log)
-	return s.repo.SaveProviderCall(&log, "", false)
+	return s.repo.SaveProviderCall(&log, "", 0, "", false)
 }
 
-func (s *Service) logProviderCall(log model.ApiCallLog, leaseOwner string, asyncCreate bool) error {
+func (s *Service) logProviderCall(log model.ApiCallLog, leaseOwner string, leaseGeneration uint64, leaseToken string, asyncCreate bool) error {
 	if log.ID == "" {
 		log.ID = newID()
 	}
@@ -645,7 +645,7 @@ func (s *Service) logProviderCall(log model.ApiCallLog, leaseOwner string, async
 		log.CreatedAt = time.Now()
 	}
 	s.estimateCallCost(&log)
-	return s.repo.SaveProviderCall(&log, leaseOwner, asyncCreate)
+	return s.repo.SaveProviderCall(&log, leaseOwner, leaseGeneration, leaseToken, asyncCreate)
 }
 
 func (s *Service) APICallLogs(actor *model.User, limit int) ([]model.ApiCallLog, error) {

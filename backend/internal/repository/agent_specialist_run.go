@@ -31,6 +31,8 @@ type CompleteAgentSpecialistRunInput struct {
 	Scope             agentruntime.Scope
 	SpecialistRunID   string
 	LeaseOwner        string
+	LeaseGeneration   uint64
+	LeaseToken        string
 	ProviderRequestID string
 	ResultJSON        string
 	ResultSummary     string
@@ -45,6 +47,8 @@ type FailAgentSpecialistRunInput struct {
 	Scope           agentruntime.Scope
 	SpecialistRunID string
 	LeaseOwner      string
+	LeaseGeneration uint64
+	LeaseToken      string
 	ErrorCode       string
 	ErrorText       string
 	BillingAction   FailedTaskBillingAction
@@ -431,11 +435,15 @@ func (r *Repository) ClaimAgentSpecialistRun(scope agentruntime.Scope, specialis
 	if strings.TrimSpace(owner) == "" || leaseDuration <= 0 {
 		return nil, nil, ErrAgentSpecialistTaskLease
 	}
+	leaseToken, err := newTaskLeaseToken()
+	if err != nil {
+		return nil, nil, err
+	}
 	now := time.Now().UTC()
 	var run model.AgentSpecialistRun
 	var task model.Task
 	var stage model.AgentProductionStage
-	err := r.db.Transaction(func(tx *gorm.DB) error {
+	err = r.db.Transaction(func(tx *gorm.DB) error {
 		if err := requireActiveProductionAgentRunTx(tx, scope); err != nil {
 			return err
 		}
@@ -477,12 +485,13 @@ func (r *Repository) ClaimAgentSpecialistRun(scope agentruntime.Scope, specialis
 			}
 		}
 		leaseExpiresAt := now.Add(leaseDuration)
-		claimed := tx.Model(&model.Task{}).Where("id = ? AND status = ?", task.ID, model.TaskStatusQueued).
-			Select("status", "stage", "progress", "attempts", "started_at", "lease_owner", "lease_expires_at", "updated_at").
-			Updates(model.Task{
-				Status: model.TaskStatusRunning, Stage: "Specialist 模型执行中", Progress: 20,
-				Attempts: task.Attempts + 1, StartedAt: &now, LeaseOwner: owner,
-				LeaseExpiresAt: &leaseExpiresAt, UpdatedAt: now,
+		claimed := tx.Model(&model.Task{}).
+			Where("id = ? AND status = ? AND cancel_requested_at IS NULL AND lease_generation = ? AND lease_token = ?", task.ID, model.TaskStatusQueued, task.LeaseGeneration, task.LeaseToken).
+			Updates(map[string]any{
+				"status": model.TaskStatusRunning, "stage": "Specialist 模型执行中", "progress": 20,
+				"attempts": gorm.Expr("attempts + ?", 1), "started_at": &now, "lease_owner": owner,
+				"lease_expires_at": &leaseExpiresAt, "lease_generation": gorm.Expr("lease_generation + ?", 1),
+				"lease_token": leaseToken, "updated_at": now,
 			})
 		if claimed.Error != nil || claimed.RowsAffected != 1 {
 			return ErrAgentSpecialistTaskLease
@@ -521,7 +530,7 @@ func (r *Repository) CompleteAgentSpecialistRun(input CompleteAgentSpecialistRun
 	if err := validateProductionRepositoryScope(input.Scope, true); err != nil {
 		return nil, nil, err
 	}
-	if input.Now.IsZero() || strings.TrimSpace(input.LeaseOwner) == "" || strings.TrimSpace(input.ProviderRequestID) == "" ||
+	if input.Now.IsZero() || !validTaskLease(input.LeaseOwner, input.LeaseGeneration, input.LeaseToken) || strings.TrimSpace(input.ProviderRequestID) == "" ||
 		strings.TrimSpace(input.ResultSummary) == "" || len(input.Drafts) == 0 || input.InputTokens < 0 || input.CachedTokens < 0 ||
 		input.OutputTokens < 0 || input.CachedTokens > input.InputTokens {
 		return nil, nil, ErrAgentSpecialistRunConflict
@@ -574,12 +583,12 @@ func (r *Repository) CompleteAgentSpecialistRun(input CompleteAgentSpecialistRun
 			revisions = append(revisions, *revision)
 		}
 		taskResult := tx.Model(&model.Task{}).
-			Where("id = ? AND status = ? AND lease_owner = ?", run.TaskID, model.TaskStatusRunning, input.LeaseOwner).
-			Select("status", "stage", "progress", "provider_request_id", "result_json", "completed_at", "lease_owner", "lease_expires_at", "updated_at").
+			Where("id = ? AND status = ? AND lease_owner = ? AND lease_generation = ? AND lease_token = ?", run.TaskID, model.TaskStatusRunning, input.LeaseOwner, input.LeaseGeneration, input.LeaseToken).
+			Select("status", "stage", "progress", "provider_request_id", "result_json", "completed_at", "lease_owner", "lease_expires_at", "lease_token", "updated_at").
 			Updates(model.Task{
 				Status: model.TaskStatusSucceeded, Stage: "Specialist 模型任务完成", Progress: 100,
 				ProviderRequestID: input.ProviderRequestID, ResultJSON: input.ResultJSON,
-				CompletedAt: &input.Now, LeaseOwner: "", LeaseExpiresAt: nil, UpdatedAt: input.Now,
+				CompletedAt: &input.Now, LeaseOwner: "", LeaseExpiresAt: nil, LeaseToken: "", UpdatedAt: input.Now,
 			})
 		if taskResult.Error != nil || taskResult.RowsAffected != 1 {
 			return ErrAgentSpecialistTaskLease
@@ -721,11 +730,12 @@ func (r *Repository) completeCancelledAgentSpecialistRunTx(
 		revisions = append(revisions, *revision)
 	}
 	taskResult := tx.Model(&model.Task{}).
-		Where("id = ? AND user_id = ? AND status = ?", run.TaskID, input.Scope.ActorUserID, model.TaskStatusCancelled).
-		Select("stage", "provider_request_id", "result_json", "poll_stage", "next_poll_at", "updated_at").
+		Where("id = ? AND user_id = ? AND status = ? AND cancel_requested_at IS NOT NULL AND lease_owner = ? AND lease_generation = ? AND lease_token = ?", run.TaskID, input.Scope.ActorUserID, model.TaskStatusCancelled, input.LeaseOwner, input.LeaseGeneration, input.LeaseToken).
+		Select("stage", "provider_request_id", "result_json", "poll_stage", "next_poll_at", "lease_owner", "lease_expires_at", "lease_token", "updated_at").
 		Updates(model.Task{
 			Stage: "迟到供应商结果已保存为未采纳事实", ProviderRequestID: input.ProviderRequestID,
-			ResultJSON: input.ResultJSON, PollStage: "cancel_reconcile", NextPollAt: &input.Now, UpdatedAt: input.Now,
+			ResultJSON: input.ResultJSON, PollStage: "cancel_reconciled", NextPollAt: nil,
+			LeaseOwner: "", LeaseExpiresAt: nil, LeaseToken: "", UpdatedAt: input.Now,
 		})
 	if taskResult.Error != nil {
 		return nil, nil, taskResult.Error
@@ -837,7 +847,7 @@ func (r *Repository) FailAgentSpecialistRun(input FailAgentSpecialistRunInput) (
 	if err := validateProductionRepositoryScope(input.Scope, true); err != nil {
 		return nil, err
 	}
-	if input.Now.IsZero() || strings.TrimSpace(input.LeaseOwner) == "" || strings.TrimSpace(input.ErrorCode) == "" || strings.TrimSpace(input.ErrorText) == "" {
+	if input.Now.IsZero() || !validTaskLease(input.LeaseOwner, input.LeaseGeneration, input.LeaseToken) || strings.TrimSpace(input.ErrorCode) == "" || strings.TrimSpace(input.ErrorText) == "" {
 		return nil, ErrAgentSpecialistRunConflict
 	}
 	var failed model.AgentSpecialistRun
@@ -868,11 +878,11 @@ func (r *Repository) FailAgentSpecialistRun(input FailAgentSpecialistRunInput) (
 			return err
 		}
 		taskResult := tx.Model(&model.Task{}).
-			Where("id = ? AND status = ? AND lease_owner = ?", run.TaskID, model.TaskStatusRunning, input.LeaseOwner).
-			Select("status", "stage", "progress", "error", "completed_at", "lease_owner", "lease_expires_at", "updated_at").
+			Where("id = ? AND status = ? AND lease_owner = ? AND lease_generation = ? AND lease_token = ?", run.TaskID, model.TaskStatusRunning, input.LeaseOwner, input.LeaseGeneration, input.LeaseToken).
+			Select("status", "stage", "progress", "error", "completed_at", "lease_owner", "lease_expires_at", "lease_token", "updated_at").
 			Updates(model.Task{
 				Status: model.TaskStatusFailed, Stage: "Specialist 模型任务失败", Progress: 100,
-				Error: input.ErrorText, CompletedAt: &input.Now, LeaseOwner: "", LeaseExpiresAt: nil, UpdatedAt: input.Now,
+				Error: input.ErrorText, CompletedAt: &input.Now, LeaseOwner: "", LeaseExpiresAt: nil, LeaseToken: "", UpdatedAt: input.Now,
 			})
 		if taskResult.Error != nil || taskResult.RowsAffected != 1 {
 			return ErrAgentSpecialistTaskLease

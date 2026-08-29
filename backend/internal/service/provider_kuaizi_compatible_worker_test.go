@@ -14,6 +14,8 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+const providerWorkerLeaseToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
 func TestProviderAssetSlotMapsMixedReferencesToExactSeedanceFields(t *testing.T) {
 	manifest, err := agentruntime.NewReferenceManifest([]agentruntime.ReferenceManifestEntry{
 		providerReferenceManifestEntry("clip-b", agentruntime.ReferenceMediaVideo, "video-b", 1),
@@ -308,7 +310,7 @@ func TestProcessTaskUsesFrozenKuaiziCompatibleRuntimeForSeedance20And25(t *testi
 			if err != nil {
 				t.Fatal(err)
 			}
-			task := model.Task{ID: "task", UserID: "user", Type: "canvas_video", Model: modelKey, Status: model.TaskStatusRunning, LeaseOwner: "worker-1", LeaseExpiresAt: ptr(time.Now().Add(time.Minute)), InputJSON: string(inputJSON), ProviderAccountID: "account", ProviderEndpointVersionID: "endpoint-v1", ProviderCredentialVersionID: "key-v1", WatermarkCapability: model.WatermarkCapabilityControlled, WatermarkDirective: model.WatermarkDirectiveWithWatermark, WatermarkParameterApplied: true, WatermarkParameterValue: boolPointer(true)}
+			task := model.Task{ID: "task", UserID: "user", Type: "canvas_video", Model: modelKey, Status: model.TaskStatusRunning, LeaseOwner: "worker-1", LeaseExpiresAt: ptr(time.Now().Add(time.Minute)), LeaseGeneration: 1, LeaseToken: providerWorkerLeaseToken, InputJSON: string(inputJSON), ProviderAccountID: "account", ProviderEndpointVersionID: "endpoint-v1", ProviderCredentialVersionID: "key-v1", WatermarkCapability: model.WatermarkCapabilityControlled, WatermarkDirective: model.WatermarkDirectiveWithWatermark, WatermarkParameterApplied: true, WatermarkParameterValue: boolPointer(true)}
 			if err := repo.Create(&task); err != nil {
 				t.Fatal(err)
 			}
@@ -370,7 +372,7 @@ func TestProcessKuaiziCompatibleTaskDispatchesSeedreamFamily(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := model.Task{ID: "seedream-task", UserID: "user", Type: "canvas_image", Model: kuaiziSeedreamLiteModel, Status: model.TaskStatusRunning, LeaseOwner: "worker-seedream", LeaseExpiresAt: ptr(time.Now().Add(time.Minute)), InputJSON: string(inputJSON), ProviderAccountID: "account", ProviderEndpointVersionID: "endpoint-v1", ProviderCredentialVersionID: "key-v1", WatermarkCapability: model.WatermarkCapabilityControlled, WatermarkDirective: model.WatermarkDirectiveWithWatermark, WatermarkParameterApplied: true, WatermarkParameterValue: boolPointer(true)}
+	task := model.Task{ID: "seedream-task", UserID: "user", Type: "canvas_image", Model: kuaiziSeedreamLiteModel, Status: model.TaskStatusRunning, LeaseOwner: "worker-seedream", LeaseExpiresAt: ptr(time.Now().Add(time.Minute)), LeaseGeneration: 1, LeaseToken: providerWorkerLeaseToken, InputJSON: string(inputJSON), ProviderAccountID: "account", ProviderEndpointVersionID: "endpoint-v1", ProviderCredentialVersionID: "key-v1", WatermarkCapability: model.WatermarkCapabilityControlled, WatermarkDirective: model.WatermarkDirectiveWithWatermark, WatermarkParameterApplied: true, WatermarkParameterValue: boolPointer(true)}
 	if err := repo.Create(&task); err != nil {
 		t.Fatal(err)
 	}
@@ -412,11 +414,11 @@ func TestKuaiziAsyncCreateFencePreventsSecondPostAfterWorkerCrash(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := model.Task{ID: "crashed-task", UserID: "user", Type: "canvas_video", Model: "doubao-seedance-2-5-260628", Status: model.TaskStatusRunning, LeaseOwner: "worker-2", LeaseExpiresAt: ptr(time.Now().Add(time.Minute)), InputJSON: string(inputJSON), ProviderAccountID: "account", ProviderEndpointVersionID: "endpoint-v1", ProviderCredentialVersionID: "key-v1", WatermarkCapability: model.WatermarkCapabilityControlled, WatermarkDirective: model.WatermarkDirectiveWithWatermark, WatermarkParameterApplied: true, WatermarkParameterValue: boolPointer(true)}
+	task := model.Task{ID: "crashed-task", UserID: "user", Type: "canvas_video", Model: "doubao-seedance-2-5-260628", Status: model.TaskStatusRunning, LeaseOwner: "worker-2", LeaseExpiresAt: ptr(time.Now().Add(time.Minute)), LeaseGeneration: 1, LeaseToken: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", InputJSON: string(inputJSON), ProviderAccountID: "account", ProviderEndpointVersionID: "endpoint-v1", ProviderCredentialVersionID: "key-v1", WatermarkCapability: model.WatermarkCapabilityControlled, WatermarkDirective: model.WatermarkDirectiveWithWatermark, WatermarkParameterApplied: true, WatermarkParameterValue: boolPointer(true)}
 	if err := repo.Create(&task); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.BeginProviderCreate(task.ID, task.LeaseOwner); err != nil {
+	if err := repo.BeginProviderCreate(task.ID, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken); err != nil {
 		t.Fatal(err)
 	}
 	stored, err := repo.Task(task.ID)

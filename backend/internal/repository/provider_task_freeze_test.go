@@ -99,7 +99,8 @@ func TestFailedKuaiziMediaTaskSchedulesFrozenBillingReconciliation(t *testing.T)
 	now := time.Now().UTC()
 	task := model.Task{
 		ID: "failed-media", UserID: "user", Status: model.TaskStatusRunning, Stage: "生成失败", Error: "upstream failed",
-		BillingOrderID: "failed-media-order", ProviderRequestID: "provider-media-task", LeaseOwner: "worker", CreatedAt: now, UpdatedAt: now,
+		BillingOrderID: "failed-media-order", ProviderRequestID: "provider-media-task", LeaseOwner: "worker", LeaseGeneration: 1,
+		LeaseToken: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", CreatedAt: now, UpdatedAt: now,
 	}
 	order := model.BillingOrder{
 		ID: task.BillingOrderID, UserID: task.UserID, TaskID: task.ID, IdempotencyKey: task.BillingOrderID,

@@ -279,17 +279,6 @@ func adminAgentRunHasUnresolvedBilling(db *gorm.DB, runID string, targets []admi
 	return len(rows) != 0, nil
 }
 
-type adminAgentTaskCancelUpdates struct {
-	Status         model.TaskStatus `gorm:"column:status"`
-	Stage          string           `gorm:"column:stage"`
-	PollStage      string           `gorm:"column:poll_stage"`
-	NextPollAt     *time.Time       `gorm:"column:next_poll_at"`
-	CompletedAt    *time.Time       `gorm:"column:completed_at"`
-	LeaseOwner     string           `gorm:"column:lease_owner"`
-	LeaseExpiresAt *time.Time       `gorm:"column:lease_expires_at"`
-	UpdatedAt      time.Time        `gorm:"column:updated_at"`
-}
-
 func disposeAdminAgentRunControlTargets(
 	db *gorm.DB,
 	targets []adminAgentRunControlTarget,
@@ -353,10 +342,11 @@ func disposeAdminAgentRunControlTargets(
 		}
 		result := db.Model(&model.Task{}).
 			Where("id = ? AND user_id = ? AND status = ?", target.TaskID, target.UserID, target.Status).
-			Select("status", "stage", "poll_stage", "next_poll_at", "completed_at", "lease_owner", "lease_expires_at", "updated_at").
-			Updates(adminAgentTaskCancelUpdates{
-				Status: model.TaskStatusCancelled, Stage: stage, PollStage: pollStage, NextPollAt: nextPollAt,
-				CompletedAt: &now, LeaseOwner: "", LeaseExpiresAt: nil, UpdatedAt: now,
+			Updates(map[string]any{
+				"status": model.TaskStatusCancelled, "stage": stage, "poll_stage": pollStage, "next_poll_at": nextPollAt,
+				"completed_at": &now, "cancel_requested_at": &now, "cancel_reason_code": "admin_terminated",
+				"lease_generation": gorm.Expr("lease_generation + ?", 1), "lease_token": "", "lease_owner": "", "lease_expires_at": nil,
+				"updated_at": now,
 			})
 		if result.Error != nil {
 			return nil, false, result.Error
