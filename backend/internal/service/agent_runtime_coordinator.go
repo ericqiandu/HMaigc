@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/agentruntime"
@@ -108,9 +109,42 @@ func validateAgentRunWakeup(wakeup agentRunWakeup) error {
 }
 
 func (s *Service) advanceAgentRunReference(reference repository.ActiveAgentRunReference, wakeup agentRunWakeup) error {
+	return s.advanceAgentRunReferenceWithTaskFence(reference, "", wakeup)
+}
+
+func (s *Service) advanceAgentRunTaskReference(reference repository.ActiveAgentRunReference, taskID string, wakeup agentRunWakeup) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return errors.New("agent runtime task wakeup identity is invalid")
+	}
+	return s.advanceAgentRunReferenceWithTaskFence(reference, taskID, wakeup)
+}
+
+func (s *Service) advanceAgentRunReferenceWithTaskFence(reference repository.ActiveAgentRunReference, taskID string, wakeup agentRunWakeup) error {
+	release, acquired, err := s.coordinator.acquire(context.Background(), "agent-run-advance:"+reference.RunID, 1, 30*time.Second)
+	if err != nil {
+		return err
+	}
+	if !acquired {
+		return errors.New("agent runtime advance is already in progress")
+	}
+	defer release()
 	scope, terminated, err := s.authorizeActiveAgentRun(reference)
 	if err != nil || terminated {
 		return err
+	}
+	if taskID != "" {
+		state, loadErr := s.repo.LoadAgentCheckpoint(scope)
+		if loadErr != nil {
+			return loadErr
+		}
+		expectedTaskID, expectedErr := expectedAgentTaskID(state, reference.RunID, wakeup)
+		if expectedErr != nil {
+			return expectedErr
+		}
+		if expectedTaskID != taskID {
+			return nil
+		}
 	}
 	if wakeup == agentWakeStaleRecovery {
 		if err := s.RecoverAgentRunTree(scope); err != nil {
@@ -143,16 +177,7 @@ func (s *Service) RecoverStaleAgentRuns(now time.Time, limit int) error {
 	}
 	var recoveryErrors []error
 	for _, reference := range references {
-		release, acquired, acquireErr := s.coordinator.acquire(context.Background(), "agent-run-recovery:"+reference.RunID, 1, 30*time.Second)
-		if acquireErr != nil {
-			recoveryErrors = append(recoveryErrors, fmt.Errorf("acquire agent run recovery %s: %w", reference.RunID, acquireErr))
-			continue
-		}
-		if !acquired {
-			continue
-		}
 		recoverErr := s.advanceAgentRunReference(reference, agentWakeStaleRecovery)
-		release()
 		if recoverErr != nil {
 			recoveryErrors = append(recoveryErrors, fmt.Errorf("recover agent run %s: %w", reference.RunID, recoverErr))
 		}

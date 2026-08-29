@@ -150,6 +150,8 @@ Agent 文本模型使用同一张 `billing_orders` 的 `token_usage` 模式，�
 
 任务的供应商事实不再维护平行状态表：`tasks` 保存请求标识、轮询阶段、终态与结果，`billing_orders` 保存渠道、模型、冻结价格档位、供应商请求号和费用核对状态。创建请求在是否已被上游接受无法确认时，账单必须进入 `uncertain`；该任务在管理员完成核对前禁止重新生成，避免重复创建并再次产生供应商费用。取消与上游成功并发时，成功结果和生成记录继续持久化，任务保持取消，账单进入待核对。
 
+Task 终态采用数据库提交与外部唤醒分离的持久 Outbox：`task_outboxes` 以 `idempotency_key` 唯一保存 Agent Run 唤醒事件、严格 JSON 载荷、可投递时间、尝试次数、租约和最终送达事实。供应商成功时，Task 成功 CAS、Result/Session/Message、固定价结算或 Token 账单 `uncertain` 审计，以及 Outbox 事件必须在同一事务提交；任一写入失败全部回滚，用户不会看到“任务成功但账务或恢复事件缺失”的半状态。取消后的迟到成功同样在一个事务内保留 Result、维持 Task 取消、标记费用待核对并写入 Outbox。后台 Dispatcher 只在事务提交后领取 Outbox；进程崩溃或投递失败会由租约到期重领，成功投递后以同一租约 CAS 标记 `delivered`，重复领取只允许触发幂等的 Agent 状态推进，不重复创建 Task、计费或资产。
+
 每个新建 Task 同时保存不可变的签名执行事实：`execution_envelope` 是 HMAC-SHA256 签名的规范 JSON，绑定租户、项目、画布、Run、Artifact Revision、Task ID/类型、请求用户、提示词与输入 JSON 的组合载荷摘要及失效时间；`execution_envelope_key_id` 标识签名密钥版本，`execution_payload_digest` 保存该规范执行载荷的 SHA-256 摘要。信封和摘要不通过用户接口返回，也不保存供应商 Key、Authorization header 或原始输入正文。Worker 在写任务日志、建立供应商请求边界或执行本地媒体装配前必须重新读取数据库事实并验签；缺失、过期、密钥未知、作用域不符、计费订单归属不符或载荷被修改都会使任务显式失败。重试与创建幂等复用同样先核对签名及摘要，同一 Task ID 不允许换载荷再次发送。完成或取消后的结果写入不得改写已签名 `input_json`，用户接口只在响应副本上生成脱敏摘要，保证历史 Task 仍可审计验证。
 
 金额单位必须随字段解释：用户售价与冻结订单金额使用 `microcredits`；供应商参考成本使用货币 `micros`；供应商原始余额和账单金额使用 `amount_subunits` 十进制字符串。`total_tokens` 和余额同样以十进制字符串保存，避免超过 JavaScript 安全整数或数据库固定整数范围后丢失精度；币种必须由同一事实记录的显式字段解释，禁止跨单位直接相加。

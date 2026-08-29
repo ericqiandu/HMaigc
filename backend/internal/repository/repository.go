@@ -541,17 +541,22 @@ func (r *Repository) SaveTaskCompletion(task *model.Task, session *model.Session
 }
 
 func (r *Repository) SaveCancelledTaskResult(task *model.Task, result model.Result, billingError string) error {
+	return r.SaveCancelledTaskResultWithOutbox(task, result, billingError, nil)
+}
+
+func (r *Repository) SaveCancelledTaskResultWithOutbox(task *model.Task, result model.Result, billingError string, outbox *TaskOutboxDraft) error {
 	if task == nil || !validTaskLease(task.LeaseOwner, task.LeaseGeneration, task.LeaseToken) {
 		return ErrTaskCompletionStateConflict
 	}
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		now := time.Now().UTC()
 		updated := tx.Model(&model.Task{}).
 			Where("id = ? AND user_id = ? AND status = ? AND lease_owner = ? AND lease_generation = ? AND lease_token = ?", task.ID, task.UserID, model.TaskStatusCancelled, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken).
 			Updates(map[string]any{
 				"stage": "任务已取消（已保留生成结果）", "progress": 100,
 				"result_json": task.ResultJSON, "input_json": task.InputJSON,
 				"poll_stage": "cancel_reconciled", "next_poll_at": nil,
-				"lease_owner": "", "lease_expires_at": nil, "lease_token": "", "updated_at": time.Now(),
+				"lease_owner": "", "lease_expires_at": nil, "lease_token": "", "updated_at": now,
 			})
 		if updated.Error != nil {
 			return updated.Error
@@ -570,28 +575,30 @@ func (r *Repository) SaveCancelledTaskResult(task *model.Task, result model.Resu
 		} else if err := tx.Model(&existing).Updates(map[string]any{"payload": result.Payload, "url": result.URL}).Error; err != nil {
 			return err
 		}
-		if task.BillingOrderID == "" {
-			return nil
+		if task.BillingOrderID != "" {
+			var order model.BillingOrder
+			orderQuery := tx.Where("id = ?", task.BillingOrderID)
+			if r.Dialect() == "postgres" {
+				orderQuery = orderQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+			}
+			if err := orderQuery.First(&order).Error; err != nil {
+				return err
+			}
+			if order.Status != model.BillingStatusReserved && order.Status != model.BillingStatusRunning && order.Status != model.BillingStatusUncertain {
+				return ErrBillingStateConflict
+			}
+			billingUpdate := tx.Model(&model.BillingOrder{}).
+				Where("id = ? AND status IN ?", task.BillingOrderID, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning, model.BillingStatusUncertain}).
+				Updates(uncertainBillingUpdates(order, billingError, now))
+			if billingUpdate.Error != nil {
+				return billingUpdate.Error
+			}
+			if billingUpdate.RowsAffected != 1 {
+				return ErrBillingStateConflict
+			}
 		}
-		var order model.BillingOrder
-		orderQuery := tx.Where("id = ?", task.BillingOrderID)
-		if r.Dialect() == "postgres" {
-			orderQuery = orderQuery.Clauses(clause.Locking{Strength: "UPDATE"})
-		}
-		if err := orderQuery.First(&order).Error; err != nil {
-			return err
-		}
-		if order.Status != model.BillingStatusReserved && order.Status != model.BillingStatusRunning && order.Status != model.BillingStatusUncertain {
-			return ErrBillingStateConflict
-		}
-		billingUpdate := tx.Model(&model.BillingOrder{}).
-			Where("id = ? AND status IN ?", task.BillingOrderID, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning, model.BillingStatusUncertain}).
-			Updates(uncertainBillingUpdates(order, billingError, time.Now()))
-		if billingUpdate.Error != nil {
-			return billingUpdate.Error
-		}
-		if billingUpdate.RowsAffected != 1 {
-			return ErrBillingStateConflict
+		if outbox != nil {
+			return enqueueTaskOutboxTx(tx, task.ID, *outbox, now)
 		}
 		return nil
 	})

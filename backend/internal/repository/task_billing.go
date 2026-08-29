@@ -13,16 +13,153 @@ import (
 )
 
 type FailedTaskBillingAction string
+type CompletedTaskBillingAction string
 
 var ErrTaskCompletionStateConflict = errors.New("task completion state conflict")
+var ErrTaskOutboxConflict = errors.New("task outbox conflict")
 
 const (
 	FailedTaskBillingRefund    FailedTaskBillingAction = "refund"
 	FailedTaskBillingUncertain FailedTaskBillingAction = "uncertain"
+
+	CompletedTaskBillingSettle    CompletedTaskBillingAction = "settle"
+	CompletedTaskBillingUncertain CompletedTaskBillingAction = "uncertain"
 )
+
+type TaskOutboxDraft struct {
+	IdempotencyKey string
+	EventType      model.TaskOutboxEventType
+	PayloadJSON    string
+	AvailableAt    time.Time
+}
+
+type SucceededTaskFinalization struct {
+	Task          *model.Task
+	Session       *model.Session
+	Message       *model.Message
+	Results       []model.Result
+	BillingAction CompletedTaskBillingAction
+	BillingError  string
+	Outbox        *TaskOutboxDraft
+}
+
+// FinalizeSucceededTaskAndBilling commits the durable facts that prove a
+// provider success. External timeline delivery is represented by Outbox and is
+// intentionally performed only after this transaction commits.
+func (r *Repository) FinalizeSucceededTaskAndBilling(input SucceededTaskFinalization) error {
+	task := input.Task
+	if task == nil || strings.TrimSpace(task.ID) == "" || task.Status != model.TaskStatusSucceeded || task.CompletedAt == nil ||
+		!validTaskLease(task.LeaseOwner, task.LeaseGeneration, task.LeaseToken) {
+		return ErrTaskCompletionStateConflict
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := r.finalizeSucceededBillingTx(tx, task, input.BillingAction, input.BillingError); err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		updated := tx.Model(&model.Task{}).
+			Where("id = ? AND user_id = ? AND status = ? AND lease_owner = ? AND lease_generation = ? AND lease_token = ?", task.ID, task.UserID, model.TaskStatusRunning, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken).
+			Select("status", "stage", "progress", "result_json", "input_json", "error", "completed_at", "lease_owner", "lease_expires_at", "lease_token", "updated_at").
+			Updates(model.Task{
+				Status: task.Status, Stage: task.Stage, Progress: task.Progress, ResultJSON: task.ResultJSON,
+				InputJSON: task.InputJSON, Error: "", CompletedAt: task.CompletedAt,
+				LeaseOwner: "", LeaseExpiresAt: nil, LeaseToken: "", UpdatedAt: now,
+			})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return ErrTaskCompletionStateConflict
+		}
+		if input.Session != nil {
+			if err := tx.Save(input.Session).Error; err != nil {
+				return err
+			}
+		}
+		if input.Message != nil {
+			if err := tx.Create(input.Message).Error; err != nil {
+				return err
+			}
+		}
+		for index := range input.Results {
+			if err := tx.Create(&input.Results[index]).Error; err != nil {
+				return err
+			}
+		}
+		if input.Outbox != nil {
+			return enqueueTaskOutboxTx(tx, task.ID, *input.Outbox, now)
+		}
+		return nil
+	})
+}
+
+func (r *Repository) finalizeSucceededBillingTx(tx *gorm.DB, task *model.Task, action CompletedTaskBillingAction, errorText string) error {
+	if strings.TrimSpace(task.BillingOrderID) == "" {
+		return nil
+	}
+	var order model.BillingOrder
+	query := tx.Where("id = ?", task.BillingOrderID)
+	if r.Dialect() == "postgres" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	if err := query.First(&order).Error; err != nil {
+		return err
+	}
+	if order.TaskID != "" && order.TaskID != task.ID {
+		return ErrBillingStateConflict
+	}
+	switch action {
+	case CompletedTaskBillingSettle:
+		if order.BillingMode == "token_usage" {
+			return errors.New("token usage billing must be reconciled explicitly")
+		}
+		return New(tx).SettleBillingOrder(order.ID, task.ProviderRequestID)
+	case CompletedTaskBillingUncertain:
+		if strings.TrimSpace(errorText) == "" {
+			return errors.New("uncertain completion billing requires an audit reason")
+		}
+		if order.Status == model.BillingStatusUncertain {
+			fields := []string{"error", "updated_at"}
+			if strings.TrimSpace(task.ProviderRequestID) != "" {
+				order.ProviderRequestID = task.ProviderRequestID
+				fields = append(fields, "provider_request_id")
+			}
+			order.Error = errorText
+			order.UpdatedAt = time.Now().UTC()
+			return tx.Model(&model.BillingOrder{}).
+				Where("id = ? AND status = ?", order.ID, model.BillingStatusUncertain).
+				Select(fields).
+				Updates(order).Error
+		}
+		if order.Status != model.BillingStatusReserved && order.Status != model.BillingStatusRunning {
+			return ErrBillingStateConflict
+		}
+		now := time.Now().UTC()
+		updates := uncertainBillingUpdates(order, errorText, now)
+		if strings.TrimSpace(task.ProviderRequestID) != "" {
+			updates["provider_request_id"] = task.ProviderRequestID
+		}
+		result := tx.Model(&model.BillingOrder{}).
+			Where("id = ? AND status IN ?", order.ID, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning}).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrBillingStateConflict
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported completed task billing action: %s", action)
+	}
+}
 
 // FinalizeFailedTaskAndBilling 将任务终态与计费结果放进同一事务；任一侧失败时保留运行态，等待租约到期后重试。
 func (r *Repository) FinalizeFailedTaskAndBilling(task *model.Task, action FailedTaskBillingAction, errorText string) error {
+	return r.FinalizeFailedTaskAndBillingWithOutbox(task, action, errorText, nil)
+}
+
+func (r *Repository) FinalizeFailedTaskAndBillingWithOutbox(task *model.Task, action FailedTaskBillingAction, errorText string, outbox *TaskOutboxDraft) error {
 	if task == nil || strings.TrimSpace(task.ID) == "" || !validTaskLease(task.LeaseOwner, task.LeaseGeneration, task.LeaseToken) {
 		return ErrTaskCompletionStateConflict
 	}
@@ -44,8 +181,140 @@ func (r *Repository) FinalizeFailedTaskAndBilling(task *model.Task, action Faile
 		if updatedTask.RowsAffected != 1 {
 			return ErrTaskCompletionStateConflict
 		}
+		if outbox != nil {
+			return enqueueTaskOutboxTx(tx, task.ID, *outbox, now.UTC())
+		}
 		return nil
 	})
+}
+
+func (r *Repository) EnqueueTaskOutbox(taskID string, draft TaskOutboxDraft) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		return enqueueTaskOutboxTx(tx, taskID, draft, time.Now().UTC())
+	})
+}
+
+func enqueueTaskOutboxTx(tx *gorm.DB, taskID string, draft TaskOutboxDraft, now time.Time) error {
+	taskID = strings.TrimSpace(taskID)
+	draft.IdempotencyKey = strings.TrimSpace(draft.IdempotencyKey)
+	if taskID == "" || draft.IdempotencyKey == "" || draft.EventType == "" || strings.TrimSpace(draft.PayloadJSON) == "" {
+		return ErrTaskOutboxConflict
+	}
+	if draft.AvailableAt.IsZero() {
+		draft.AvailableAt = now
+	}
+	record := model.TaskOutbox{
+		ID: newRepositoryID(), IdempotencyKey: draft.IdempotencyKey, TaskID: taskID,
+		EventType: draft.EventType, PayloadJSON: draft.PayloadJSON, Status: model.TaskOutboxPending,
+		AvailableAt: draft.AvailableAt.UTC(), CreatedAt: now, UpdatedAt: now,
+	}
+	created := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "idempotency_key"}}, DoNothing: true}).Create(&record)
+	if created.Error != nil {
+		return created.Error
+	}
+	if created.RowsAffected == 1 {
+		return nil
+	}
+	var existing model.TaskOutbox
+	if err := tx.Where("idempotency_key = ?", draft.IdempotencyKey).First(&existing).Error; err != nil {
+		return err
+	}
+	if existing.TaskID != taskID || existing.EventType != draft.EventType || existing.PayloadJSON != draft.PayloadJSON {
+		return ErrTaskOutboxConflict
+	}
+	return nil
+}
+
+func (r *Repository) ClaimTaskOutbox(owner string, now time.Time, leaseDuration time.Duration, limit int) ([]model.TaskOutbox, error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" || now.IsZero() || leaseDuration <= 0 || limit <= 0 || limit > 100 {
+		return nil, ErrTaskOutboxConflict
+	}
+	claimed := make([]model.TaskOutbox, 0, limit)
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var candidates []model.TaskOutbox
+		query := tx.Where(
+			"(status = ? AND available_at <= ?) OR (status = ? AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)",
+			model.TaskOutboxPending, now, model.TaskOutboxProcessing, now,
+		).Order("available_at ASC, created_at ASC").Limit(limit)
+		if r.Dialect() == "postgres" {
+			query = query.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"})
+		}
+		if err := query.Find(&candidates).Error; err != nil {
+			return err
+		}
+		for index := range candidates {
+			token, err := newTaskLeaseToken()
+			if err != nil {
+				return err
+			}
+			expiresAt := now.Add(leaseDuration)
+			candidate := &candidates[index]
+			updated := tx.Exec(`UPDATE task_outboxes
+				SET status = ?, attempt_count = attempt_count + 1, lease_owner = ?, lease_token = ?,
+					lease_expires_at = ?, last_error = ?, updated_at = ?
+				WHERE id = ? AND ((status = ? AND available_at <= ?)
+					OR (status = ? AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?))`,
+				model.TaskOutboxProcessing, owner, token, expiresAt, "", now,
+				candidate.ID, model.TaskOutboxPending, now, model.TaskOutboxProcessing, now)
+			if updated.Error != nil {
+				return updated.Error
+			}
+			if updated.RowsAffected != 1 {
+				continue
+			}
+			candidate.Status = model.TaskOutboxProcessing
+			candidate.AttemptCount++
+			candidate.LeaseOwner = owner
+			candidate.LeaseToken = token
+			candidate.LeaseExpiresAt = &expiresAt
+			candidate.LastError = ""
+			candidate.UpdatedAt = now
+			claimed = append(claimed, *candidate)
+		}
+		return nil
+	})
+	return claimed, err
+}
+
+func (r *Repository) CompleteTaskOutbox(id string, owner string, token string, deliveredAt time.Time) error {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(owner) == "" || strings.TrimSpace(token) == "" || deliveredAt.IsZero() {
+		return ErrTaskOutboxConflict
+	}
+	result := r.db.Model(&model.TaskOutbox{}).
+		Where("id = ? AND status = ? AND lease_owner = ? AND lease_token = ?", id, model.TaskOutboxProcessing, owner, token).
+		Select("status", "delivered_at", "lease_owner", "lease_token", "lease_expires_at", "last_error", "updated_at").
+		Updates(model.TaskOutbox{
+			Status: model.TaskOutboxDelivered, DeliveredAt: &deliveredAt,
+			LeaseOwner: "", LeaseToken: "", LeaseExpiresAt: nil, LastError: "", UpdatedAt: deliveredAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrTaskOutboxConflict
+	}
+	return nil
+}
+
+func (r *Repository) RescheduleTaskOutbox(id string, owner string, token string, deliveryError error, availableAt time.Time) error {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(owner) == "" || strings.TrimSpace(token) == "" || deliveryError == nil || availableAt.IsZero() {
+		return ErrTaskOutboxConflict
+	}
+	result := r.db.Model(&model.TaskOutbox{}).
+		Where("id = ? AND status = ? AND lease_owner = ? AND lease_token = ?", id, model.TaskOutboxProcessing, owner, token).
+		Select("status", "available_at", "lease_owner", "lease_token", "lease_expires_at", "last_error", "updated_at").
+		Updates(model.TaskOutbox{
+			Status: model.TaskOutboxPending, AvailableAt: availableAt, LeaseOwner: "", LeaseToken: "",
+			LeaseExpiresAt: nil, LastError: deliveryError.Error(), UpdatedAt: time.Now().UTC(),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrTaskOutboxConflict
+	}
+	return nil
 }
 
 func (r *Repository) finalizeFailedBillingTx(tx *gorm.DB, orderID string, taskID string, action FailedTaskBillingAction, errorText string) error {

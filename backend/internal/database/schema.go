@@ -104,6 +104,7 @@ func Models() []any {
 		&model.Announcement{},
 		&model.UserAnnouncementRead{},
 		&model.Task{},
+		&model.TaskOutbox{},
 		&model.Session{},
 		&model.Message{},
 		&model.TaskLog{},

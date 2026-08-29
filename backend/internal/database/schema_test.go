@@ -54,6 +54,36 @@ func TestModelsRegistersCanvasProjectDeletion(t *testing.T) {
 	t.Fatal("CanvasProjectDeletion is not registered in database.Models()")
 }
 
+func TestTaskOutboxSchemaRegistersDurableDeliveryFacts(t *testing.T) {
+	registered := false
+	for _, value := range Models() {
+		if _, ok := value.(*model.TaskOutbox); ok {
+			registered = true
+			break
+		}
+	}
+	if !registered {
+		t.Fatal("TaskOutbox is not registered in database.Models()")
+	}
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{
+		"idempotency_key", "task_id", "event_type", "payload_json", "status",
+		"attempt_count", "available_at", "lease_owner", "lease_token",
+		"lease_expires_at", "last_error", "delivered_at",
+	} {
+		if !db.Migrator().HasColumn(&model.TaskOutbox{}, column) {
+			t.Fatalf("task_outboxes.%s was not migrated", column)
+		}
+	}
+}
+
 func TestTaskAudienceMigrationBackfillsCustomerAndInternalTasks(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

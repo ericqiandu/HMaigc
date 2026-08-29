@@ -117,8 +117,28 @@ func (s *Service) saveTaskCompletion(task *model.Task, resultJSON []byte, opsJSO
 	completed.Stage = "任务完成"
 	completed.Progress = 100
 	completed.ResultJSON = string(resultJSON)
-	completed.CompletedAt = ptr(time.Now())
-	if err := s.repo.SaveTaskCompletion(&completed, session, message, results); err != nil {
+	completedAt := time.Now().UTC()
+	completed.CompletedAt = &completedAt
+	billingAction := repository.CompletedTaskBillingSettle
+	billingError := ""
+	if completed.BillingOrderID != "" {
+		order, err := s.repo.BillingOrder(completed.BillingOrderID)
+		if err != nil {
+			return err
+		}
+		if order.BillingMode == "token_usage" {
+			billingAction = repository.CompletedTaskBillingUncertain
+			billingError = "供应商已返回成功，Token 用量与费用待核对"
+		}
+	}
+	outbox, err := taskAgentRunOutboxDraft(completed, completedAt)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.FinalizeSucceededTaskAndBilling(repository.SucceededTaskFinalization{
+		Task: &completed, Session: session, Message: message, Results: results,
+		BillingAction: billingAction, BillingError: billingError, Outbox: outbox,
+	}); err != nil {
 		return err
 	}
 	*task = completed
@@ -134,7 +154,11 @@ func (s *Service) saveCancelledTaskResult(task *model.Task, resultJSON []byte, b
 	stored.Stage = "任务已取消（已保留生成结果）"
 	stored.Progress = 100
 	stored.ResultJSON = string(resultJSON)
-	if err := s.repo.SaveCancelledTaskResult(&stored, result, billingError); err != nil {
+	outbox, err := taskAgentRunOutboxDraft(stored, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if err := s.repo.SaveCancelledTaskResultWithOutbox(&stored, result, billingError, outbox); err != nil {
 		return err
 	}
 	*task = stored

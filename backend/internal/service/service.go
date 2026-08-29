@@ -440,6 +440,19 @@ func (s *Service) ConfigureOperationsClient(client opsprotocol.Client) {
 
 func (s *Service) StartWorker() {
 	go func() {
+		dispatch := func() {
+			if err := s.dispatchTaskOutbox(time.Now().UTC(), 20); err != nil {
+				log.Printf("event=task_outbox_dispatch_failed error=%q", err.Error())
+			}
+		}
+		dispatch()
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			dispatch()
+		}
+	}()
+	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
 		for range ticker.C {
@@ -1266,8 +1279,10 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	}
 	_ = s.log(task.UserID, task.ID, "info", "后端任务开始处理", "")
 	runID := ""
+	wakeup := agentWakeGenerationTaskFinished
 	if task.Type == agentRuntimeModelTaskType {
 		runID, _ = agentRuntimeModelRunID(task.Operation)
+		wakeup = agentWakeModelTaskFinished
 	} else if productionRunID, productionTask := agentProductionRenderRunID(task.Operation); productionTask {
 		runID = productionRunID
 	} else if visualRunID, visualTask := agentVisualAnalysisRunID(task.Operation); visualTask {
@@ -1279,13 +1294,20 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 			runID = input.Scope.RunID
 		}
 	}
+	terminalOutbox, outboxErr := taskAgentRunOutboxDraft(*task, time.Now().UTC())
+	if outboxErr != nil {
+		return outboxErr
+	}
+	terminalOutboxCommitted := false
 	if runID != "" {
 		defer func() {
-			reference := repository.ActiveAgentRunReference{RunID: runID, ActorUserID: task.UserID}
-			wakeup := agentWakeGenerationTaskFinished
-			if task.Type == agentRuntimeModelTaskType {
-				wakeup = agentWakeModelTaskFinished
+			if terminalOutboxCommitted {
+				if err := s.dispatchTaskOutbox(time.Now().UTC(), 20); err != nil {
+					_ = s.log(task.UserID, task.ID, "error", "Agent 运行 Outbox 投递失败，等待后台重试", taskFailureMessage(err))
+				}
+				return
 			}
+			reference := repository.ActiveAgentRunReference{RunID: runID, ActorUserID: task.UserID}
 			err := s.advanceAgentRunReference(reference, wakeup)
 			if err != nil {
 				_ = s.log(task.UserID, task.ID, "error", "Agent 运行恢复失败", taskFailureMessage(err))
@@ -1394,9 +1416,10 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 					action = repository.FailedTaskBillingUncertain
 					reason = "Token 请求发送边界冲突，禁止重复调用上游"
 				}
-				if finalizeErr := s.repo.FinalizeFailedTaskAndBilling(task, action, reason); finalizeErr != nil {
+				if finalizeErr := s.repo.FinalizeFailedTaskAndBillingWithOutbox(task, action, reason, terminalOutbox); finalizeErr != nil {
 					return errors.Join(billingStartErr, fmt.Errorf("任务与计费终态提交失败：%w", finalizeErr))
 				}
+				terminalOutboxCommitted = terminalOutbox != nil
 				return billingStartErr
 			}
 		}
@@ -1454,10 +1477,11 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		if providerSucceeded || (!channelSlotFailedBeforeRequest && s.BillingFailureRequiresReview(task.BillingOrderID, task.ID, err)) {
 			action = repository.FailedTaskBillingUncertain
 		}
-		if finalizeErr := s.repo.FinalizeFailedTaskAndBilling(task, action, task.Error); finalizeErr != nil {
+		if finalizeErr := s.repo.FinalizeFailedTaskAndBillingWithOutbox(task, action, task.Error, terminalOutbox); finalizeErr != nil {
 			_ = s.log(task.UserID, task.ID, "error", "任务与计费终态提交失败", taskFailureMessage(finalizeErr))
 			return errors.Join(err, fmt.Errorf("任务与计费终态提交失败：%w", finalizeErr))
 		}
+		terminalOutboxCommitted = terminalOutbox != nil
 		_ = s.markSessionFailed(*task, task.Error)
 		_ = s.log(task.UserID, task.ID, "error", "任务处理失败", task.Error)
 		return err
@@ -1485,6 +1509,7 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 			billingErr := s.MarkBillingUncertain(task.BillingOrderID, "上游已返回结果，但取消任务的结果未能保存："+taskFailureMessage(saveErr))
 			return errors.Join(saveErr, billingErr)
 		}
+		terminalOutboxCommitted = terminalOutbox != nil
 		_ = s.markSessionFailed(*latest, "会话任务已取消。")
 		_ = s.log(task.UserID, task.ID, "warn", "任务已取消，上游已生成的资产已保留", "")
 		return nil
@@ -1501,14 +1526,16 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		task.Stage = "任务结果保存失败"
 		task.Error = taskFailureMessage(err)
 		task.CompletedAt = ptr(time.Now())
-		if finalizeErr := s.repo.FinalizeFailedTaskAndBilling(task, repository.FailedTaskBillingUncertain, "上游已成功但任务结果未保存："+task.Error); finalizeErr != nil {
+		if finalizeErr := s.repo.FinalizeFailedTaskAndBillingWithOutbox(task, repository.FailedTaskBillingUncertain, "上游已成功但任务结果未保存："+task.Error, terminalOutbox); finalizeErr != nil {
 			_ = s.log(task.UserID, task.ID, "error", "任务结果与计费终态提交失败", taskFailureMessage(finalizeErr))
 			return errors.Join(err, fmt.Errorf("任务与计费终态提交失败：%w", finalizeErr))
 		}
+		terminalOutboxCommitted = terminalOutbox != nil
 		_ = s.markSessionFailed(*task, task.Error)
 		_ = s.log(task.UserID, task.ID, "error", "任务结果保存失败", task.Error)
 		return err
 	}
+	terminalOutboxCommitted = terminalOutbox != nil
 	if completedTask, fetchErr := s.repo.Task(task.ID); fetchErr == nil {
 		if registerErr := s.RegisterTaskOutputFromTask(*completedTask); registerErr != nil {
 			// 任务成功与产物登记分开记账；登记失败保持步骤异常，允许项目页幂等补登记。

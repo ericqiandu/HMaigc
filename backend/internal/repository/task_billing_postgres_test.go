@@ -131,3 +131,80 @@ func TestPostgresStaleLeaseGenerationCannotFinalizeBilling(t *testing.T) {
 		t.Fatalf("stale finalization mutated facts: task=%#v order=%#v account=%#v ledgerCount=%d", storedTask, storedOrder, storedAccount, ledgerCount)
 	}
 }
+
+func TestPostgresAtomicCompletionCommitsSettlementResultAndTaskOutbox(t *testing.T) {
+	db := openPaymentIntegrationPostgres(t)
+	if err := database.MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	account := model.CreditAccount{
+		UserID: "atomic-success-pg-user", AvailableMicrocredits: 96_000_000,
+		ReservedMicrocredits: 1_000_000, CreatedAt: now, UpdatedAt: now,
+	}
+	order := model.BillingOrder{
+		ID: "atomic-success-pg-order", UserID: account.UserID, TaskID: "atomic-success-pg-task",
+		IdempotencyKey: "atomic-success-pg-order", ChannelID: "atomic-success-pg-channel", Model: "atomic-success-pg-model",
+		Capability: "video", Scene: "agent", BillingMode: "per_second", PriceVersion: 1,
+		UnitPriceMicrocredits: 1_000_000, MultiplierBasisPoints: 10_000, Quantity: 1,
+		AmountMicrocredits: 1_000_000, Status: model.BillingStatusRunning,
+		ProviderRequestID: "atomic-success-provider", StartedAt: &now, CreatedAt: now, UpdatedAt: now,
+	}
+	leaseExpiry := now.Add(time.Minute)
+	task := model.Task{
+		ID: order.TaskID, UserID: account.UserID, Type: "canvas_video", Status: model.TaskStatusRunning,
+		BillingOrderID: order.ID, ProviderRequestID: order.ProviderRequestID, LeaseOwner: "atomic-success-pg-worker",
+		LeaseExpiresAt: &leaseExpiry, LeaseGeneration: 1,
+		LeaseToken: "5123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		CreatedAt:  now, UpdatedAt: now,
+	}
+	if err := db.Create(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	completed := task
+	completed.Status = model.TaskStatusSucceeded
+	completed.Stage = "任务完成"
+	completed.Progress = 100
+	completed.ResultJSON = `{"videos":[{"resourceId":"atomic-success-pg-resource"}]}`
+	completed.CompletedAt = &now
+	result := model.Result{
+		ID: "atomic-success-pg-result", UserID: task.UserID, TaskID: task.ID,
+		Kind: "generation_result", Payload: completed.ResultJSON, CreatedAt: now,
+	}
+	outbox := TaskOutboxDraft{
+		IdempotencyKey: "atomic-success-pg-outbox", EventType: model.TaskOutboxAgentRunWakeup,
+		PayloadJSON: `{"taskId":"atomic-success-pg-task","runId":"atomic-success-pg-run","actorUserId":"atomic-success-pg-user","wakeup":"generation_task_finished"}`,
+		AvailableAt: now,
+	}
+	if err := New(db).FinalizeSucceededTaskAndBilling(SucceededTaskFinalization{
+		Task: &completed, Results: []model.Result{result}, BillingAction: CompletedTaskBillingSettle, Outbox: &outbox,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var storedTask model.Task
+	var storedOrder model.BillingOrder
+	var storedResult model.Result
+	var storedOutbox model.TaskOutbox
+	if err := db.First(&storedTask, "id = ?", task.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&storedOrder, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&storedResult, "id = ?", result.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&storedOutbox, "idempotency_key = ?", outbox.IdempotencyKey).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedTask.Status != model.TaskStatusSucceeded || storedOrder.Status != model.BillingStatusSettled ||
+		storedResult.TaskID != task.ID || storedOutbox.Status != model.TaskOutboxPending {
+		t.Fatalf("postgres atomic success mismatch: task=%#v order=%#v result=%#v outbox=%#v", storedTask, storedOrder, storedResult, storedOutbox)
+	}
+}
