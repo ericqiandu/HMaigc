@@ -20,6 +20,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
+	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/opsprotocol"
 	"infinite-canvas/backend/internal/repository"
@@ -1016,6 +1017,10 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		runID = visualRunID
 	} else if mediaRunID, mediaTask := agentMediaGenerationRunID(task.Operation); mediaTask {
 		runID = mediaRunID
+	} else if task.ExecutionKind == model.TaskExecutionLocalMediaAssembly && task.Type == agentruntime.MediaAssemblyTaskType {
+		if input, decodeErr := decodeMediaAssemblyTaskInput(task.InputJSON); decodeErr == nil && input.ToolCallID != "" {
+			runID = input.Scope.RunID
+		}
 	}
 	if runID != "" {
 		defer func() {
@@ -1058,7 +1063,7 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	s.registerActiveTask(task.ID, cancel)
 	defer s.unregisterActiveTask(task.ID)
 	if task.ExecutionKind == model.TaskExecutionLocalMediaAssembly {
-		if task.Audience != model.TaskAudienceInternal || task.Type != agentMediaAssemblyTaskType || task.BillingOrderID != "" {
+		if task.Audience != model.TaskAudienceInternal || task.Type != agentruntime.MediaAssemblyTaskType || task.BillingOrderID != "" {
 			failure := repository.ErrInternalTaskFactConflict
 			if failErr := s.repo.FailClaimedTaskFacts(task.ID, task.UserID, task.LeaseOwner, failure, time.Now().UTC()); failErr != nil {
 				return errors.Join(failure, failErr)
@@ -1066,6 +1071,17 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 			return failure
 		}
 		_ = s.repo.UpdateTaskProgress(task.ID, "本地媒体装配中", 35)
+		if latest, loadErr := s.repo.Task(task.ID); loadErr != nil {
+			return loadErr
+		} else {
+			input, decodeErr := decodeMediaAssemblyTaskInput(latest.InputJSON)
+			if decodeErr != nil {
+				return decodeErr
+			}
+			if timelineErr := s.appendPersistedMediaAssemblyTaskTimeline(input.Scope, *latest); timelineErr != nil {
+				return timelineErr
+			}
+		}
 		return s.processClaimedMediaAssembly(ctx, task)
 	}
 	if task.ExecutionKind != model.TaskExecutionProvider || strings.TrimSpace(task.BillingOrderID) == "" {
@@ -1248,7 +1264,7 @@ func taskExecutionTimeoutWithPolicy(taskType string, policy RuntimeTaskPolicy) t
 	switch {
 	case taskType == "agent_storyboard" || taskType == "agent_storyboard_rows":
 		return time.Duration(policy.StoryboardTimeoutMinutes) * time.Minute
-	case taskType == agentMediaAssemblyTaskType || strings.HasPrefix(taskType, "canvas_video") || strings.HasPrefix(taskType, "video_"):
+	case taskType == agentruntime.MediaAssemblyTaskType || strings.HasPrefix(taskType, "canvas_video") || strings.HasPrefix(taskType, "video_"):
 		return time.Duration(policy.VideoTimeoutMinutes) * time.Minute
 	case strings.HasPrefix(taskType, "canvas_image"):
 		return time.Duration(policy.ImageTimeoutMinutes) * time.Minute

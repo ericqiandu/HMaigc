@@ -199,6 +199,9 @@ func (r *Repository) hydrateAdminAgentRunFacts(records []AdminAgentRunRecord) er
 	if err := r.hydrateAdminAgentRunMediaTaskFacts(runIDs, recordByRunID, activeTaskIDs, activeBillingOrderIDs); err != nil {
 		return err
 	}
+	if err := r.hydrateAdminAgentRunAssemblyTaskFacts(runIDs, recordByRunID, activeTaskIDs, activeBillingOrderIDs); err != nil {
+		return err
+	}
 	if err := r.hydrateAdminAgentRunBillingFacts(runIDs, recordByRunID, activeTaskIDs, activeBillingOrderIDs); err != nil {
 		return err
 	}
@@ -297,6 +300,44 @@ func (r *Repository) hydrateAdminAgentRunMediaTaskFacts(
 		} else if record.ProviderRequestState == "none" {
 			record.ProviderRequestState = "not_submitted"
 		}
+	}
+	return nil
+}
+
+func (r *Repository) hydrateAdminAgentRunAssemblyTaskFacts(
+	runIDs []string,
+	records map[string]*AdminAgentRunRecord,
+	activeTaskIDs map[string]map[string]struct{},
+	activeBillingOrderIDs map[string]map[string]struct{},
+) error {
+	operations := make([]string, 0, len(runIDs))
+	runIDByOperation := make(map[string]string, len(runIDs))
+	for _, runID := range runIDs {
+		operation, err := agentruntime.MediaAssemblyOperationForRun(runID)
+		if err != nil {
+			return err
+		}
+		operations = append(operations, operation)
+		runIDByOperation[operation] = runID
+	}
+	var facts []adminAgentRunTaskFact
+	if err := r.db.Model(&model.Task{}).
+		Select("id AS task_id, operation AS run_id, status, billing_order_id, provider_request_id").
+		Where("operation IN ? AND type = ? AND audience = ? AND execution_kind = ?", operations,
+			agentruntime.MediaAssemblyTaskType, model.TaskAudienceInternal, model.TaskExecutionLocalMediaAssembly).
+		Order("updated_at DESC, id DESC").
+		Scan(&facts).Error; err != nil {
+		return err
+	}
+	for _, fact := range facts {
+		runID := runIDByOperation[fact.RunID]
+		record := records[runID]
+		if record == nil {
+			continue
+		}
+		fact.RunID = runID
+		record.LinkedMediaTaskStatus = preferredAdminAgentRunTaskStatus(record.LinkedMediaTaskStatus, fact.Status)
+		trackAdminAgentRunActiveTaskFact(fact, activeTaskIDs, activeBillingOrderIDs)
 	}
 	return nil
 }

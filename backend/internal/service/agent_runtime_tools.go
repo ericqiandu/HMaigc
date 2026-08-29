@@ -172,6 +172,8 @@ func (s *Service) coordinatePendingAgentTool(scope agentruntime.Scope, input Coo
 		return s.coordinatePendingAgentProductionCanvasCommit(scope, state, call, record)
 	case agentruntime.ToolCanvasProject:
 		return s.coordinatePendingAgentCanvasProjection(scope, state, call, record)
+	case agentruntime.ToolMediaAssemble:
+		return s.coordinatePendingAgentMediaAssembly(scope, state, call, record)
 	default:
 		return nil, errors.New("agent tool executor is not connected")
 	}

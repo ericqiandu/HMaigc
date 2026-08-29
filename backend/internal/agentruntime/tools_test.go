@@ -84,3 +84,44 @@ func TestToolPoliciesForSchemaExposeExactFrozenVocabulary(t *testing.T) {
 		t.Fatal("unknown tool schema was accepted")
 	}
 }
+
+func TestToolSchemaV5AddsOnlyMediaAssembly(t *testing.T) {
+	t.Parallel()
+
+	policies, ok := agentruntime.ToolPoliciesForSchema(agentruntime.NextToolSchemaVersion)
+	if !ok {
+		t.Fatal("tool schema v5 is unavailable")
+	}
+	names := make([]agentruntime.ToolName, 0, len(policies))
+	for _, policy := range policies {
+		names = append(names, policy.Name)
+	}
+	want := []agentruntime.ToolName{
+		agentruntime.ToolSkillLoad,
+		agentruntime.ToolSpecialistDelegate,
+		agentruntime.ToolVisionAnalyze,
+		agentruntime.ToolMediaGenerate,
+		agentruntime.ToolCanvasProject,
+		agentruntime.ToolMediaAssemble,
+	}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("v5 tools = %#v, want %#v", names, want)
+	}
+
+	policy, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolMediaAssemble, agentruntime.NextToolSchemaVersion)
+	if !ok || policy.RiskLevel != agentruntime.ToolRiskWrite || policy.RequiredAccess != agentruntime.AccessEditor {
+		t.Fatalf("media.assemble policy = %#v, found=%v", policy, ok)
+	}
+	if !agentruntime.ApprovalRequiredFor(policy, agentruntime.ExecutionGuided) {
+		t.Fatal("guided media.assemble did not require approval")
+	}
+	if agentruntime.ApprovalRequiredFor(policy, agentruntime.ExecutionAutomatic) {
+		t.Fatal("automatic media.assemble required a second tool approval")
+	}
+	if _, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolMediaAssemble, agentruntime.ProductionToolSchemaVersion); ok {
+		t.Fatal("tool schema v4 exposed media.assemble")
+	}
+	if _, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolName("media.assemble.v2"), agentruntime.NextToolSchemaVersion); ok {
+		t.Fatal("tool schema v5 accepted an unknown tool")
+	}
+}

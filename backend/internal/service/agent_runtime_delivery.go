@@ -135,6 +135,16 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 					seenArtifacts[key] = true
 				}
 			}
+		case agentruntime.ToolMediaAssemble:
+			artifact, err := s.mediaAssemblyDeliveryArtifact(scope, call)
+			if err != nil {
+				return agentruntime.DeliveryEvidence{}, err
+			}
+			key := artifact.ArtifactID + "\x00" + artifact.RevisionID
+			if !seenArtifacts[key] {
+				evidence.Artifacts = append(evidence.Artifacts, artifact)
+				seenArtifacts[key] = true
+			}
 		}
 	}
 	if hasCanvasCommit {
@@ -158,6 +168,22 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 			}
 		}
 	}
+	if evidence.CanvasRevision > 0 {
+		project, err := s.repo.CanvasProject(scope.CanvasID)
+		if err != nil {
+			return agentruntime.DeliveryEvidence{}, err
+		}
+		owned := project.ID == scope.CanvasID && project.ProjectID == scope.DomainProjectID
+		if scope.TenantKind == agentruntime.TenantTeam {
+			owned = owned && project.TeamID == scope.TenantID
+		} else {
+			owned = owned && project.UserID == scope.ActorUserID && project.TeamID == ""
+		}
+		if !owned {
+			return agentruntime.DeliveryEvidence{}, errors.New("agent canvas current revision scope is invalid")
+		}
+		evidence.CanvasCurrent = project.Revision == evidence.CanvasRevision
+	}
 	return evidence, nil
 }
 
@@ -166,7 +192,7 @@ func validateAgentCanvasProjectionDelivery(
 	call model.AgentToolCall,
 ) (agentCanvasProjectionResult, error) {
 	arguments, err := decodeCanvasProjectArguments(json.RawMessage(call.InputJSON))
-	if err != nil || arguments.ExpectedDelivery.Kind != agentruntime.DeliveryCanvasChange ||
+	if err != nil || (arguments.ExpectedDelivery.Kind != agentruntime.DeliveryCanvasChange && arguments.ExpectedDelivery.Kind != agentruntime.DeliveryMixed) ||
 		arguments.ExpectedDelivery.TargetCanvasID != scope.CanvasID {
 		return agentCanvasProjectionResult{}, errors.New("agent canvas projection delivery input is invalid")
 	}
@@ -194,6 +220,75 @@ func validateAgentCanvasProjectionDelivery(
 		}
 	}
 	return result, nil
+}
+
+func (s *Service) mediaAssemblyDeliveryArtifact(
+	scope agentruntime.Scope,
+	call model.AgentToolCall,
+) (agentruntime.DeliveryArtifact, error) {
+	arguments, err := decodeMediaAssembleArguments([]byte(call.InputJSON))
+	if err != nil || arguments.ExpectedDelivery.TargetCanvasID != scope.CanvasID {
+		return agentruntime.DeliveryArtifact{}, errors.New("agent media assembly delivery input is invalid")
+	}
+	content, err := agentruntime.DecodeMediaAssemblyTimelineContent([]byte(call.OutputJSON))
+	if err != nil || content.ToolCallID != call.ToolCallID || content.ActionVersion != call.ActionVersion ||
+		content.TaskStatus != agentruntime.MediaAssemblyTaskSucceeded || content.Final == nil || !content.Final.Adopted ||
+		content.PlanRevision != arguments.PlanRevision {
+		return agentruntime.DeliveryArtifact{}, errors.New("agent media assembly delivery output is invalid")
+	}
+	task, err := s.repo.Task(content.TaskID)
+	if err != nil {
+		return agentruntime.DeliveryArtifact{}, err
+	}
+	operation, err := agentruntime.MediaAssemblyOperationForRun(scope.RunID)
+	if err != nil {
+		return agentruntime.DeliveryArtifact{}, err
+	}
+	if task.ID != content.TaskID || task.UserID != scope.ActorUserID || task.ProjectID != scope.CanvasID ||
+		task.Audience != model.TaskAudienceInternal || task.ExecutionKind != model.TaskExecutionLocalMediaAssembly ||
+		task.Type != agentruntime.MediaAssemblyTaskType || task.Capability != "video" || task.Status != model.TaskStatusSucceeded ||
+		task.Operation != operation || task.BillingOrderID != "" || task.ProviderRequestID != "" {
+		return agentruntime.DeliveryArtifact{}, errors.New("agent media assembly task delivery facts are invalid")
+	}
+	input, err := decodeMediaAssemblyTaskInput(task.InputJSON)
+	if err != nil || input.Scope != scope || input.PlanRevision != arguments.PlanRevision ||
+		input.ToolCallID != call.ToolCallID || input.ActionVersion != call.ActionVersion {
+		return agentruntime.DeliveryArtifact{}, errors.New("agent media assembly frozen delivery facts are invalid")
+	}
+	result, err := decodeMediaAssemblyTaskResult(task.ResultJSON)
+	if err != nil || result.PlanDigest != input.PlanDigest || result.ResourceID != content.Final.ResourceID ||
+		result.ArtifactRevision != content.Final.ArtifactRevision || result.ArtifactRevision.ArtifactID != input.OutputArtifactID {
+		return agentruntime.DeliveryArtifact{}, errors.New("agent media assembly result delivery facts are invalid")
+	}
+	revision, err := s.repo.ArtifactRevisionForArtifactInScope(scope, result.ArtifactRevision.ArtifactID, result.ArtifactRevision.RevisionID)
+	if err != nil {
+		return agentruntime.DeliveryArtifact{}, err
+	}
+	if revision.ID != result.ArtifactRevision.RevisionID || revision.ArtifactID != result.ArtifactRevision.ArtifactID ||
+		revision.ArtifactKey != input.OutputArtifactKey || revision.Kind != "media_candidate" || revision.SchemaVersion != 1 ||
+		revision.ResourceID != result.ResourceID || revision.CreatedByRunID != scope.RunID ||
+		revision.LifecycleStatus != model.AgentArtifactLifecycleActive {
+		return agentruntime.DeliveryArtifact{}, errors.New("agent media assembly revision delivery facts are invalid")
+	}
+	candidate, err := agentruntime.DecodeMediaCandidateContent([]byte(revision.PayloadJSON))
+	if err != nil || candidate.CandidateKey != input.OutputArtifactKey || candidate.MediaKind != agentruntime.ArtifactVideo ||
+		candidate.ProviderRequestIdentity != "local-assembly:"+input.PlanDigest || candidate.ResourceID != result.ResourceID ||
+		candidate.SourceTaskID != task.ID {
+		return agentruntime.DeliveryArtifact{}, errors.New("agent media assembly artifact delivery facts are invalid")
+	}
+	head, err := s.repo.ArtifactHeadRevisionForScope(scope, revision.ArtifactID)
+	if err != nil || head.ID != revision.ID {
+		return agentruntime.DeliveryArtifact{}, errors.New("agent media assembly current revision evidence is invalid")
+	}
+	resource, err := s.productionResourceForScope(scope, result.ResourceID)
+	if err != nil || resource.ID != result.ResourceID || resource.Kind != "video" || resource.Status != model.ResourceStatusReady {
+		return agentruntime.DeliveryArtifact{}, errors.New("agent media assembly resource delivery facts are invalid")
+	}
+	return agentruntime.DeliveryArtifact{
+		Kind: agentruntime.ArtifactVideo, ArtifactID: revision.ArtifactID, RevisionID: revision.ID,
+		ResourceID: resource.ID, URL: "/api/resources/" + resource.ID + "/file", ResourceReady: true,
+		SourceTaskID: task.ID, SourceTaskSucceeded: true, CurrentRevision: true,
+	}, nil
 }
 
 func successfulPublicationIDsByRevision(publications []model.AgentAssetPublication) (map[string]string, error) {

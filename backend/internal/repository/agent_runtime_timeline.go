@@ -217,11 +217,41 @@ func activeAgentTimelineInterruptMutation(db *gorm.DB, scope agentruntime.Scope,
 		return TimelineMutation{}, false, nil
 	}
 	item := items[0]
+	content, err := interruptedAgentTimelineContent(item)
+	if err != nil {
+		return TimelineMutation{}, false, err
+	}
 	fromStatus := model.AgentTimelineItemInProgress
 	return TimelineMutation{
 		ItemID: item.ID, Kind: item.Kind, FromStatus: &fromStatus, ToStatus: model.AgentTimelineItemInterrupted,
-		SourceEventSequence: sequence, ContentJSON: json.RawMessage(item.ContentJSON),
+		SourceEventSequence: sequence, ContentJSON: content,
 	}, true, nil
+}
+
+func interruptedAgentTimelineContent(item model.AgentTimelineItem) (json.RawMessage, error) {
+	stored := json.RawMessage(item.ContentJSON)
+	if item.Kind != model.AgentTimelineItemToolCall {
+		return stored, nil
+	}
+	var envelope struct {
+		ContentType string `json:"contentType"`
+	}
+	if err := json.Unmarshal(stored, &envelope); err != nil || envelope.ContentType != agentruntime.MediaAssemblyContentType {
+		return stored, nil
+	}
+	content, err := agentruntime.DecodeMediaAssemblyTimelineContent(stored)
+	if err != nil || (content.TaskStatus != agentruntime.MediaAssemblyTaskQueued && content.TaskStatus != agentruntime.MediaAssemblyTaskRunning) {
+		return nil, errors.Join(ErrAgentTimelineConflict, errors.New("agent media assembly interrupt facts are invalid"))
+	}
+	content.TaskStatus = agentruntime.MediaAssemblyTaskCancelled
+	content.Stage = agentRunInterruptedStage
+	content.Final = nil
+	content.ErrorCode = "media_assembly_cancelled"
+	encoded, err := json.Marshal(content)
+	if err != nil {
+		return nil, err
+	}
+	return encoded, nil
 }
 
 func persistAgentTimelineMutation(
@@ -532,6 +562,33 @@ func agentTimelineMutationForEvent(
 	case agentruntime.EventToolResult:
 		if state.LastToolResult == nil {
 			return nil, errors.New("agent tool result timeline facts are missing")
+		}
+		if previous.PendingToolCall != nil && previous.PendingToolCall.ToolName == agentruntime.ToolMediaAssemble {
+			content, err := agentruntime.DecodeMediaAssemblyTimelineContent(state.LastToolResult.Output)
+			if err != nil || content.ToolCallID != state.LastToolResult.ToolCallID ||
+				content.ActionVersion != state.LastToolResult.ActionVersion ||
+				content.ToolCallID != previous.PendingToolCall.ToolCallID ||
+				content.ActionVersion != previous.PendingToolCall.ActionVersion {
+				return nil, errors.New("agent media assembly tool result facts are invalid")
+			}
+			if state.LastToolResult.Succeeded {
+				if content.TaskStatus != agentruntime.MediaAssemblyTaskSucceeded || state.LastToolResult.ErrorCode != "" {
+					return nil, errors.New("agent media assembly success facts are invalid")
+				}
+			} else if (content.TaskStatus != agentruntime.MediaAssemblyTaskFailed && content.TaskStatus != agentruntime.MediaAssemblyTaskCancelled) ||
+				state.LastToolResult.ErrorCode == "" || state.LastToolResult.ErrorCode != content.ErrorCode {
+				return nil, errors.New("agent media assembly failure facts are invalid")
+			}
+			itemStatus, err := mediaAssemblyTimelineItemStatus(content)
+			if err != nil {
+				return nil, err
+			}
+			fromStatus := model.AgentTimelineItemInProgress
+			return &TimelineMutation{
+				ItemID: agentFactID("timeline", runID, "tool-call", state.LastToolResult.ToolCallID+":"+strconv.Itoa(state.LastToolResult.ActionVersion)),
+				Kind:   model.AgentTimelineItemToolCall, FromStatus: &fromStatus, ToStatus: itemStatus,
+				SourceEventSequence: sequence, ContentJSON: append(json.RawMessage(nil), state.LastToolResult.Output...),
+			}, nil
 		}
 		var toolName agentruntime.ToolName
 		var safeOutput *agentCanvasCommitTimelineOutput

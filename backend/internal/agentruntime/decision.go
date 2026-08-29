@@ -27,6 +27,7 @@ const (
 	ToolProductionPlan   ToolName = "production.plan"
 	ToolProductionRender ToolName = "production.render"
 	ToolCanvasCommit     ToolName = "canvas.commit"
+	ToolMediaAssemble    ToolName = "media.assemble"
 )
 
 func (name ToolName) Valid() bool {
@@ -34,7 +35,7 @@ func (name ToolName) Valid() bool {
 }
 
 func (name ToolName) Known() bool {
-	return name.ValidForToolSchema(CurrentToolSchemaVersion) || name.ValidForToolSchema(LegacyToolSchemaVersion)
+	return name.ValidForToolSchema(CurrentToolSchemaVersion) || name.ValidForToolSchema(LegacyToolSchemaVersion) || name.ValidForToolSchema(NextToolSchemaVersion)
 }
 
 func (name ToolName) ValidForToolSchema(toolSchemaVersion int) bool {
@@ -49,6 +50,13 @@ func (name ToolName) ValidForToolSchema(toolSchemaVersion int) bool {
 	case CurrentToolSchemaVersion:
 		switch name {
 		case ToolSkillLoad, ToolSpecialistDelegate, ToolVisionAnalyze, ToolMediaGenerate, ToolCanvasProject:
+			return true
+		default:
+			return false
+		}
+	case NextToolSchemaVersion:
+		switch name {
+		case ToolSkillLoad, ToolSpecialistDelegate, ToolVisionAnalyze, ToolMediaGenerate, ToolCanvasProject, ToolMediaAssemble:
 			return true
 		default:
 			return false
@@ -110,7 +118,7 @@ func ParseModelDecision(payload []byte) (ModelDecision, error) {
 }
 
 func ParseModelDecisionForToolSchema(payload []byte, toolSchemaVersion int) (ModelDecision, error) {
-	if toolSchemaVersion != CurrentToolSchemaVersion && toolSchemaVersion != ProductionToolSchemaVersion {
+	if toolSchemaVersion != CurrentToolSchemaVersion && toolSchemaVersion != ProductionToolSchemaVersion && toolSchemaVersion != NextToolSchemaVersion {
 		return ModelDecision{}, errors.New("agent tool schema version is invalid")
 	}
 	if len(payload) == 0 || len(payload) > modelDecisionLimit {
@@ -137,7 +145,7 @@ func (decision ModelDecision) Validate() error {
 }
 
 func (decision ModelDecision) ValidateForToolSchema(toolSchemaVersion int) error {
-	if toolSchemaVersion != CurrentToolSchemaVersion && toolSchemaVersion != ProductionToolSchemaVersion {
+	if toolSchemaVersion != CurrentToolSchemaVersion && toolSchemaVersion != ProductionToolSchemaVersion && toolSchemaVersion != NextToolSchemaVersion {
 		return errors.New("agent tool schema version is invalid")
 	}
 	switch decision.Kind {

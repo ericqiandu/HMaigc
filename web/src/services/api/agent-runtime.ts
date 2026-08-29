@@ -1,6 +1,6 @@
 import { localForageStorage } from "@/lib/localforage-storage";
 import { parseClarificationHistory, parsePendingClarification, type AgentClarificationAnswerInput, type AgentCompletedClarification, type AgentPendingClarification } from "./agent-clarification";
-import { parseAgentProductionTimelineContent } from "./agent-production";
+import { parseAgentProductionTimelineContent, type AgentProductionTimelineContent } from "./agent-production";
 import { array, exactObject, flag, integer, object, text } from "./strict-contract";
 
 export type {
@@ -382,7 +382,7 @@ function parseTimelineContent(value: unknown, label: string, kind: AgentTimeline
     let content: AgentTimelineItemContent;
     if (source.contentType !== undefined) {
         const production = parseAgentProductionTimelineContent(source);
-        const expectedKind = production.contentType === "stage_review_resolution" ? "approval" : "artifact";
+        const expectedKind = productionTimelineItemKind(production);
         if (kind !== expectedKind) throw new Error(`${label} 的 Agent 生产内容与 item kind 不一致`);
         content = production;
     } else {
@@ -392,6 +392,19 @@ function parseTimelineContent(value: unknown, label: string, kind: AgentTimeline
     }
     rejectTransientMediaLocator(content, label);
     return content;
+}
+
+function productionTimelineItemKind(content: AgentProductionTimelineContent): AgentTimelineItemKind {
+    switch (content.contentType) {
+        case "stage_review_resolution":
+            return "approval";
+        case "media_assembly":
+            return "tool_call";
+        case "artifact_review":
+        case "asset_publication":
+        case "asset_publication_failed":
+            return "artifact";
+    }
 }
 
 function rejectTransientMediaLocator(value: unknown, label: string): void {

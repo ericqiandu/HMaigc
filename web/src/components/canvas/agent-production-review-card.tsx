@@ -371,6 +371,7 @@ function schemaLabel(schema: AgentArtifactReviewContent["artifactSchema"]): stri
         "video_plan.v1": "视频计划",
         "audio_plan.v1": "音频计划",
         "assembly_plan.v1": "装配计划",
+        "assembly_plan.v2": "最终装配计划",
     };
     return labels[schema];
 }

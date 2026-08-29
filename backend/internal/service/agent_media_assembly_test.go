@@ -76,6 +76,13 @@ func TestUnbilledInternalTaskEnqueueIsDeterministic(t *testing.T) {
 	if taskCount != 1 || billingCount != 0 {
 		t.Fatalf("taskCount=%d billingCount=%d", taskCount, billingCount)
 	}
+	taskIDs, err := svc.repo.AgentRunTreeTaskIDs(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(taskIDs) != 1 || taskIDs[0] != first.ID {
+		t.Fatalf("run tree task ids = %#v, want [%q]", taskIDs, first.ID)
+	}
 }
 
 func TestMediaAssemblySuccessMaterializesChecksummedResourceAndArtifact(t *testing.T) {
@@ -218,6 +225,30 @@ func TestMediaAssemblyLateSuccessAfterCancellationIsUnadopted(t *testing.T) {
 	}
 	if artifact.HeadRevision != 0 || artifact.LifecycleStatus != model.AgentArtifactLifecycleUnadopted {
 		t.Fatalf("late successful artifact was adopted: %#v", artifact)
+	}
+	frozen, err := decodeMediaAssemblyTaskInput(stored.InputJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozen.ToolCallID = "assemble-final"
+	frozen.ActionVersion = 1
+	frozenJSON, err := json.Marshal(frozen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.InputJSON = string(frozenJSON)
+	content, err := svc.mediaAssemblyTimelineContent(
+		scope,
+		&agentruntime.ToolCallDecision{ToolCallID: frozen.ToolCallID, ToolName: agentruntime.ToolMediaAssemble, ActionVersion: frozen.ActionVersion},
+		MediaAssembleArguments{PlanRevision: plan},
+		*stored,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content.TaskStatus != agentruntime.MediaAssemblyTaskCancelled || content.Final == nil || content.Final.Adopted ||
+		content.Final.ResourceID != revisions[0].ResourceID {
+		t.Fatalf("cancelled late assembly timeline = %#v", content)
 	}
 }
 
@@ -382,7 +413,7 @@ func TestMediaAssemblyTaskInputRejectsTrailingJSON(t *testing.T) {
 
 func TestMediaAssemblyUsesVideoTimeoutPolicy(t *testing.T) {
 	policy := RuntimeTaskPolicy{VideoTimeoutMinutes: 17, DefaultTimeoutMinutes: 3}
-	if got := taskExecutionTimeoutWithPolicy(agentMediaAssemblyTaskType, policy); got != 17*time.Minute {
+	if got := taskExecutionTimeoutWithPolicy(agentruntime.MediaAssemblyTaskType, policy); got != 17*time.Minute {
 		t.Fatalf("assembly timeout = %s, want %s", got, 17*time.Minute)
 	}
 }

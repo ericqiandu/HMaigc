@@ -19,8 +19,6 @@ import (
 	"infinite-canvas/backend/internal/repository"
 )
 
-const agentMediaAssemblyTaskType = "agent_media_assembly"
-
 var (
 	ErrMediaAssemblyOutputMissing = errors.New("media assembly output is missing")
 	ErrMediaAssemblyOutputInvalid = errors.New("media assembly output is invalid")
@@ -45,8 +43,10 @@ func (execMediaAssembler) Assemble(ctx context.Context, command MediaAssemblyCom
 }
 
 type EnqueueAgentMediaAssemblyInput struct {
-	Scope        agentruntime.Scope
-	PlanRevision agentruntime.ArtifactRevisionRef
+	Scope         agentruntime.Scope
+	PlanRevision  agentruntime.ArtifactRevisionRef
+	ToolCallID    string
+	ActionVersion int
 }
 
 type mediaAssemblyTaskInput struct {
@@ -55,6 +55,8 @@ type mediaAssemblyTaskInput struct {
 	PlanDigest        string                           `json:"planDigest"`
 	OutputArtifactID  string                           `json:"outputArtifactId"`
 	OutputArtifactKey string                           `json:"outputArtifactKey"`
+	ToolCallID        string                           `json:"toolCallId,omitempty"`
+	ActionVersion     int                              `json:"actionVersion,omitempty"`
 }
 
 type mediaAssemblyTaskResult struct {
@@ -84,9 +86,14 @@ func (s *Service) EnqueueAgentMediaAssembly(input EnqueueAgentMediaAssemblyInput
 		return nil, err
 	}
 	identity := mediaAssemblyIdentity(input.Scope, input.PlanRevision, command.PlanDigest, command.OutputArtifactKey)
+	operation, err := agentruntime.MediaAssemblyOperationForRun(input.Scope.RunID)
+	if err != nil {
+		return nil, err
+	}
 	frozen := mediaAssemblyTaskInput{
 		Scope: input.Scope, PlanRevision: input.PlanRevision, PlanDigest: command.PlanDigest,
 		OutputArtifactID: "final-" + identity[:24], OutputArtifactKey: command.OutputArtifactKey,
+		ToolCallID: input.ToolCallID, ActionVersion: input.ActionVersion,
 	}
 	frozenJSON, err := json.Marshal(frozen)
 	if err != nil {
@@ -96,8 +103,8 @@ func (s *Service) EnqueueAgentMediaAssembly(input EnqueueAgentMediaAssemblyInput
 	task := &model.Task{
 		ID: "assembly-" + identity[:24], UserID: input.Scope.ActorUserID, Audience: model.TaskAudienceInternal,
 		ExecutionKind: model.TaskExecutionLocalMediaAssembly, ProjectID: input.Scope.CanvasID,
-		Type: agentMediaAssemblyTaskType, Capability: "video", Status: model.TaskStatusQueued,
-		Stage: "等待本地装配", Progress: 5, Operation: "assembly:" + identity[:24],
+		Type: agentruntime.MediaAssemblyTaskType, Capability: "video", Status: model.TaskStatusQueued,
+		Stage: "等待本地装配", Progress: 5, Operation: operation,
 		InputJSON: string(frozenJSON), CreatedAt: now, UpdatedAt: now,
 	}
 	return s.repo.CreateInternalUnbilledTaskOnce(task)
@@ -119,7 +126,7 @@ func (s *Service) processClaimedMediaAssembly(ctx context.Context, task *model.T
 	}
 	if task.UserID != input.Scope.ActorUserID || task.ProjectID != input.Scope.CanvasID ||
 		task.Audience != model.TaskAudienceInternal || task.ExecutionKind != model.TaskExecutionLocalMediaAssembly ||
-		task.Type != agentMediaAssemblyTaskType || task.Capability != "video" || task.BillingOrderID != "" {
+		task.Type != agentruntime.MediaAssemblyTaskType || task.Capability != "video" || task.BillingOrderID != "" {
 		return s.failClaimedMediaAssembly(task, repository.ErrInternalTaskFactConflict)
 	}
 	if task.Status == model.TaskStatusCancelled {
@@ -250,6 +257,15 @@ func (s *Service) processClaimedMediaAssembly(ctx context.Context, task *model.T
 	})
 	if err != nil {
 		return s.failClaimedMediaAssembly(task, err)
+	}
+	latest, loadErr := s.repo.Task(task.ID)
+	if loadErr != nil {
+		return loadErr
+	}
+	if latest.Status == model.TaskStatusCancelled {
+		if timelineErr := s.appendPersistedMediaAssemblyTaskTimeline(input.Scope, *latest); timelineErr != nil {
+			return timelineErr
+		}
 	}
 	_ = s.log(task.UserID, task.ID, "info", "本地媒体装配完成", "")
 	return nil
@@ -412,10 +428,58 @@ func decodeMediaAssemblyTaskInput(value string) (mediaAssemblyTaskInput, error) 
 		}
 		return mediaAssemblyTaskInput{}, err
 	}
-	if input.Scope.Validate() != nil || input.PlanRevision.Validate() != nil || len(input.PlanDigest) != 64 || input.OutputArtifactID == "" || input.OutputArtifactKey == "" {
+	toolIdentityAbsent := input.ToolCallID == "" && input.ActionVersion == 0
+	toolIdentityPresent := input.ToolCallID != "" && input.ActionVersion > 0
+	if input.Scope.Validate() != nil || input.PlanRevision.Validate() != nil || len(input.PlanDigest) != 64 || input.OutputArtifactID == "" || input.OutputArtifactKey == "" ||
+		(!toolIdentityAbsent && !toolIdentityPresent) {
 		return mediaAssemblyTaskInput{}, repository.ErrInternalTaskFactConflict
 	}
 	return input, nil
+}
+
+func decodeMediaAssemblyTaskResult(value string) (mediaAssemblyTaskResult, error) {
+	var result mediaAssemblyTaskResult
+	decoder := json.NewDecoder(strings.NewReader(value))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result); err != nil {
+		return mediaAssemblyTaskResult{}, err
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return mediaAssemblyTaskResult{}, repository.ErrInternalTaskFactConflict
+		}
+		return mediaAssemblyTaskResult{}, err
+	}
+	if result.ResourceID == "" || len(result.PlanDigest) != 64 || result.ArtifactRevision.Validate() != nil {
+		return mediaAssemblyTaskResult{}, repository.ErrInternalTaskFactConflict
+	}
+	return result, nil
+}
+
+func (s *Service) appendPersistedMediaAssemblyTaskTimeline(scope agentruntime.Scope, task model.Task) error {
+	input, err := decodeMediaAssemblyTaskInput(task.InputJSON)
+	if err != nil {
+		return err
+	}
+	if input.ToolCallID == "" {
+		return nil
+	}
+	call := &agentruntime.ToolCallDecision{
+		ToolCallID: input.ToolCallID, ToolName: agentruntime.ToolMediaAssemble,
+		ActionVersion: input.ActionVersion,
+	}
+	content, err := s.mediaAssemblyTimelineContent(
+		scope,
+		call,
+		MediaAssembleArguments{PlanRevision: input.PlanRevision},
+		task,
+	)
+	if err != nil {
+		return err
+	}
+	_, err = s.repo.AppendAgentMediaAssemblyTimeline(scope, content)
+	return err
 }
 
 func mediaAssemblyIdentity(scope agentruntime.Scope, revision agentruntime.ArtifactRevisionRef, planDigest string, outputKey string) string {

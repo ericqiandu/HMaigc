@@ -3,6 +3,7 @@ package repository
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
@@ -141,6 +142,22 @@ func agentArtifactTimelineMutation(runID string, event model.AgentRunEvent) (*Ti
 			ItemID: agentArtifactReviewTimelineItemID(runID, content), Kind: model.AgentTimelineItemArtifact,
 			ToStatus: model.AgentTimelineItemCompleted, SourceEventSequence: event.Sequence,
 			ContentJSON: json.RawMessage(event.PayloadJSON),
+		}, nil
+	}
+	if envelope.ContentType == agentruntime.MediaAssemblyContentType {
+		content, err := agentruntime.DecodeMediaAssemblyTimelineContent([]byte(event.PayloadJSON))
+		if err != nil {
+			return nil, errors.New("agent media assembly event facts are invalid")
+		}
+		status, err := mediaAssemblyTimelineItemStatus(content)
+		if err != nil {
+			return nil, errors.New("agent media assembly event status is invalid")
+		}
+		fromStatus := model.AgentTimelineItemInProgress
+		return &TimelineMutation{
+			ItemID: agentFactID("timeline", runID, "tool-call", content.ToolCallID+":"+strconv.Itoa(content.ActionVersion)),
+			Kind:   model.AgentTimelineItemToolCall, FromStatus: &fromStatus, ToStatus: status,
+			SourceEventSequence: event.Sequence, ContentJSON: json.RawMessage(event.PayloadJSON),
 		}, nil
 	}
 	if envelope.ContentType != "" {

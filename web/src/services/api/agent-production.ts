@@ -14,6 +14,7 @@ export const agentProductionArtifactSchemas = [
     "video_plan.v1",
     "audio_plan.v1",
     "assembly_plan.v1",
+    "assembly_plan.v2",
 ] as const;
 
 export type AgentProductionArtifactSchema = (typeof agentProductionArtifactSchemas)[number];
@@ -99,6 +100,36 @@ export type AgentAssemblyPlanPayload = {
     audioRevisions: AgentArtifactRevisionRef[];
     outputArtifactKey: string;
 };
+export type AgentAssemblyOutputV2 = {
+    artifactKey: string;
+    container: "mp4";
+    videoCodec: "h264";
+    audioCodec: "none" | "aac";
+    width: number;
+    height: number;
+    frameRate: number;
+};
+export type AgentAssemblyPlanV2Payload = {
+    planKey: string;
+    audioMode: "none" | "native" | "independent";
+    clips: Array<{
+        clipKey: string;
+        sourceRevision: AgentArtifactRevisionRef;
+        trimStartMs: number;
+        trimEndMs: number;
+        nativeAudioGainMilliDb: number | null;
+        transitionToNext: { kind: "cut" | "crossfade"; durationMs: number };
+    }>;
+    audioTracks: Array<{
+        trackKey: string;
+        sourceRevision: AgentArtifactRevisionRef;
+        startMs: number;
+        trimStartMs: number;
+        trimEndMs: number;
+        gainMilliDb: number;
+    }>;
+    output: AgentAssemblyOutputV2;
+};
 export type AgentMediaCandidatePayload = {
     candidateKey: string;
     mediaKind: "image" | "video" | "audio";
@@ -135,6 +166,7 @@ export type AgentArtifactPayload =
     | AgentVideoPlanPayload
     | AgentAudioPlanPayload
     | AgentAssemblyPlanPayload
+    | AgentAssemblyPlanV2Payload
     | Record<string, unknown>;
 export type AgentArtifactRevision = {
     artifactId: string;
@@ -192,11 +224,26 @@ export type AgentAssetPublicationFailureContent = {
     artifactRevisionId: string;
     errorCode: string;
 };
+export type AgentMediaAssemblyContent = {
+    contentType: "media_assembly";
+    toolCallId: string;
+    actionVersion: number;
+    taskId: string;
+    taskStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+    stage: string;
+    clipCount: number;
+    audioMode: "none" | "native" | "independent";
+    output: AgentAssemblyOutputV2;
+    planRevision: AgentArtifactRevisionRef;
+    final?: { artifactRevision: AgentArtifactRevisionRef; resourceId: string; adopted: boolean };
+    errorCode?: string;
+};
 export type AgentProductionTimelineContent =
     | AgentArtifactReviewContent
     | AgentStageReviewResolutionContent
     | AgentAssetPublicationContent
-    | AgentAssetPublicationFailureContent;
+    | AgentAssetPublicationFailureContent
+    | AgentMediaAssemblyContent;
 
 export type AgentStageReviewInput = {
     stageVersion: number;
@@ -305,6 +352,8 @@ export function parseAgentProductionTimelineContent(value: unknown): AgentProduc
                 errorCode: text(content.errorCode, "publicationFailure.errorCode"),
             };
         }
+        case "media_assembly":
+            return parseMediaAssemblyTimeline(source);
         default:
             throw new Error(`不受支持的 Agent 产物时间线类型: ${String(source.contentType)}`);
     }
@@ -349,6 +398,7 @@ function parseArtifactPayload(schema: AgentProductionArtifactSchema, value: unkn
         case "video_plan.v1": return parseVideoPlan(value);
         case "audio_plan.v1": return parseAudioPlan(value);
         case "assembly_plan.v1": return parseAssemblyPlan(value);
+        case "assembly_plan.v2": return parseAssemblyPlanV2(value);
     }
 }
 
@@ -558,6 +608,116 @@ function parseAudioPlan(value: unknown): AgentAudioPlanPayload {
 function parseAssemblyPlan(value: unknown): AgentAssemblyPlanPayload {
     const source = exactObject(value, "Agent assembly_plan.v1 产物", ["planKey", "audioMode", "videoRevisions", "audioRevisions", "outputArtifactKey"]);
     return { planKey: text(source.planKey, "assemblyPlan.planKey"), audioMode: audioMode(source.audioMode, "assemblyPlan.audioMode"), videoRevisions: revisionArray(source.videoRevisions, "assemblyPlan.videoRevisions"), audioRevisions: revisionArray(source.audioRevisions, "assemblyPlan.audioRevisions"), outputArtifactKey: text(source.outputArtifactKey, "assemblyPlan.outputArtifactKey") };
+}
+
+function parseAssemblyPlanV2(value: unknown): AgentAssemblyPlanV2Payload {
+    const source = exactObject(value, "Agent assembly_plan.v2 产物", ["planKey", "audioMode", "clips", "audioTracks", "output"]);
+    const mode = audioMode(source.audioMode, "assemblyPlanV2.audioMode");
+    const clips = array(source.clips, "assemblyPlanV2.clips").map((item, index) => {
+        const label = `assemblyPlanV2.clips[${index}]`;
+        const clip = exactObject(item, label, ["clipKey", "sourceRevision", "trimStartMs", "trimEndMs", "nativeAudioGainMilliDb", "transitionToNext"]);
+        const transition = exactObject(clip.transitionToNext, `${label}.transitionToNext`, ["kind", "durationMs"]);
+        const kind = oneOf(transition.kind, `${label}.transitionToNext.kind`, ["cut", "crossfade"] as const);
+        const parsed = {
+            clipKey: text(clip.clipKey, `${label}.clipKey`),
+            sourceRevision: parseRevisionRef(clip.sourceRevision, `${label}.sourceRevision`),
+            trimStartMs: integer(clip.trimStartMs, `${label}.trimStartMs`, true),
+            trimEndMs: integer(clip.trimEndMs, `${label}.trimEndMs`),
+            nativeAudioGainMilliDb: nullableSignedInteger(clip.nativeAudioGainMilliDb, `${label}.nativeAudioGainMilliDb`),
+            transitionToNext: { kind, durationMs: integer(transition.durationMs, `${label}.transitionToNext.durationMs`, true) },
+        };
+        if (parsed.trimEndMs <= parsed.trimStartMs) throw new Error(`${label} 裁剪区间无效`);
+        if (parsed.nativeAudioGainMilliDb !== null && (parsed.nativeAudioGainMilliDb < -96_000 || parsed.nativeAudioGainMilliDb > 24_000)) throw new Error(`${label}.nativeAudioGainMilliDb 超出范围`);
+        if (mode === "native" ? parsed.nativeAudioGainMilliDb === null : parsed.nativeAudioGainMilliDb !== null) throw new Error(`${label} 原生音频增益与声音模式冲突`);
+        return parsed;
+    });
+    if (!clips.length) throw new Error("assemblyPlanV2.clips 不能为空");
+    clips.forEach((clip, index) => {
+        if (clip.transitionToNext.kind === "cut" && clip.transitionToNext.durationMs !== 0) throw new Error(`assemblyPlanV2.clips[${index}] 硬切时长必须为 0`);
+        if (clip.transitionToNext.kind === "crossfade") {
+            const next = clips[index + 1];
+            const duration = clip.transitionToNext.durationMs;
+            if (!next || duration <= 0 || duration >= clip.trimEndMs - clip.trimStartMs || duration >= next.trimEndMs - next.trimStartMs) {
+                throw new Error(`assemblyPlanV2.clips[${index}] 叠化时长无效`);
+            }
+        }
+    });
+    const audioTracks = array(source.audioTracks, "assemblyPlanV2.audioTracks").map((item, index) => {
+        const label = `assemblyPlanV2.audioTracks[${index}]`;
+        const track = exactObject(item, label, ["trackKey", "sourceRevision", "startMs", "trimStartMs", "trimEndMs", "gainMilliDb"]);
+        const parsed = {
+            trackKey: text(track.trackKey, `${label}.trackKey`),
+            sourceRevision: parseRevisionRef(track.sourceRevision, `${label}.sourceRevision`),
+            startMs: integer(track.startMs, `${label}.startMs`, true),
+            trimStartMs: integer(track.trimStartMs, `${label}.trimStartMs`, true),
+            trimEndMs: integer(track.trimEndMs, `${label}.trimEndMs`),
+            gainMilliDb: signedInteger(track.gainMilliDb, `${label}.gainMilliDb`),
+        };
+        if (parsed.trimEndMs <= parsed.trimStartMs || parsed.gainMilliDb < -96_000 || parsed.gainMilliDb > 24_000) throw new Error(`${label} 音轨参数无效`);
+        return parsed;
+    });
+    if ((mode === "independent") !== (audioTracks.length > 0)) throw new Error("assemblyPlanV2.audioTracks 与声音模式冲突");
+    return {
+        planKey: text(source.planKey, "assemblyPlanV2.planKey"),
+        audioMode: mode,
+        clips,
+        audioTracks,
+        output: parseAssemblyOutputV2(source.output, mode, "assemblyPlanV2.output"),
+    };
+}
+
+function parseMediaAssemblyTimeline(value: unknown): AgentMediaAssemblyContent {
+    const source = exactObject(value, "Agent 最终视频装配", ["contentType", "toolCallId", "actionVersion", "taskId", "taskStatus", "stage", "clipCount", "audioMode", "output", "planRevision", "final", "errorCode"]);
+    const taskStatus = oneOf(source.taskStatus, "mediaAssembly.taskStatus", ["queued", "running", "succeeded", "failed", "cancelled"] as const);
+    const mode = audioMode(source.audioMode, "mediaAssembly.audioMode");
+    const result: AgentMediaAssemblyContent = {
+        contentType: "media_assembly",
+        toolCallId: text(source.toolCallId, "mediaAssembly.toolCallId"),
+        actionVersion: integer(source.actionVersion, "mediaAssembly.actionVersion"),
+        taskId: text(source.taskId, "mediaAssembly.taskId"),
+        taskStatus,
+        stage: text(source.stage, "mediaAssembly.stage"),
+        clipCount: integer(source.clipCount, "mediaAssembly.clipCount"),
+        audioMode: mode,
+        output: parseAssemblyOutputV2(source.output, mode, "mediaAssembly.output"),
+        planRevision: parseRevisionRef(source.planRevision, "mediaAssembly.planRevision"),
+    };
+    if (source.final !== undefined) {
+        const final = exactObject(source.final, "mediaAssembly.final", ["artifactRevision", "resourceId", "adopted"]);
+        result.final = {
+            artifactRevision: parseRevisionRef(final.artifactRevision, "mediaAssembly.final.artifactRevision"),
+            resourceId: text(final.resourceId, "mediaAssembly.final.resourceId"),
+            adopted: flag(final.adopted, "mediaAssembly.final.adopted"),
+        };
+    }
+    if (source.errorCode !== undefined) result.errorCode = text(source.errorCode, "mediaAssembly.errorCode");
+    if ((taskStatus === "queued" || taskStatus === "running") && (result.final || result.errorCode)) throw new Error("Agent 装配进行中事实冲突");
+    if (taskStatus === "succeeded" && (!result.final || result.errorCode)) throw new Error("Agent 装配成功事实不完整");
+    if (taskStatus === "failed" && (result.final || !result.errorCode)) throw new Error("Agent 装配失败事实不完整");
+    if (taskStatus === "cancelled" && (!result.errorCode || result.final?.adopted)) throw new Error("Agent 装配取消事实冲突");
+    return result;
+}
+
+function parseAssemblyOutputV2(value: unknown, mode: AgentAssemblyPlanV2Payload["audioMode"], label: string): AgentAssemblyOutputV2 {
+    const source = exactObject(value, label, ["artifactKey", "container", "videoCodec", "audioCodec", "width", "height", "frameRate"]);
+    const container = oneOf(source.container, `${label}.container`, ["mp4"] as const);
+    const videoCodec = oneOf(source.videoCodec, `${label}.videoCodec`, ["h264"] as const);
+    const audioCodec = oneOf(source.audioCodec, `${label}.audioCodec`, ["none", "aac"] as const);
+    const width = integer(source.width, `${label}.width`);
+    const height = integer(source.height, `${label}.height`);
+    const frameRate = integer(source.frameRate, `${label}.frameRate`);
+    if (width > 8_192 || height > 8_192 || width * height > 8_192 * 4_320 || width % 2 !== 0 || height % 2 !== 0 || frameRate > 240) throw new Error(`${label} 输出规格无效`);
+    if ((mode === "none") !== (audioCodec === "none")) throw new Error(`${label}.audioCodec 与声音模式冲突`);
+    return { artifactKey: text(source.artifactKey, `${label}.artifactKey`), container, videoCodec, audioCodec, width, height, frameRate };
+}
+
+function signedInteger(value: unknown, label: string): number {
+    if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`${label} 必须是整数`);
+    return value;
+}
+
+function nullableSignedInteger(value: unknown, label: string): number | null {
+    return value === null ? null : signedInteger(value, label);
 }
 
 function parseMediaCandidate(value: unknown): AgentMediaCandidatePayload {

@@ -21,7 +21,10 @@ var (
 	ErrAdminAgentRunBillingUnresolved = errors.New("admin agent run billing is unresolved")
 )
 
-const adminAgentRunInterruptedCode = "admin_agent_run_interrupted"
+const (
+	adminAgentRunInterruptedCode = "admin_agent_run_interrupted"
+	agentRunInterruptedStage     = "Agent 任务已终止"
+)
 
 type AdminAgentRunInterruptCommand struct {
 	RunID                string
@@ -204,6 +207,23 @@ func loadAdminAgentRunControlTargets(db *gorm.DB, runID string) ([]adminAgentRun
 	for _, target := range mediaTargets {
 		targetByID[target.TaskID] = target
 	}
+	assemblyOperation, err := agentruntime.MediaAssemblyOperationForRun(runID)
+	if err != nil {
+		return nil, err
+	}
+	var assemblyTargets []adminAgentRunControlTarget
+	if err := db.Model(&model.Task{}).
+		Select("id AS task_id, 'assembly' AS kind, user_id, status, billing_order_id, provider_request_id").
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("operation = ? AND type = ? AND audience = ? AND execution_kind = ? AND status IN ?",
+			assemblyOperation, agentruntime.MediaAssemblyTaskType, model.TaskAudienceInternal,
+			model.TaskExecutionLocalMediaAssembly, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).
+		Find(&assemblyTargets).Error; err != nil {
+		return nil, err
+	}
+	for _, target := range assemblyTargets {
+		targetByID[target.TaskID] = target
+	}
 	targets := make([]adminAgentRunControlTarget, 0, len(targetByID))
 	for _, target := range targetByID {
 		targets = append(targets, target)
@@ -218,10 +238,13 @@ func adminAgentRunHasUnresolvedBilling(db *gorm.DB, runID string, targets []admi
 	taskIDs := make([]string, 0, len(targets))
 	billingOrderIDs := make([]string, 0, len(targets))
 	for _, target := range targets {
+		taskIDs = append(taskIDs, target.TaskID)
 		if strings.TrimSpace(target.BillingOrderID) == "" {
+			if target.Kind == "assembly" {
+				continue
+			}
 			return true, nil
 		}
-		taskIDs = append(taskIDs, target.TaskID)
 		if target.BillingOrderID != "" {
 			billingOrderIDs = append(billingOrderIDs, target.BillingOrderID)
 		}
@@ -320,7 +343,7 @@ func disposeAdminAgentRunControlTargets(
 		}
 		pollStage := ""
 		var nextPollAt *time.Time
-		stage := "Agent 任务已终止"
+		stage := agentRunInterruptedStage
 		if providerPossiblySubmitted {
 			pollStage = "cancel_reconcile"
 			next := now

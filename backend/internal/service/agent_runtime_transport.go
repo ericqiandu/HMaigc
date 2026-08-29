@@ -141,10 +141,15 @@ func ProjectAgentEvent(threadID string, event model.AgentRunEvent, item *model.A
 		if item == nil {
 			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent artifact item is missing"))
 		}
-		if item.Status == model.AgentTimelineItemFailed {
-			projected.Kind = AgentUIEventItemFailed
-		} else {
+		switch item.Status {
+		case model.AgentTimelineItemInProgress:
+			projected.Kind = AgentUIEventItemDelta
+		case model.AgentTimelineItemCompleted:
 			projected.Kind = AgentUIEventItemCompleted
+		case model.AgentTimelineItemFailed, model.AgentTimelineItemInterrupted:
+			projected.Kind = AgentUIEventItemFailed
+		default:
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent artifact item status is invalid"))
 		}
 	case agentruntime.EventAgentMessageFailed:
 		projected.Kind = AgentUIEventItemFailed
@@ -237,6 +242,25 @@ func projectAgentItemEvent(projected AgentUIEvent, event model.AgentRunEvent, it
 			return projected, nil
 		}
 	}
+	if item.Kind == model.AgentTimelineItemToolCall {
+		var envelope struct {
+			ContentType string `json:"contentType"`
+		}
+		if err := json.Unmarshal([]byte(item.ContentJSON), &envelope); err != nil {
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent tool timeline facts are invalid"))
+		}
+		if envelope.ContentType == agentruntime.MediaAssemblyContentType {
+			content, err := agentruntime.DecodeMediaAssemblyTimelineContent([]byte(item.ContentJSON))
+			if err != nil || !mediaAssemblyTimelineStatusMatchesItem(content.TaskStatus, item.Status) {
+				return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent media assembly timeline facts are invalid"))
+			}
+			projected.Payload, err = json.Marshal(content)
+			if err != nil {
+				return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, err)
+			}
+			return projected, nil
+		}
+	}
 	if item.Kind != model.AgentTimelineItemArtifact {
 		projected.Payload = append(json.RawMessage(nil), item.ContentJSON...)
 		return projected, nil
@@ -298,6 +322,21 @@ func projectAgentItemEvent(projected AgentUIEvent, event model.AgentRunEvent, it
 	}
 	projected.Payload = safePayload
 	return projected, nil
+}
+
+func mediaAssemblyTimelineStatusMatchesItem(taskStatus agentruntime.MediaAssemblyTaskStatus, itemStatus model.AgentTimelineItemStatus) bool {
+	switch taskStatus {
+	case agentruntime.MediaAssemblyTaskQueued, agentruntime.MediaAssemblyTaskRunning:
+		return itemStatus == model.AgentTimelineItemInProgress
+	case agentruntime.MediaAssemblyTaskSucceeded:
+		return itemStatus == model.AgentTimelineItemCompleted
+	case agentruntime.MediaAssemblyTaskFailed:
+		return itemStatus == model.AgentTimelineItemFailed
+	case agentruntime.MediaAssemblyTaskCancelled:
+		return itemStatus == model.AgentTimelineItemInterrupted
+	default:
+		return false
+	}
 }
 
 func validateAgentProjectedItem(projected AgentUIEvent, event model.AgentRunEvent, item *model.AgentTimelineItem) error {

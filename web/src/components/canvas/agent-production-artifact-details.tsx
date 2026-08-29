@@ -1,5 +1,6 @@
 import type {
     AgentAssemblyPlanPayload,
+    AgentAssemblyPlanV2Payload,
     AgentAssetBindingPayload,
     AgentArtifactReviewContent,
     AgentArtifactRevision,
@@ -67,6 +68,20 @@ export function AgentProductionArtifactDetails({ schema, revision }: { schema: A
     if (schema === "assembly_plan.v1") {
         const payload = revision.payload as AgentAssemblyPlanPayload;
         return <PlanDetails planKey={payload.planKey} mode={payload.audioMode} label="装配输出" entries={[payload.outputArtifactKey]} />;
+    }
+    if (schema === "assembly_plan.v2") {
+        const payload = revision.payload as AgentAssemblyPlanV2Payload;
+        return (
+            <PlanDetails
+                planKey={payload.planKey}
+                mode={payload.audioMode}
+                label="装配片段"
+                entries={[
+                    ...payload.clips.map((clip) => `${clip.clipKey} · ${clip.trimStartMs}–${clip.trimEndMs} ms · ${clip.transitionToNext.kind}`),
+                    `${payload.output.width}×${payload.output.height} · ${payload.output.frameRate}fps · ${payload.output.container.toUpperCase()}`,
+                ]}
+            />
+        );
     }
     const payload = revision.payload as Record<string, unknown>;
     return (

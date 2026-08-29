@@ -47,9 +47,17 @@ const (
 	ProductionToolSchemaVersion      = 4
 	CurrentProductionSchemaVersion   = 1
 	ProductionAgentUIProtocolVersion = 3
-	LegacyRuntimeVersion             = 2
-	LegacyPolicyVersion              = 2
-	LegacyToolSchemaVersion          = 3
+	// Next* contracts are deliberately dormant until the Runtime v4 hard cut.
+	// They let the next runtime be implemented and verified without exposing a
+	// second execution path to current production runs.
+	NextRuntimeVersion          = 4
+	NextPolicyVersion           = 4
+	NextToolSchemaVersion       = 5
+	NextProductionSchemaVersion = 2
+	NextAgentUIProtocolVersion  = 4
+	LegacyRuntimeVersion        = 2
+	LegacyPolicyVersion         = 2
+	LegacyToolSchemaVersion     = 3
 
 	// Current* is a hard cut to the governed production runtime. New runs and
 	// their UI event stream must never re-enter the retired v2 contract.

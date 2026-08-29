@@ -6,6 +6,7 @@ import {
     parseStageReviewResult,
 } from "../src/services/api/agent-production";
 import { agentProductionClient } from "../src/services/api/agent-production-client";
+import { parseAgentRuntimeEvent } from "../src/services/api/agent-runtime";
 
 const artifactRevision = {
     artifactId: "artifact-script",
@@ -81,6 +82,99 @@ test("审核、决议与资产入库事件保留精确的耐久身份", () => {
             targetBindingKey: "hero",
         }),
     ).toEqual(expect.objectContaining({ contentType: "asset_publication", resourceId: "resource-image-1" }));
+});
+
+test("最终装配计划与任务时间线只接受显式 v2 事实", () => {
+    const plan = {
+        ...artifactRevision,
+        artifactId: "artifact-assembly",
+        revisionId: "revision-assembly-2",
+        artifactKey: "assembly-plan",
+        kind: "assembly_plan",
+        schemaVersion: 2,
+        payload: {
+            planKey: "assembly-plan",
+            audioMode: "none",
+            clips: [{
+                clipKey: "clip-1",
+                sourceRevision: { artifactId: "video-1", revisionId: "video-r1" },
+                trimStartMs: 0,
+                trimEndMs: 5_000,
+                nativeAudioGainMilliDb: null,
+                transitionToNext: { kind: "cut", durationMs: 0 },
+            }],
+            audioTracks: [],
+            output: {
+                artifactKey: "final-video",
+                container: "mp4",
+                videoCodec: "h264",
+                audioCodec: "none",
+                width: 1_920,
+                height: 1_080,
+                frameRate: 24,
+            },
+        },
+    };
+    expect(parseAgentArtifactRevision(plan)).toEqual(plan);
+
+    const timeline = {
+        contentType: "media_assembly",
+        toolCallId: "assemble-final",
+        actionVersion: 1,
+        taskId: "assembly-task",
+        taskStatus: "succeeded",
+        stage: "装配完成",
+        clipCount: 1,
+        audioMode: "none",
+        output: plan.payload.output,
+        planRevision: { artifactId: "artifact-assembly", revisionId: "revision-assembly-2" },
+        final: {
+            artifactRevision: { artifactId: "final-video", revisionId: "final-video-r1" },
+            resourceId: "final-resource",
+            adopted: true,
+        },
+    };
+    expect(parseAgentProductionTimelineContent(timeline)).toEqual(timeline);
+    expect(() => parseAgentProductionTimelineContent({ ...timeline, progress: 100 })).toThrow("未知字段");
+    expect(() => parseAgentProductionTimelineContent({ ...timeline, final: { ...timeline.final, url: "https://temporary.invalid/video.mp4" } })).toThrow("短期媒体地址");
+    expect(() => parseAgentProductionTimelineContent({ ...timeline, reasoning: "内部思考" })).toThrow("未知字段");
+});
+
+test("最终装配生命周期以 tool_call 事件进入统一 Agent 时间线", () => {
+    const payload = {
+        contentType: "media_assembly",
+        toolCallId: "assemble-final",
+        actionVersion: 1,
+        taskId: "assembly-task",
+        taskStatus: "running",
+        stage: "正在装配",
+        clipCount: 1,
+        audioMode: "none",
+        output: {
+            artifactKey: "final-video",
+            container: "mp4",
+            videoCodec: "h264",
+            audioCodec: "none",
+            width: 1_920,
+            height: 1_080,
+            frameRate: 24,
+        },
+        planRevision: { artifactId: "artifact-assembly", revisionId: "revision-assembly-2" },
+    };
+    const event = {
+        protocolVersion: 3,
+        threadId: "thread-1",
+        runId: "run-1",
+        sequence: 7,
+        kind: "item.delta",
+        itemId: "assembly-call-1",
+        itemKind: "tool_call",
+        payload,
+        createdAt: "2026-08-28T00:00:02Z",
+    };
+
+    expect(parseAgentRuntimeEvent(event)).toEqual(event);
+    expect(() => parseAgentRuntimeEvent({ ...event, itemKind: "artifact" })).toThrow("item kind 不一致");
 });
 
 test("阶段结果使用生产状态全集并拒绝非 required 审核策略", () => {

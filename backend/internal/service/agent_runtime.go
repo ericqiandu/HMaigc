@@ -243,7 +243,8 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 		if decision.ToolCall.ToolName == agentruntime.ToolProductionRender || decision.ToolCall.ToolName == agentruntime.ToolSpecialistDelegate ||
 			decision.ToolCall.ToolName == agentruntime.ToolVisionAnalyze ||
 			decision.ToolCall.ToolName == agentruntime.ToolMediaGenerate ||
-			decision.ToolCall.ToolName == agentruntime.ToolCanvasProject {
+			decision.ToolCall.ToolName == agentruntime.ToolCanvasProject ||
+			decision.ToolCall.ToolName == agentruntime.ToolMediaAssemble {
 			if state.ExpectedDelivery != nil && !state.ExpectedDelivery.Equal(decision.ToolCall.ExpectedDelivery) {
 				transition, rejectErr := agentruntime.RejectModelDecision(state, agentruntime.ModelDecisionFeedback{
 					Code: "delivery_contract_changed", Reason: "expectedDelivery must exactly match the contract frozen by the first model decision",
@@ -314,6 +315,13 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 				frozenArguments, freezeErr = freezeAgentCanvasProjectDecisionArguments(scope.CanvasID, decision.ToolCall)
 				if freezeErr != nil {
 					failureCode = "canvas_projection_invalid"
+					failureClass = agentruntime.ToolFailureAgentRepairable
+					classified = true
+				}
+			case agentruntime.ToolMediaAssemble:
+				frozenArguments, freezeErr = s.freezeAgentMediaAssembleDecisionArguments(scope, decision.ToolCall)
+				if freezeErr != nil {
+					failureCode = "media_assembly_invalid"
 					failureClass = agentruntime.ToolFailureAgentRepairable
 					classified = true
 				}

@@ -208,6 +208,32 @@ test("审核响应携带未请求的候选或发布事实时保持待确认并�
     expect(refreshed).toBe(0);
 });
 
+test("装配任务的历史与 SSE 生命周期合并为一张真实结果卡", async () => {
+    const running = mediaAssemblyContent("running", "正在执行 FFmpeg 装配");
+    const succeeded = {
+        ...mediaAssemblyContent("succeeded", "装配完成"),
+        final: {
+            artifactRevision: { artifactId: "final-video", revisionId: "final-video-r1" },
+            resourceId: "final-resource",
+            adopted: true,
+        },
+    };
+
+    await mount({
+        client: productionClient({}),
+        turns: [turn([timelineItem("assembly-call-1", running, 4, "tool_call")])],
+        events: [toolEvent("assembly-call-1", succeeded, 5)],
+        onRefresh: async () => undefined,
+    });
+
+    expect(document.querySelectorAll('[aria-label="最终视频装配"]')).toHaveLength(1);
+    expect(document.body.textContent).toContain("装配完成");
+    expect(document.body.textContent).toContain("1 个片段");
+    expect(document.body.textContent).toContain("1920×1080 · 24fps · MP4");
+    expect(document.body.textContent).not.toContain("100%");
+    expect(document.querySelector<HTMLVideoElement>("video")?.src).toContain("/api/resources/final-resource/file?direct=1");
+});
+
 async function mount(input: {
     client: AgentProductionClient;
     turns: AgentThreadHistoryTurn[];
@@ -384,6 +410,43 @@ function artifactEvent(itemId: string, payload: Record<string, unknown>): AgentR
         itemKind: "artifact",
         payload,
         createdAt: "2026-08-28T00:00:01Z",
+    };
+}
+
+function toolEvent(itemId: string, payload: Record<string, unknown>, sequence: number): AgentRuntimeEvent {
+    return {
+        protocolVersion: 3,
+        threadId: "thread-1",
+        runId: "run-1",
+        sequence,
+        kind: "item.completed",
+        itemId,
+        itemKind: "tool_call",
+        payload,
+        createdAt: "2026-08-28T00:00:02Z",
+    };
+}
+
+function mediaAssemblyContent(taskStatus: "running" | "succeeded", stage: string) {
+    return {
+        contentType: "media_assembly",
+        toolCallId: "assemble-final",
+        actionVersion: 1,
+        taskId: "assembly-task",
+        taskStatus,
+        stage,
+        clipCount: 1,
+        audioMode: "none",
+        output: {
+            artifactKey: "final-video",
+            container: "mp4",
+            videoCodec: "h264",
+            audioCodec: "none",
+            width: 1_920,
+            height: 1_080,
+            frameRate: 24,
+        },
+        planRevision: { artifactId: "artifact-assembly", revisionId: "revision-assembly-2" },
     };
 }
 

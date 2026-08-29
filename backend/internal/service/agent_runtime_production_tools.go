@@ -53,6 +53,11 @@ type CanvasProjectArguments struct {
 	ExpectedDelivery  agentruntime.ExpectedDelivery      `json:"expectedDelivery"`
 }
 
+type MediaAssembleArguments struct {
+	PlanRevision     agentruntime.ArtifactRevisionRef `json:"planRevision"`
+	ExpectedDelivery agentruntime.ExpectedDelivery    `json:"expectedDelivery"`
+}
+
 func decodeVisionAnalyzeArguments(payload []byte) (VisionAnalyzeArguments, error) {
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
@@ -122,6 +127,84 @@ func decodeCanvasProjectArguments(payload []byte) (CanvasProjectArguments, error
 		return CanvasProjectArguments{}, ErrAgentRuntimeToolArgumentsInvalid
 	}
 	return arguments, nil
+}
+
+func decodeMediaAssembleArguments(payload []byte) (MediaAssembleArguments, error) {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var arguments MediaAssembleArguments
+	if err := decoder.Decode(&arguments); err != nil {
+		return MediaAssembleArguments{}, ErrAgentRuntimeToolArgumentsInvalid
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return MediaAssembleArguments{}, ErrAgentRuntimeToolArgumentsInvalid
+	}
+	if arguments.PlanRevision.Validate() != nil || !validMediaAssemblyExpectedDelivery(arguments.ExpectedDelivery) {
+		return MediaAssembleArguments{}, ErrAgentRuntimeToolArgumentsInvalid
+	}
+	return arguments, nil
+}
+
+func validMediaAssemblyExpectedDelivery(expected agentruntime.ExpectedDelivery) bool {
+	return expected.Validate() == nil && expected.Kind == agentruntime.DeliveryMixed &&
+		len(expected.RequiredArtifacts) == 2 && expected.RequiredArtifacts[0] == agentruntime.ArtifactVideo &&
+		expected.RequiredArtifacts[1] == agentruntime.ArtifactCanvasRevision &&
+		len(expected.CompletionCriteria) == 2 &&
+		expected.CompletionCriteria[0] == (agentruntime.DeliveryCriterion{
+			Fact: agentruntime.DeliveryFactTaskBackedResource, Artifact: agentruntime.ArtifactVideo,
+		}) && expected.CompletionCriteria[1] == (agentruntime.DeliveryCriterion{Fact: agentruntime.DeliveryFactCanvasRevision})
+}
+
+func (s *Service) freezeAgentMediaAssembleDecisionArguments(
+	scope agentruntime.Scope,
+	call *agentruntime.ToolCallDecision,
+) (json.RawMessage, error) {
+	if call == nil || call.ToolName != agentruntime.ToolMediaAssemble || call.ActionVersion < 1 {
+		return nil, ErrAgentRuntimeToolArgumentsInvalid
+	}
+	arguments, err := decodeMediaAssembleArguments(call.Arguments)
+	if err != nil || !arguments.ExpectedDelivery.Equal(call.ExpectedDelivery) ||
+		arguments.ExpectedDelivery.TargetCanvasID != scope.CanvasID {
+		return nil, ErrAgentRuntimeToolArgumentsInvalid
+	}
+	draft, err := s.approvedAssemblyPlanDraft(scope, arguments.PlanRevision)
+	if err != nil {
+		return nil, ErrAgentRuntimeToolArgumentsInvalid
+	}
+	head, err := s.repo.ArtifactHeadRevisionForScope(scope, arguments.PlanRevision.ArtifactID)
+	if err != nil || head.ID != arguments.PlanRevision.RevisionID {
+		return nil, ErrAgentRuntimeToolArgumentsInvalid
+	}
+	plan, err := agentruntime.DecodeAssemblyPlanV2(draft.Payload)
+	if err != nil {
+		return nil, ErrAgentRuntimeToolArgumentsInvalid
+	}
+	for _, reference := range assemblyPlanV2RevisionRefs(plan) {
+		head, loadErr := s.repo.ArtifactHeadRevisionForScope(scope, reference.ArtifactID)
+		if loadErr != nil || head.ID != reference.RevisionID {
+			return nil, ErrAgentRuntimeToolArgumentsInvalid
+		}
+	}
+	if _, err := s.resolveApprovedAssemblyInputs(scope, plan, validatedAssemblyPaths(plan)); err != nil {
+		return nil, ErrAgentRuntimeToolArgumentsInvalid
+	}
+	frozen, err := json.Marshal(arguments)
+	if err != nil {
+		return nil, err
+	}
+	return frozen, nil
+}
+
+func assemblyPlanV2RevisionRefs(plan agentruntime.AssemblyPlanV2) []agentruntime.ArtifactRevisionRef {
+	references := make([]agentruntime.ArtifactRevisionRef, 0, len(plan.Clips)+len(plan.AudioTracks))
+	for _, clip := range plan.Clips {
+		references = append(references, clip.SourceRevision)
+	}
+	for _, track := range plan.AudioTracks {
+		references = append(references, track.SourceRevision)
+	}
+	return references
 }
 
 func freezeAgentCanvasProjectDecisionArguments(

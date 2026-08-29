@@ -27,6 +27,8 @@ func ToolPoliciesForSchema(toolSchemaVersion int) ([]ToolPolicy, bool) {
 		names = []ToolName{ToolSkillLoad, ToolProductionPlan, ToolProductionRender, ToolCanvasCommit}
 	case CurrentToolSchemaVersion:
 		names = []ToolName{ToolSkillLoad, ToolSpecialistDelegate, ToolVisionAnalyze, ToolMediaGenerate, ToolCanvasProject}
+	case NextToolSchemaVersion:
+		names = []ToolName{ToolSkillLoad, ToolSpecialistDelegate, ToolVisionAnalyze, ToolMediaGenerate, ToolCanvasProject, ToolMediaAssemble}
 	default:
 		return nil, false
 	}
@@ -61,6 +63,17 @@ func ToolPolicyForSchema(name ToolName, toolSchemaVersion int) (ToolPolicy, bool
 		case ToolSkillLoad:
 			return ToolPolicy{Name: name, RiskLevel: ToolRiskRead, RequiredAccess: AccessViewer}, true
 		case ToolSpecialistDelegate, ToolCanvasProject:
+			return ToolPolicy{Name: name, RiskLevel: ToolRiskWrite, RequiredAccess: AccessEditor}, true
+		case ToolVisionAnalyze, ToolMediaGenerate:
+			return ToolPolicy{Name: name, RiskLevel: ToolRiskCost, RequiredAccess: AccessEditor}, true
+		default:
+			return ToolPolicy{}, false
+		}
+	case NextToolSchemaVersion:
+		switch name {
+		case ToolSkillLoad:
+			return ToolPolicy{Name: name, RiskLevel: ToolRiskRead, RequiredAccess: AccessViewer}, true
+		case ToolSpecialistDelegate, ToolCanvasProject, ToolMediaAssemble:
 			return ToolPolicy{Name: name, RiskLevel: ToolRiskWrite, RequiredAccess: AccessEditor}, true
 		case ToolVisionAnalyze, ToolMediaGenerate:
 			return ToolPolicy{Name: name, RiskLevel: ToolRiskCost, RequiredAccess: AccessEditor}, true

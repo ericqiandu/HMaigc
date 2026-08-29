@@ -150,6 +150,23 @@ func loadAgentRunTreeControlTargets(tx *gorm.DB, scope agentruntime.Scope) ([]ad
 	for _, target := range targets {
 		targetByID[target.TaskID] = target
 	}
+	assemblyOperation, err := agentruntime.MediaAssemblyOperationForRun(scope.RunID)
+	if err != nil {
+		return nil, err
+	}
+	var assemblyTargets []adminAgentRunControlTarget
+	if err := tx.Model(&model.Task{}).
+		Select("id AS task_id, 'assembly' AS kind, user_id, status, billing_order_id, provider_request_id").
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("operation = ? AND user_id = ? AND project_id = ? AND audience = ? AND execution_kind = ? AND status IN ?",
+			assemblyOperation, scope.ActorUserID, scope.CanvasID, model.TaskAudienceInternal, model.TaskExecutionLocalMediaAssembly,
+			[]model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).
+		Find(&assemblyTargets).Error; err != nil {
+		return nil, err
+	}
+	for _, target := range assemblyTargets {
+		targetByID[target.TaskID] = target
+	}
 	var specialistTaskIDs []string
 	if err := agentSpecialistScopeQuery(tx, scope).
 		Where("task_id <> ''").Pluck("task_id", &specialistTaskIDs).Error; err != nil {
@@ -194,6 +211,17 @@ func (r *Repository) AgentRunTreeTaskIDs(scope agentruntime.Scope) ([]string, er
 		Pluck("id", &directTaskIDs).Error; err != nil {
 		return nil, err
 	}
+	assemblyOperation, err := agentruntime.MediaAssemblyOperationForRun(scope.RunID)
+	if err != nil {
+		return nil, err
+	}
+	var assemblyTaskIDs []string
+	if err := r.db.Model(&model.Task{}).
+		Where("operation = ? AND user_id = ? AND project_id = ? AND audience = ? AND execution_kind = ?",
+			assemblyOperation, scope.ActorUserID, scope.CanvasID, model.TaskAudienceInternal, model.TaskExecutionLocalMediaAssembly).
+		Pluck("id", &assemblyTaskIDs).Error; err != nil {
+		return nil, err
+	}
 	var specialistTaskIDs []string
 	if err := agentSpecialistScopeQuery(r.db, scope).Where("task_id <> ''").Pluck("task_id", &specialistTaskIDs).Error; err != nil {
 		return nil, err
@@ -205,7 +233,10 @@ func (r *Repository) AgentRunTreeTaskIDs(scope agentruntime.Scope) ([]string, er
 		Pluck("task_id", &billedTaskIDs).Error; err != nil {
 		return nil, err
 	}
-	for _, taskID := range append(append(directTaskIDs, specialistTaskIDs...), billedTaskIDs...) {
+	allTaskIDs := append(directTaskIDs, assemblyTaskIDs...)
+	allTaskIDs = append(allTaskIDs, specialistTaskIDs...)
+	allTaskIDs = append(allTaskIDs, billedTaskIDs...)
+	for _, taskID := range allTaskIDs {
 		if strings.TrimSpace(taskID) != "" {
 			taskIDs[taskID] = struct{}{}
 		}

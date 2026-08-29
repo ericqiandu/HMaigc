@@ -2,6 +2,8 @@ package agentruntime
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +12,7 @@ import (
 const (
 	maximumMediaGenerationCandidates = 32
 	mediaGenerationOperationPrefix   = "media_generation:"
+	mediaAssemblyOperationPrefix     = "media_assembly:"
 )
 
 // MediaCandidateContent is the immutable payload stored for a generated media
@@ -52,6 +55,86 @@ type MediaGenerationToolResult struct {
 	BillingOrderID string                `json:"billingOrderId"`
 	AudioMode      MediaAudioMode        `json:"audioMode"`
 	Candidates     []ArtifactRevisionRef `json:"candidates"`
+}
+
+const (
+	MediaAssemblyContentType = "media_assembly"
+	MediaAssemblyTaskType    = "agent_media_assembly"
+)
+
+type MediaAssemblyTaskStatus string
+
+const (
+	MediaAssemblyTaskQueued    MediaAssemblyTaskStatus = "queued"
+	MediaAssemblyTaskRunning   MediaAssemblyTaskStatus = "running"
+	MediaAssemblyTaskSucceeded MediaAssemblyTaskStatus = "succeeded"
+	MediaAssemblyTaskFailed    MediaAssemblyTaskStatus = "failed"
+	MediaAssemblyTaskCancelled MediaAssemblyTaskStatus = "cancelled"
+)
+
+type MediaAssemblyFinal struct {
+	ArtifactRevision ArtifactRevisionRef `json:"artifactRevision"`
+	ResourceID       string              `json:"resourceId"`
+	Adopted          bool                `json:"adopted"`
+}
+
+// MediaAssemblyTimelineContent is the only user-visible assembly lifecycle
+// contract. It carries persisted task facts, never synthetic percentages,
+// provider reasoning or transient media locators.
+type MediaAssemblyTimelineContent struct {
+	ContentType   string                  `json:"contentType"`
+	ToolCallID    string                  `json:"toolCallId"`
+	ActionVersion int                     `json:"actionVersion"`
+	TaskID        string                  `json:"taskId"`
+	TaskStatus    MediaAssemblyTaskStatus `json:"taskStatus"`
+	Stage         string                  `json:"stage"`
+	ClipCount     int                     `json:"clipCount"`
+	AudioMode     MediaAudioMode          `json:"audioMode"`
+	Output        AssemblyOutputV2        `json:"output"`
+	PlanRevision  ArtifactRevisionRef     `json:"planRevision"`
+	Final         *MediaAssemblyFinal     `json:"final,omitempty"`
+	ErrorCode     string                  `json:"errorCode,omitempty"`
+}
+
+func (content MediaAssemblyTimelineContent) Validate() error {
+	if content.ContentType != MediaAssemblyContentType || !validArtifactText(content.ToolCallID, 120) ||
+		content.ActionVersion < 1 || !validArtifactText(content.TaskID, 80) || !validArtifactText(content.Stage, 240) ||
+		content.ClipCount < 1 || content.PlanRevision.Validate() != nil || !content.AudioMode.Valid() ||
+		!validAssemblyOutputV2(content.Output, content.AudioMode) {
+		return ErrArtifactPayloadInvalid
+	}
+	switch content.TaskStatus {
+	case MediaAssemblyTaskQueued, MediaAssemblyTaskRunning:
+		if content.Final != nil || content.ErrorCode != "" {
+			return ErrArtifactPayloadInvalid
+		}
+	case MediaAssemblyTaskSucceeded:
+		if content.Final == nil || content.ErrorCode != "" || content.Final.ArtifactRevision.Validate() != nil ||
+			!validArtifactText(content.Final.ResourceID, 80) {
+			return ErrArtifactPayloadInvalid
+		}
+	case MediaAssemblyTaskFailed:
+		if content.Final != nil || !validArtifactText(content.ErrorCode, 120) {
+			return ErrArtifactPayloadInvalid
+		}
+	case MediaAssemblyTaskCancelled:
+		if !validArtifactText(content.ErrorCode, 120) ||
+			(content.Final != nil && (content.Final.Adopted || content.Final.ArtifactRevision.Validate() != nil ||
+				!validArtifactText(content.Final.ResourceID, 80))) {
+			return ErrArtifactPayloadInvalid
+		}
+	default:
+		return ErrArtifactPayloadInvalid
+	}
+	return nil
+}
+
+func DecodeMediaAssemblyTimelineContent(payload []byte) (MediaAssemblyTimelineContent, error) {
+	var content MediaAssemblyTimelineContent
+	if err := decodeStrictMediaArtifact(payload, func(decoder *json.Decoder) error { return decoder.Decode(&content) }); err != nil || content.Validate() != nil {
+		return MediaAssemblyTimelineContent{}, ErrArtifactPayloadInvalid
+	}
+	return content, nil
 }
 
 func (result MediaGenerationToolResult) Validate() error {
@@ -136,6 +219,14 @@ func MediaGenerationOperationForRun(runID string) (string, error) {
 		return "", ErrArtifactPayloadInvalid
 	}
 	return mediaGenerationOperationPrefix + runID, nil
+}
+
+func MediaAssemblyOperationForRun(runID string) (string, error) {
+	if !validArtifactText(runID, 80) {
+		return "", ErrArtifactPayloadInvalid
+	}
+	digest := sha256.Sum256([]byte(runID))
+	return mediaAssemblyOperationPrefix + hex.EncodeToString(digest[:16]), nil
 }
 
 func decodeMediaTaskResourceIDs(payload json.RawMessage) ([]string, error) {

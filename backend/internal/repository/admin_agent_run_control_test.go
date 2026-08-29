@@ -103,6 +103,82 @@ func TestInterruptAdminAgentRunCommitsAuditedTerminalFacts(t *testing.T) {
 	}
 }
 
+func TestInterruptAdminAgentRunCancelsUnbilledMediaAssemblyWithTruthfulTimeline(t *testing.T) {
+	repo, db := openAdminAgentRunRepositorySQLite(t)
+	now := time.Date(2026, time.August, 24, 16, 15, 0, 0, time.UTC)
+	fixture := createAdminInterruptFixture(t, db, "run-admin-assembly", agentruntime.RunRunning, now)
+	operation, err := agentruntime.MediaAssemblyOperationForRun(fixture.scope.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const taskID = "task-admin-assembly"
+	task := model.Task{
+		ID: taskID, UserID: fixture.scope.ActorUserID, ProjectID: fixture.scope.CanvasID,
+		Audience: model.TaskAudienceInternal, ExecutionKind: model.TaskExecutionLocalMediaAssembly,
+		Type: agentruntime.MediaAssemblyTaskType, Capability: "video", Status: model.TaskStatusRunning,
+		Operation: operation, Stage: "拼接视频片段", InputJSON: `{}`, ResultJSON: `{}`,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	width, height, frameRate := 1920, 1080, 24
+	content := agentruntime.MediaAssemblyTimelineContent{
+		ContentType: agentruntime.MediaAssemblyContentType, ToolCallID: "assemble-final", ActionVersion: 1,
+		TaskID: taskID, TaskStatus: agentruntime.MediaAssemblyTaskRunning, Stage: task.Stage, ClipCount: 1,
+		AudioMode: agentruntime.MediaAudioNone,
+		Output: agentruntime.AssemblyOutputV2{
+			ArtifactKey: "final-video", Container: "mp4", VideoCodec: "h264", AudioCodec: "none",
+			Width: &width, Height: &height, FrameRate: &frameRate,
+		},
+		PlanRevision: agentruntime.ArtifactRevisionRef{ArtifactID: "artifact-assembly", RevisionID: "revision-assembly-2"},
+	}
+	encoded, err := json.Marshal(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	itemID := agentFactID("timeline", fixture.scope.RunID, "tool-call", "assemble-final:1")
+	item := model.AgentTimelineItem{
+		ID: itemID, TenantKind: fixture.scope.TenantKind, TenantID: fixture.scope.TenantID,
+		ThreadID: fixture.scope.ThreadID, RunID: fixture.scope.RunID, Kind: model.AgentTimelineItemToolCall,
+		Status: model.AgentTimelineItemInProgress, Ordinal: 1, SourceEventSequence: fixture.sequence,
+		ContentJSON: string(encoded), StartedAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := repo.InterruptAdminAgentRun(AdminAgentRunInterruptCommand{
+		RunID: fixture.scope.RunID, ExpectedStateVersion: fixture.state.StateVersion,
+		ActorUserID: "admin-operator", Reason: "终止卡住的最终视频装配", Now: now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.TaskDispositions) != 1 || result.TaskDispositions[0].TaskID != taskID ||
+		result.TaskDispositions[0].Kind != "assembly" || result.TaskDispositions[0].BillingStatus != "" ||
+		result.TaskDispositions[0].Status != model.TaskStatusCancelled {
+		t.Fatalf("assembly dispositions = %#v", result.TaskDispositions)
+	}
+	if err := db.First(&task, "id = ?", taskID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != model.TaskStatusCancelled || task.BillingOrderID != "" {
+		t.Fatalf("cancelled assembly task = %#v", task)
+	}
+	if err := db.First(&item, "id = ?", itemID).Error; err != nil {
+		t.Fatal(err)
+	}
+	storedContent, err := agentruntime.DecodeMediaAssemblyTimelineContent([]byte(item.ContentJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.Status != model.AgentTimelineItemInterrupted || item.CompletedAt == nil ||
+		storedContent.TaskStatus != agentruntime.MediaAssemblyTaskCancelled || storedContent.ErrorCode != "media_assembly_cancelled" {
+		t.Fatalf("interrupted assembly timeline = item %#v content %#v", item, storedContent)
+	}
+}
+
 func TestInterruptAdminAgentRunRejectsCASAndTerminalReplayWithoutWrites(t *testing.T) {
 	repo, db := openAdminAgentRunRepositorySQLite(t)
 	now := time.Date(2026, time.August, 24, 16, 30, 0, 0, time.UTC)

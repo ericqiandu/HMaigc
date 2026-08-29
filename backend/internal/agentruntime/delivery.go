@@ -36,12 +36,13 @@ func (kind ArtifactKind) Valid() bool {
 type DeliveryFact string
 
 const (
-	DeliveryFactFinalMessage     DeliveryFact = "final_message"
-	DeliveryFactCanvasRevision   DeliveryFact = "canvas_revision"
-	DeliveryFactArtifact         DeliveryFact = "artifact"
-	DeliveryFactArtifactRevision DeliveryFact = "artifact_revision"
-	DeliveryFactResource         DeliveryFact = "resource"
-	DeliveryFactPublication      DeliveryFact = "publication"
+	DeliveryFactFinalMessage       DeliveryFact = "final_message"
+	DeliveryFactCanvasRevision     DeliveryFact = "canvas_revision"
+	DeliveryFactArtifact           DeliveryFact = "artifact"
+	DeliveryFactArtifactRevision   DeliveryFact = "artifact_revision"
+	DeliveryFactResource           DeliveryFact = "resource"
+	DeliveryFactPublication        DeliveryFact = "publication"
+	DeliveryFactTaskBackedResource DeliveryFact = "task_backed_resource"
 )
 
 type DeliveryCriterion struct {
@@ -110,7 +111,7 @@ func (expected ExpectedDelivery) Validate() error {
 			if criterion.Artifact != "" {
 				return errors.New("expected delivery criterion artifact is unexpected")
 			}
-		case DeliveryFactArtifact, DeliveryFactArtifactRevision, DeliveryFactResource, DeliveryFactPublication:
+		case DeliveryFactArtifact, DeliveryFactArtifactRevision, DeliveryFactResource, DeliveryFactPublication, DeliveryFactTaskBackedResource:
 			if !criterion.Artifact.Valid() {
 				return errors.New("expected delivery criterion artifact is required")
 			}
@@ -152,20 +153,24 @@ func (expected ExpectedDelivery) Validate() error {
 }
 
 type DeliveryArtifact struct {
-	Kind          ArtifactKind `json:"kind"`
-	ArtifactID    string       `json:"artifactId,omitempty"`
-	RevisionID    string       `json:"revisionId,omitempty"`
-	ResourceID    string       `json:"resourceId,omitempty"`
-	URL           string       `json:"url,omitempty"`
-	ResourceReady bool         `json:"resourceReady,omitempty"`
-	Approved      bool         `json:"approved,omitempty"`
-	PublicationID string       `json:"publicationId,omitempty"`
+	Kind                ArtifactKind `json:"kind"`
+	ArtifactID          string       `json:"artifactId,omitempty"`
+	RevisionID          string       `json:"revisionId,omitempty"`
+	ResourceID          string       `json:"resourceId,omitempty"`
+	URL                 string       `json:"url,omitempty"`
+	ResourceReady       bool         `json:"resourceReady,omitempty"`
+	Approved            bool         `json:"approved,omitempty"`
+	PublicationID       string       `json:"publicationId,omitempty"`
+	SourceTaskID        string       `json:"sourceTaskId,omitempty"`
+	SourceTaskSucceeded bool         `json:"sourceTaskSucceeded,omitempty"`
+	CurrentRevision     bool         `json:"currentRevision,omitempty"`
 }
 
 type DeliveryEvidence struct {
 	FinalMessage   string             `json:"finalMessage,omitempty"`
 	CanvasID       string             `json:"canvasId,omitempty"`
 	CanvasRevision int64              `json:"canvasRevision,omitempty"`
+	CanvasCurrent  bool               `json:"canvasCurrent,omitempty"`
 	Artifacts      []DeliveryArtifact `json:"artifacts,omitempty"`
 }
 
@@ -201,7 +206,7 @@ func VerifyDelivery(expected ExpectedDelivery, evidence DeliveryEvidence) Delive
 		case DeliveryFactFinalMessage:
 			satisfied = strings.TrimSpace(evidence.FinalMessage) != ""
 		case DeliveryFactCanvasRevision:
-			satisfied = evidence.CanvasRevision > 0 && evidence.CanvasID == expected.TargetCanvasID
+			satisfied = evidence.CanvasRevision > 0 && evidence.CanvasID == expected.TargetCanvasID && evidence.CanvasCurrent
 		case DeliveryFactArtifact:
 			satisfied = deliveryArtifactMatches(artifacts[criterion.Artifact], func(artifact DeliveryArtifact) bool {
 				return artifact.URL != ""
@@ -220,6 +225,12 @@ func VerifyDelivery(expected ExpectedDelivery, evidence DeliveryEvidence) Delive
 				return artifact.ArtifactID != "" && artifact.RevisionID != "" && artifact.Approved &&
 					artifact.ResourceID != "" && artifact.ResourceReady && artifact.URL != "" && artifact.PublicationID != ""
 			})
+		case DeliveryFactTaskBackedResource:
+			satisfied = deliveryArtifactMatches(artifacts[criterion.Artifact], func(artifact DeliveryArtifact) bool {
+				return artifact.ArtifactID != "" && artifact.RevisionID != "" && artifact.CurrentRevision &&
+					artifact.ResourceID != "" && artifact.ResourceReady && artifact.URL != "" &&
+					artifact.SourceTaskID != "" && artifact.SourceTaskSucceeded
+			})
 		}
 		if !satisfied {
 			missing = append(missing, criterion)
@@ -234,7 +245,7 @@ func VerifyDelivery(expected ExpectedDelivery, evidence DeliveryEvidence) Delive
 func validDeliveryArtifact(artifact DeliveryArtifact) bool {
 	if !artifact.Kind.Valid() || !validOptionalDeliveryIdentity(artifact.ArtifactID) ||
 		!validOptionalDeliveryIdentity(artifact.RevisionID) || !validOptionalDeliveryIdentity(artifact.ResourceID) ||
-		!validOptionalDeliveryIdentity(artifact.PublicationID) || strings.TrimSpace(artifact.URL) != artifact.URL ||
+		!validOptionalDeliveryIdentity(artifact.PublicationID) || !validOptionalDeliveryIdentity(artifact.SourceTaskID) || strings.TrimSpace(artifact.URL) != artifact.URL ||
 		len(artifact.URL) > 4*1024 || (artifact.ArtifactID == "") != (artifact.RevisionID == "") {
 		return false
 	}
@@ -246,6 +257,9 @@ func validDeliveryArtifact(artifact DeliveryArtifact) bool {
 		return false
 	}
 	if artifact.ResourceReady && (!hasExactRevision || artifact.ResourceID == "" || artifact.URL == "") {
+		return false
+	}
+	if artifact.CurrentRevision && !hasExactRevision {
 		return false
 	}
 	return artifact.PublicationID == "" || (artifact.Approved && artifact.ResourceReady)

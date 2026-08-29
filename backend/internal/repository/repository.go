@@ -531,7 +531,7 @@ type mediaAssemblyTaskResult struct {
 func (r *Repository) CreateInternalUnbilledTaskOnce(task *model.Task) (*model.Task, error) {
 	if task == nil || task.ID == "" || task.UserID == "" || task.ProjectID == "" ||
 		task.Audience != model.TaskAudienceInternal || task.ExecutionKind != model.TaskExecutionLocalMediaAssembly ||
-		task.Type != "agent_media_assembly" || task.Capability != "video" || task.BillingOrderID != "" ||
+		task.Type != agentruntime.MediaAssemblyTaskType || task.Capability != "video" || task.BillingOrderID != "" ||
 		task.Status != model.TaskStatusQueued || task.InputJSON == "" {
 		return nil, ErrInternalTaskFactConflict
 	}
@@ -565,7 +565,7 @@ func (r *Repository) CancelInternalMediaAssemblyTask(scope agentruntime.Scope, t
 	result := r.db.Model(&model.Task{}).
 		Where("id = ? AND user_id = ? AND project_id = ? AND audience = ? AND execution_kind = ? AND type = ? AND status IN ?",
 			taskID, scope.ActorUserID, scope.CanvasID, model.TaskAudienceInternal, model.TaskExecutionLocalMediaAssembly,
-			"agent_media_assembly", []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).
+			agentruntime.MediaAssemblyTaskType, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).
 		Select("status", "stage", "completed_at", "updated_at").
 		Updates(model.Task{Status: model.TaskStatusCancelled, Stage: "任务已取消", CompletedAt: &now, UpdatedAt: now})
 	if result.Error != nil {
@@ -573,7 +573,7 @@ func (r *Repository) CancelInternalMediaAssemblyTask(scope agentruntime.Scope, t
 	}
 	var task model.Task
 	if err := r.db.First(&task, "id = ? AND user_id = ? AND project_id = ? AND audience = ? AND execution_kind = ? AND type = ?",
-		taskID, scope.ActorUserID, scope.CanvasID, model.TaskAudienceInternal, model.TaskExecutionLocalMediaAssembly, "agent_media_assembly").Error; err != nil {
+		taskID, scope.ActorUserID, scope.CanvasID, model.TaskAudienceInternal, model.TaskExecutionLocalMediaAssembly, agentruntime.MediaAssemblyTaskType).Error; err != nil {
 		return nil, err
 	}
 	if result.RowsAffected == 0 && task.Status != model.TaskStatusCancelled {
@@ -600,7 +600,7 @@ func (r *Repository) FinalizeMediaAssembly(input MediaAssemblyFinalization) (*mo
 			return query.Error
 		}
 		if task.Audience != model.TaskAudienceInternal || task.ExecutionKind != model.TaskExecutionLocalMediaAssembly ||
-			task.Type != "agent_media_assembly" || task.BillingOrderID != "" || task.ProjectID != input.Scope.CanvasID {
+			task.Type != agentruntime.MediaAssemblyTaskType || task.BillingOrderID != "" || task.ProjectID != input.Scope.CanvasID {
 			return ErrInternalTaskFactConflict
 		}
 		if task.LeaseOwner != input.LeaseOwner || (task.Status != model.TaskStatusRunning && task.Status != model.TaskStatusCancelled) {
@@ -682,7 +682,7 @@ func (r *Repository) FailMediaAssemblyTask(taskID string, userID string, leaseOw
 	encoded, _ := json.Marshal(map[string]string{"error": failure.Error()})
 	result := r.db.Model(&model.Task{}).
 		Where("id = ? AND user_id = ? AND audience = ? AND execution_kind = ? AND type = ? AND status = ? AND lease_owner = ?",
-			taskID, userID, model.TaskAudienceInternal, model.TaskExecutionLocalMediaAssembly, "agent_media_assembly", model.TaskStatusRunning, leaseOwner).
+			taskID, userID, model.TaskAudienceInternal, model.TaskExecutionLocalMediaAssembly, agentruntime.MediaAssemblyTaskType, model.TaskStatusRunning, leaseOwner).
 		Select("status", "stage", "error", "result_json", "completed_at", "lease_owner", "lease_expires_at", "updated_at").
 		Updates(model.Task{Status: model.TaskStatusFailed, Stage: "装配失败", Error: failure.Error(), ResultJSON: string(encoded), CompletedAt: &now, LeaseOwner: "", LeaseExpiresAt: nil, UpdatedAt: now})
 	if result.Error != nil {

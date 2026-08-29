@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"time"
 
 	"infinite-canvas/backend/internal/agentruntime"
@@ -467,13 +468,47 @@ func applyRebuiltAgentTimelineMutation(
 		return errors.New("rebuilt agent timeline item identity is duplicated")
 	}
 	item := &(*items)[index]
-	if item.Kind != mutation.Kind || item.Status != *mutation.FromStatus || agentTimelineStatusTerminal(item.Status) {
+	lateCancelledAssemblyOutput := isLateCancelledAssemblyOutput(*item, mutation)
+	if item.Kind != mutation.Kind || (!lateCancelledAssemblyOutput &&
+		(item.Status != *mutation.FromStatus || agentTimelineStatusTerminal(item.Status))) {
 		return errors.New("rebuilt agent timeline transition conflicts with prior facts")
 	}
+	completedAt := item.CompletedAt
 	item.Status = mutation.ToStatus
 	item.SourceEventSequence = mutation.SourceEventSequence
 	item.ContentJSON = string(mutation.ContentJSON)
-	item.CompletedAt = agentTimelineCompletedAt(mutation.ToStatus, now)
+	if !lateCancelledAssemblyOutput {
+		completedAt = agentTimelineCompletedAt(mutation.ToStatus, now)
+	}
+	item.CompletedAt = completedAt
 	item.UpdatedAt = now
 	return nil
+}
+
+func isLateCancelledAssemblyOutput(item model.AgentTimelineItem, mutation TimelineMutation) bool {
+	if item.Kind != model.AgentTimelineItemToolCall || item.Status != model.AgentTimelineItemInterrupted ||
+		mutation.Kind != model.AgentTimelineItemToolCall || mutation.ToStatus != model.AgentTimelineItemInterrupted {
+		return false
+	}
+	next, err := agentruntime.DecodeMediaAssemblyTimelineContent(mutation.ContentJSON)
+	if err != nil || next.TaskStatus != agentruntime.MediaAssemblyTaskCancelled || next.Final == nil || next.Final.Adopted {
+		return false
+	}
+	if previous, err := agentruntime.DecodeMediaAssemblyTimelineContent([]byte(item.ContentJSON)); err == nil {
+		return previous.ToolCallID == next.ToolCallID && previous.ActionVersion == next.ActionVersion &&
+			previous.TaskID == next.TaskID && previous.PlanRevision == next.PlanRevision && reflect.DeepEqual(previous.Output, next.Output)
+	}
+	var interrupted map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(item.ContentJSON), &interrupted); err != nil || len(interrupted) != 3 {
+		return false
+	}
+	var toolCallID string
+	var actionVersion int
+	var wasInterrupted bool
+	if json.Unmarshal(interrupted["toolCallId"], &toolCallID) != nil ||
+		json.Unmarshal(interrupted["actionVersion"], &actionVersion) != nil ||
+		json.Unmarshal(interrupted["interrupted"], &wasInterrupted) != nil {
+		return false
+	}
+	return toolCallID == next.ToolCallID && actionVersion == next.ActionVersion && wasInterrupted
 }

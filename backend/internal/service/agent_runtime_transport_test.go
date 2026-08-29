@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -91,6 +92,65 @@ func TestProjectAgentEventProducesVersionedRunAndItemEvents(t *testing.T) {
 	if terminalEvent.Kind != AgentUIEventRunCompleted || terminalEvent.ItemID != terminalItem.ID ||
 		!strings.Contains(string(terminalEvent.Payload), `"item":{"kind":"status","status":"completed","content":{"status":"succeeded"}}`) {
 		t.Fatalf("projected terminal event = %#v", terminalEvent)
+	}
+}
+
+func TestProjectAgentEventMapsStrictMediaAssemblyLifecycle(t *testing.T) {
+	now := time.Now().UTC()
+	content := `{"contentType":"media_assembly","toolCallId":"assemble-final","actionVersion":1,"taskId":"assembly-task","taskStatus":"%s","stage":"%s","clipCount":1,"audioMode":"none","output":{"artifactKey":"final-video","container":"mp4","videoCodec":"h264","audioCodec":"none","width":1920,"height":1080,"frameRate":24},"planRevision":{"artifactId":"artifact-assembly","revisionId":"revision-assembly-2"}%s}`
+	tests := []struct {
+		name       string
+		status     model.AgentTimelineItemStatus
+		taskStatus string
+		stage      string
+		terminal   string
+		wantKind   AgentUIEventKind
+	}{
+		{name: "running", status: model.AgentTimelineItemInProgress, taskStatus: "running", stage: "拼接视频片段", wantKind: AgentUIEventItemDelta},
+		{name: "succeeded", status: model.AgentTimelineItemCompleted, taskStatus: "succeeded", stage: "装配完成", terminal: `,"final":{"artifactRevision":{"artifactId":"artifact-final","revisionId":"revision-final-1"},"resourceId":"resource-final","adopted":true}`, wantKind: AgentUIEventItemCompleted},
+		{name: "failed", status: model.AgentTimelineItemFailed, taskStatus: "failed", stage: "装配失败", terminal: `,"errorCode":"media_assembly_failed"`, wantKind: AgentUIEventItemFailed},
+		{name: "cancelled", status: model.AgentTimelineItemInterrupted, taskStatus: "cancelled", stage: "Agent 任务已终止", terminal: `,"errorCode":"media_assembly_cancelled"`, wantKind: AgentUIEventItemFailed},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			sequence := int64(index + 1)
+			payload := fmt.Sprintf(content, test.taskStatus, test.stage, test.terminal)
+			item := model.AgentTimelineItem{
+				ID: "assembly-item-" + test.name, ThreadID: "thread-assembly", RunID: "run-assembly",
+				Kind: model.AgentTimelineItemToolCall, Status: test.status, Ordinal: 1,
+				SourceEventSequence: sequence, ContentJSON: payload, StartedAt: now, CreatedAt: now, UpdatedAt: now,
+			}
+			if test.status != model.AgentTimelineItemInProgress {
+				item.CompletedAt = &now
+			}
+			projected, err := ProjectAgentEvent(item.ThreadID, model.AgentRunEvent{
+				RunID: item.RunID, Sequence: sequence, Kind: agentruntime.EventArtifactAvailable,
+				PayloadJSON: payload, CreatedAt: now,
+			}, &item, CurrentAgentUIProtocolVersion)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if projected.Kind != test.wantKind || projected.ItemID != item.ID ||
+				projected.ItemKind != model.AgentTimelineItemToolCall || string(projected.Payload) != payload {
+				t.Fatalf("projected assembly event = %#v", projected)
+			}
+		})
+	}
+}
+
+func TestProjectAgentEventRejectsUnsafeMediaAssemblyPayload(t *testing.T) {
+	now := time.Now().UTC()
+	payload := `{"contentType":"media_assembly","toolCallId":"assemble-final","actionVersion":1,"taskId":"assembly-task","taskStatus":"running","stage":"拼接视频片段","clipCount":1,"audioMode":"none","output":{"artifactKey":"final-video","container":"mp4","videoCodec":"h264","audioCodec":"none","width":1920,"height":1080,"frameRate":24},"planRevision":{"artifactId":"artifact-assembly","revisionId":"revision-assembly-2"},"reasoningContent":"private chain of thought"}`
+	item := model.AgentTimelineItem{
+		ID: "assembly-item-unsafe", ThreadID: "thread-assembly", RunID: "run-assembly",
+		Kind: model.AgentTimelineItemToolCall, Status: model.AgentTimelineItemInProgress, Ordinal: 1,
+		SourceEventSequence: 1, ContentJSON: payload, StartedAt: now, CreatedAt: now, UpdatedAt: now,
+	}
+	if _, err := ProjectAgentEvent(item.ThreadID, model.AgentRunEvent{
+		RunID: item.RunID, Sequence: 1, Kind: agentruntime.EventArtifactAvailable,
+		PayloadJSON: payload, CreatedAt: now,
+	}, &item, CurrentAgentUIProtocolVersion); err == nil {
+		t.Fatal("unsafe media assembly payload was projected")
 	}
 }
 
