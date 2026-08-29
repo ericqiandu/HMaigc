@@ -269,7 +269,7 @@ func TestPostgresAgentRuntimeUpgradeRejectsLegacyQueuedRunWithExternalFacts(t *t
 		ID: "postgres-legacy-queued-run", ThreadID: "postgres-legacy-thread", ActorUserID: "postgres-legacy-user",
 		ClientRequestID: "postgres-legacy-request", Status: agentruntime.RunQueued, LastEventSequence: 1,
 		StateVersion: 1, MaxSteps: 6, ModelRecordID: "postgres-legacy-model-record",
-		ModelKey: "postgres-legacy-model", ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion - 1,
+		ModelKey: "postgres-legacy-model", ToolSchemaVersion: agentruntime.LegacyToolSchemaVersion,
 		RuntimeVersion: 1, PolicyVersion: 1, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&run).Error; err != nil {
@@ -309,8 +309,10 @@ func TestPostgresAgentRuntimeUpgradeRejectsLegacyQueuedRunWithExternalFacts(t *t
 	active := model.AgentRun{
 		ID: "postgres-running-blocker", ThreadID: "postgres-running-thread", ActorUserID: "postgres-running-user",
 		ClientRequestID: "postgres-running-request", Status: agentruntime.RunRunning,
-		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion - 1, RuntimeVersion: 1, PolicyVersion: 1,
-		CreatedAt: now.Add(time.Second), UpdatedAt: now,
+		ToolSchemaVersion: agentruntime.RetiredToolSchemaVersion,
+		RuntimeVersion:    agentruntime.RetiredRuntimeVersion,
+		PolicyVersion:     agentruntime.RetiredPolicyVersion,
+		CreatedAt:         now.Add(time.Second), UpdatedAt: now,
 	}
 	if err := db.Create(&active).Error; err != nil {
 		t.Fatal(err)
@@ -674,8 +676,11 @@ func TestPostgresAgentRuntimeToolCompletionCASAcrossConnections(t *testing.T) {
 	createAgentRunForTest(t, repo, scope)
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "读取当前画布",
-		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		UserMessage:       "读取当前画布",
+		Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -685,8 +690,8 @@ func TestPostgresAgentRuntimeToolCompletionCASAcrossConnections(t *testing.T) {
 	}
 	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
 		Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "call-read-state", ToolName: agentruntime.ToolProductionPlan,
-			ActionVersion: 1, Arguments: []byte(`{"planKey":"plan-pg"}`), ExpectedDelivery: repositoryTestAnswerDelivery(),
+			ToolCallID: "call-read-state", ToolName: agentruntime.ToolCanvasProject,
+			ActionVersion: 1, Arguments: []byte(`{"expectedRevision":7}`), ExpectedDelivery: repositoryTestAnswerDelivery(),
 		},
 	}})
 	if err != nil {
@@ -755,8 +760,11 @@ func TestPostgresAgentCanvasMutationRecoveryAcrossConnections(t *testing.T) {
 	createAgentRunForTest(t, firstRepo, scope)
 	if _, err := firstRepo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "修改当前画布",
-		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		UserMessage:       "修改当前画布",
+		Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -767,8 +775,8 @@ func TestPostgresAgentCanvasMutationRecoveryAcrossConnections(t *testing.T) {
 	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
 		Kind: agentruntime.DecisionToolCall,
 		ToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "call-pg-apply", ToolName: agentruntime.ToolCanvasCommit, ActionVersion: 1,
-			Arguments:        []byte(`{"planKey":"plan-pg","planVersion":1,"baseRevision":7,"artifactIds":["artifact-pg"]}`),
+			ToolCallID: "call-pg-apply", ToolName: agentruntime.ToolCanvasProject, ActionVersion: 1,
+			Arguments:        []byte(`{"baseRevision":7,"patch":{"upsertNodes":[{"id":"node-pg"}]}}`),
 			ExpectedDelivery: repositoryTestCanvasDelivery(),
 		},
 	}})

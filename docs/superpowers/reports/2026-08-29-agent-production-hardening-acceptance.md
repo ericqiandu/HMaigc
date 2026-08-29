@@ -6,7 +6,7 @@
 - 验收 HEAD：`9d862bb`（`feat(tasks): close settlement outbox audit`）。
 - 后续收口复验 HEAD：`2b415e0`（`fix(media): 统一模型能力与计费契约`）。
 - 覆盖 Runtime v4 / Policy v4 / Tool schema v5 / UI protocol v4 / Production schema v2，以及从多 Specialist、Artifact Ledger、逐阶段审核、定向重生成、真实媒体装配到 Task 执行信封、取消/租约 fencing、原子结算和耐久 Outbox 的完整提交链。
-- 本报告只记录本次实际执行的门禁和可复核事实；没有运行的真实 PostgreSQL、付费供应商生成或跨进程故障注入不写成成功。
+- 本报告只记录本次实际执行的门禁和可复核事实；没有运行的付费供应商生成或跨进程故障注入不写成成功。
 
 ## 契约验收
 
@@ -34,7 +34,7 @@ go build ./...
 
 - 全量 Go 测试全部通过；race 门禁覆盖 Agent Runtime、Repository 与 Service。
 - M10 定向复核通过：执行信封 canonical/绑定/篡改/过期/重放/密钥选择；租约代际和取消意图；迟到媒体不推进 Artifact head；Task/账务/Result/Outbox 原子提交与回滚；Outbox 崩溃恢复、重复投递、时间线重试、作用域冲突和过期唤醒；Token 供应商费用不确定审计。
-- PostgreSQL 专项测试未执行：当前环境没有配置 `DATABASE_URL`。SQLite 事务与全量测试通过不能替代真实 PostgreSQL 锁、隔离级别和并发验收。
+- PostgreSQL 专项门禁在仅绑定回环地址的临时 PostgreSQL 17 测试库与 Redis 7 上强制执行：`CANVAS_REQUIRE_INTEGRATION_TESTS=1 go test ./internal/database ./internal/repository ./internal/service -count=1`。结果为 `database` 4.494s、`repository` 104.314s、`service` 47.087s，全部通过；覆盖 schema 隔离、升级迁移、跨连接 CAS、画布 revision 恢复、Task/计费事务和并发结算。门禁发现并修正了 3 个仅 PostgreSQL 测试中的旧 Agent 工具契约引用，未改动生产代码。
 
 ### Web
 
@@ -77,4 +77,4 @@ bun run build
 
 ## 验收结论
 
-已执行的代码、类型、构建、race、静态检查和无费用浏览器门禁全部通过；干净提交态不存在已知阻断项。当前结论是“Agent 生产级执行加固代码可进入下一发布候选”，不是“真实付费供应商和 PostgreSQL 故障演练已完成”。上线前仍必须在受控生产副本完成 PostgreSQL 专项、付费最小样本和进程/网络故障注入，并记录对应 Task、BillingOrder、Resource、Artifact revision、Outbox 与 sequence 身份。
+已执行的代码、类型、构建、race、静态检查、隔离 PostgreSQL 17/Redis 7 集成门禁和无费用浏览器门禁全部通过；当前交付不存在已知代码阻断项。当前结论是“Agent 生产级执行加固代码可进入下一发布候选”，不是“真实付费供应商和生产故障演练已完成”。上线前仍必须在受控生产副本完成付费最小样本、进程/网络故障注入和线上迁移演练，并记录对应 Task、BillingOrder、Resource、Artifact revision、Outbox 与 sequence 身份。

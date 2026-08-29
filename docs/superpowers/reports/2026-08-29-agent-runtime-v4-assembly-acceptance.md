@@ -73,9 +73,18 @@ pnpm exec bun test test/agent-runtime-api.test.ts test/agent-conversation-reduce
 
 内置浏览器刷新 `http://127.0.0.1:3000/canvas/Q7T5CS18n_TIYaFqCjqSp` 后，Agent 面板先显示事实状态 `正在恢复运行事实`，随后恢复 `当前画布 v88`、原用户消息、冻结模型配置和 `已停止` 终态；历史入口、输入区、模型与 Skills 控件恢复可用，浏览器控制台未发现 error/warn。恢复后页面明确提示历史选择的 `kz_gpt_image2` 当前不可用于 Agent，没有静默替换模型。该检查只做现有本地应用的 UI/持久恢复 smoke test，没有向运行中的本地服务注入测试数据库，也没有发送 Agent 指令，因此没有把服务测试中的假 Resource 冒充为浏览器真实媒体播放证据。
 
+## PostgreSQL 17 与 Redis 集成门禁
+
+使用仅绑定回环地址的临时 PostgreSQL 17 测试库 `hmaigc_integration_test` 与临时 Redis 7，强制设置 `CANVAS_REQUIRE_INTEGRATION_TESTS=1` 后执行：
+
+```text
+go test ./internal/database ./internal/repository ./internal/service -count=1
+```
+
+结果：`database` 4.494s、`repository` 104.314s、`service` 47.087s，全部通过。该门禁覆盖真实 PostgreSQL schema 隔离、升级审计与迁移、跨连接 CAS、画布 revision 恢复、Task/计费事务和并发结算。首次执行准确发现 3 个仅 PostgreSQL 测试仍引用旧工具契约；在保持生产代码不变的前提下，测试改为命名的 legacy/retired/current 版本常量与当前 `canvas.project` 工具后，3 个定向 RED 用例转为 GREEN，完整门禁随后通过。临时容器不承载业务数据，验收结束后删除。
+
 ## 未执行的外部门禁
 
 - 未调用真实视频供应商，也未产生付费订单。
-- 本地运行时使用 SQLite，当前环境没有配置 PostgreSQL 测试连接；PostgreSQL 锁、隔离级别和并发迁移专项门禁未执行。
 - 未在云端部署或验证线上数据迁移。
 - 本地确定性 fixture 位于隔离测试数据库，未注入开发环境账号；因此浏览器只完成协议/UI smoke test，最终 Resource 的可读取性由服务测试直接证明。
