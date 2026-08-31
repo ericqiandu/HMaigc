@@ -41,6 +41,7 @@ type submitAgentApprovalRequest struct {
 	ToolCallID    string                            `json:"toolCallId"`
 	ActionVersion int                               `json:"actionVersion"`
 	Decision      agentruntime.ToolApprovalDecision `json:"decision"`
+	ProposalHash  string                            `json:"proposalHash"`
 }
 
 type submitAgentClarificationResponseRequest struct {
@@ -214,7 +215,7 @@ func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
 			return
 		}
 		view, err := svc.SubmitScopedAgentApproval(user, c.Param("runId"), service.AgentToolApprovalSubmission{
-			ToolCallID: request.ToolCallID, ActionVersion: request.ActionVersion, Decision: request.Decision,
+			ToolCallID: request.ToolCallID, ActionVersion: request.ActionVersion, Decision: request.Decision, ProposalHash: request.ProposalHash,
 		})
 		if err != nil {
 			if failAgentControl(c, err) {

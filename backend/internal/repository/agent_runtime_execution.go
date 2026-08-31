@@ -292,7 +292,7 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 		return result.Error
 	}
 	if result.RowsAffected != 1 {
-		if _, err := r.AgentRunForScope(scope); err != nil {
+		if _, err := agentRunForScopeDB(tx, scope); err != nil {
 			return err
 		}
 		return ErrAgentRuntimeStepConflict
@@ -300,7 +300,7 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 	if err := persistRejectedAgentToolDecision(tx, scope, previous, transition, facts.ToolSchemaVersion, now); err != nil {
 		return err
 	}
-	if err := persistAgentToolTransition(tx, scope, previous, state, facts.ToolSchemaVersion, now); err != nil {
+	if err := persistAgentToolTransition(tx, scope, previous, state, transition.ApprovalProposalHash, transition.ApprovalCostQuote, facts.ToolSchemaVersion, now); err != nil {
 		return err
 	}
 	if state.Status == agentruntime.RunCancelled && interruptAudit == nil && facts.RuntimeVersion == agentruntime.ProductionRuntimeVersion {
@@ -528,7 +528,16 @@ func persistRejectedAgentToolDecision(db *gorm.DB, scope agentruntime.Scope, pre
 	return db.Create(&record).Error
 }
 
-func persistAgentToolTransition(db *gorm.DB, scope agentruntime.Scope, previous agentruntime.RuntimeState, next agentruntime.RuntimeState, toolSchemaVersion int, now time.Time) error {
+func persistAgentToolTransition(
+	db *gorm.DB,
+	scope agentruntime.Scope,
+	previous agentruntime.RuntimeState,
+	next agentruntime.RuntimeState,
+	approvalProposalHash string,
+	approvalCostQuote *agentruntime.ApprovalCostQuote,
+	toolSchemaVersion int,
+	now time.Time,
+) error {
 	runID := scope.RunID
 	if previous.PendingToolCall == nil && next.PendingToolCall != nil {
 		policy, ok := agentruntime.ToolPolicyForSchema(next.PendingToolCall.ToolName, toolSchemaVersion)
@@ -548,6 +557,29 @@ func persistAgentToolTransition(db *gorm.DB, scope agentruntime.Scope, previous 
 			IdempotencyKey: runID + ":" + next.PendingToolCall.ToolCallID + ":" + strconv.Itoa(next.PendingToolCall.ActionVersion),
 			InputJSON:      string(next.PendingToolCall.Arguments), OutputJSON: `{}`, CreatedAt: now, UpdatedAt: now,
 		}
+		if approvalRequired && toolSchemaVersion == agentruntime.CurrentToolSchemaVersion {
+			proposal, err := agentruntime.NewApprovalProposalForTool(
+				scope,
+				*next.PendingToolCall,
+				approvalCostQuote,
+				call.IdempotencyKey,
+				now.Add(agentruntime.DefaultApprovalProposalTTL),
+			)
+			if err != nil {
+				return err
+			}
+			proposalJSON, err := json.Marshal(proposal)
+			if err != nil {
+				return errors.New("agent approval proposal is not serializable")
+			}
+			proposalHash, err := proposal.Hash()
+			if err != nil {
+				return err
+			}
+			call.ApprovalProposalJSON = string(proposalJSON)
+			call.ApprovalProposalHash = proposalHash
+			call.ApprovalExpiresAt = &proposal.ExpiresAt
+		}
 		if err := db.Create(&call).Error; err != nil {
 			return err
 		}
@@ -560,9 +592,16 @@ func persistAgentToolTransition(db *gorm.DB, scope agentruntime.Scope, previous 
 		previous.PendingToolCall != nil && next.PendingToolCall != nil &&
 		previous.PendingToolCall.ToolCallID == next.PendingToolCall.ToolCallID &&
 		previous.PendingToolCall.ActionVersion == next.PendingToolCall.ActionVersion {
-		result := db.Model(&model.AgentToolCall{}).
+		query := db.Model(&model.AgentToolCall{}).
 			Where("run_id = ? AND tool_call_id = ? AND action_version = ? AND status = ?", runID,
-				previous.PendingToolCall.ToolCallID, previous.PendingToolCall.ActionVersion, agentruntime.ToolCallWaitingApproval).
+				previous.PendingToolCall.ToolCallID, previous.PendingToolCall.ActionVersion, agentruntime.ToolCallWaitingApproval)
+		if toolSchemaVersion == agentruntime.CurrentToolSchemaVersion {
+			if approvalProposalHash == "" {
+				return ErrAgentRuntimeStepConflict
+			}
+			query = query.Where("approval_proposal_hash = ? AND approval_expires_at > ?", approvalProposalHash, now)
+		}
+		result := query.
 			Updates(agentToolApprovalUpdates{
 				Status: agentruntime.ToolCallPending, ApprovalDecision: agentruntime.ToolApprovalApproved,
 				ApprovalByUserID: scope.ActorUserID, ApprovalDecidedAt: now, UpdatedAt: now,
@@ -601,10 +640,17 @@ func persistAgentToolTransition(db *gorm.DB, scope agentruntime.Scope, previous 
 	if next.LastToolResult.Succeeded {
 		status = agentruntime.ToolCallSucceeded
 	}
-	result := db.Model(&model.AgentToolCall{}).
+	query := db.Model(&model.AgentToolCall{}).
 		Where("run_id = ? AND tool_call_id = ? AND action_version = ? AND status IN (?, ?, ?)", runID,
 			previous.PendingToolCall.ToolCallID, previous.PendingToolCall.ActionVersion,
-			agentruntime.ToolCallPending, agentruntime.ToolCallRunning, agentruntime.ToolCallWaitingApproval).
+			agentruntime.ToolCallPending, agentruntime.ToolCallRunning, agentruntime.ToolCallWaitingApproval)
+	if previous.Status == agentruntime.RunWaitingApproval && toolSchemaVersion == agentruntime.CurrentToolSchemaVersion {
+		if approvalProposalHash == "" {
+			return ErrAgentRuntimeStepConflict
+		}
+		query = query.Where("approval_proposal_hash = ? AND approval_expires_at > ?", approvalProposalHash, now)
+	}
+	result := query.
 		Updates(agentToolCompletionUpdates{
 			Status: status, OutputJSON: string(next.LastToolResult.Output),
 			ErrorCode: next.LastToolResult.ErrorCode, UpdatedAt: now,

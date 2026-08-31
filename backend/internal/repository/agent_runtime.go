@@ -183,8 +183,12 @@ func (r *Repository) AgentRunForScope(scope agentruntime.Scope) (*model.AgentRun
 	if err := scope.Validate(); err != nil {
 		return nil, err
 	}
+	return agentRunForScopeDB(r.db, scope)
+}
+
+func agentRunForScopeDB(db *gorm.DB, scope agentruntime.Scope) (*model.AgentRun, error) {
 	var run model.AgentRun
-	err := r.db.Table("agent_runs").
+	err := db.Table("agent_runs").
 		Select("agent_runs.*").
 		Joins("JOIN agent_threads ON agent_threads.id = agent_runs.thread_id").
 		Where(`agent_runs.id = ? AND agent_runs.thread_id = ? AND agent_runs.actor_user_id = ?

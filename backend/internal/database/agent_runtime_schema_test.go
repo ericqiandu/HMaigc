@@ -27,6 +27,7 @@ func TestEnsureAgentRuntimeIntegritySchemaCreatesExactIndexes(t *testing.T) {
 		"idx_agent_run_events_run_sequence":                          `CREATE UNIQUE INDEX idx_agent_run_events_run_sequence ON agent_run_events(run_id, sequence)`,
 		"idx_agent_checkpoints_run_sequence":                         `CREATE UNIQUE INDEX idx_agent_checkpoints_run_sequence ON agent_checkpoints(run_id, sequence)`,
 		"idx_agent_tool_calls_action":                                `CREATE UNIQUE INDEX idx_agent_tool_calls_action ON agent_tool_calls(run_id, tool_call_id, action_version)`,
+		"idx_agent_tool_calls_run_proposal":                          `CREATE UNIQUE INDEX idx_agent_tool_calls_run_proposal ON agent_tool_calls(run_id, approval_proposal_hash) WHERE approval_proposal_hash <> ''`,
 		"idx_agent_threads_scope":                                    `CREATE INDEX idx_agent_threads_scope ON agent_threads(tenant_kind, tenant_id, canvas_id, updated_at)`,
 		"idx_agent_production_plan_versions_scope_key_version":       `CREATE UNIQUE INDEX idx_agent_production_plan_versions_scope_key_version ON agent_production_plan_versions(tenant_kind, tenant_id, domain_project_id, canvas_id, plan_key, version)`,
 		"idx_agent_production_artifacts_version_reference_shot_kind": `CREATE UNIQUE INDEX idx_agent_production_artifacts_version_reference_shot_kind ON agent_production_artifacts(plan_version_id, reference_key, shot_key, kind)`,
@@ -926,7 +927,7 @@ func TestMigrateSchemaAddsAgentRuntimeWithoutChangingCanvasFacts(t *testing.T) {
 	if !db.Migrator().HasColumn(&model.AgentProductionPlanVersion{}, "domain_project_id") {
 		t.Fatal("missing additive agent production plan domain_project_id column")
 	}
-	for _, column := range []string{"risk_level", "required_access", "approval_required", "approval_decision", "approval_by_user_id", "approval_decided_at", "idempotency_key", "started_at"} {
+	for _, column := range []string{"risk_level", "required_access", "approval_required", "approval_decision", "approval_by_user_id", "approval_decided_at", "approval_proposal_json", "approval_proposal_hash", "approval_expires_at", "idempotency_key", "started_at"} {
 		if !db.Migrator().HasColumn(&model.AgentToolCall{}, column) {
 			t.Fatalf("missing additive agent_tool_calls column %s", column)
 		}

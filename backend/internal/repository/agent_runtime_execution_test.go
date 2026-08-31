@@ -278,6 +278,163 @@ func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *test
 	}
 }
 
+func TestCommitAgentRuntimeTransitionPersistsImmutableApprovalProposal(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	now := time.Date(2026, time.September, 1, 8, 0, 0, 0, time.UTC)
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		UserMessage:       "选择当前画布中的角色节点",
+		Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision := agentruntime.ToolCallDecision{
+		ToolCallID: "call-apply-v6", ToolName: agentruntime.ToolCanvasApplyOps, ActionVersion: 1,
+		Arguments:        json.RawMessage(`{"canvasId":"canvas-1","baseRevision":3,"clientMutationId":"mutation-1","operations":[{"operationId":"op-1","type":"select_nodes","nodeIds":[]}]}`),
+		ExpectedDelivery: repositoryTestCanvasDelivery(),
+	}
+	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall, ToolCall: &decision,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requested.State.Status != agentruntime.RunWaitingApproval {
+		t.Fatalf("requested status = %q, want waiting approval", requested.State.Status)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, now); err != nil {
+		t.Fatal(err)
+	}
+
+	record, err := repo.AgentToolCallForScope(scope, decision.ToolCallID, decision.ActionVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.ApprovalProposalJSON == "" || len(record.ApprovalProposalHash) != 64 || record.ApprovalExpiresAt == nil {
+		t.Fatalf("approval proposal facts = %#v", record)
+	}
+	proposal, err := agentruntime.DecodeApprovalProposal(json.RawMessage(record.ApprovalProposalJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proposal.RunID != scope.RunID || proposal.ToolCallID != decision.ToolCallID || proposal.ToolName != decision.ToolName ||
+		proposal.Scope.TenantID != scope.TenantID || proposal.Scope.ActorUserID != scope.ActorUserID ||
+		proposal.Scope.DomainProjectID != scope.DomainProjectID || proposal.Scope.CanvasID != scope.CanvasID ||
+		proposal.Scope.ThreadID != scope.ThreadID || proposal.Effect.Kind != agentruntime.ApprovalEffectCanvasMutation ||
+		proposal.Quote != nil || !proposal.ExpiresAt.Equal(now.Add(agentruntime.DefaultApprovalProposalTTL)) {
+		t.Fatalf("persisted proposal = %#v", proposal)
+	}
+	hash, err := proposal.Hash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hash != record.ApprovalProposalHash || !record.ApprovalExpiresAt.Equal(proposal.ExpiresAt) {
+		t.Fatalf("proposal hash/expiry mismatch: record=%#v proposal=%#v", record, proposal)
+	}
+
+	wrongApproval, err := agentruntime.ReviewToolApproval(requested.State, agentruntime.ToolApproval{
+		ToolCallID: decision.ToolCallID, ActionVersion: decision.ActionVersion,
+		Decision: agentruntime.ToolApprovalApproved, ProposalHash: strings.Repeat("a", 64),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, requested.State, wrongApproval, now.Add(time.Minute)); !errors.Is(err, ErrAgentRuntimeStepConflict) {
+		t.Fatalf("mismatched proposal hash error = %v", err)
+	}
+
+	approved, err := agentruntime.ReviewToolApproval(requested.State, agentruntime.ToolApproval{
+		ToolCallID: decision.ToolCallID, ActionVersion: decision.ActionVersion,
+		Decision: agentruntime.ToolApprovalApproved, ProposalHash: record.ApprovalProposalHash,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, requested.State, approved, now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(record, "id = ?", record.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != agentruntime.ToolCallPending || record.ApprovalDecision != agentruntime.ToolApprovalApproved || record.ApprovalByUserID != scope.ActorUserID {
+		t.Fatalf("approved proposal record = %#v", record)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, requested.State, approved, now.Add(3*time.Minute)); !errors.Is(err, ErrAgentRuntimeStepConflict) {
+		t.Fatalf("duplicate approval transition error = %v", err)
+	}
+
+	duplicate := *record
+	duplicate.ID = "tool-duplicate-proposal"
+	duplicate.ToolCallID = "another-call"
+	duplicate.ActionVersion = 2
+	if err := db.Create(&duplicate).Error; err == nil {
+		t.Fatal("duplicate approval proposal hash was accepted for the same run")
+	}
+}
+
+func TestCommitAgentRuntimeTransitionRequiresFrozenMediaQuote(t *testing.T) {
+	repo, _ := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	now := time.Date(2026, time.September, 1, 9, 0, 0, 0, time.UTC)
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		UserMessage:       "生成视频",
+		Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision := agentruntime.ToolCallDecision{
+		ToolCallID: "call-media-v6", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
+		Arguments:        json.RawMessage(`{"mediaKind":"image","modelRecordId":"model-record-1","modelKey":"gpt-image-2","parameters":{"prompt":"雨夜城市"},"sourceResourceIds":[],"targetCanvasNodeId":"node-1","clientRequestId":"request-1"}`),
+		ExpectedDelivery: repositoryTestImageDelivery(),
+	}
+	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall, ToolCall: &decision,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, now); err == nil {
+		t.Fatal("media approval proposal without a frozen quote was persisted")
+	}
+
+	requested.ApprovalCostQuote = &agentruntime.ApprovalCostQuote{
+		ModelRecordID: "model-record-1", ModelKey: "gpt-image-2", PriceVersion: 7, AmountMicrocredits: 1_250_000,
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, now); err != nil {
+		t.Fatal(err)
+	}
+	record, err := repo.AgentToolCallForScope(scope, decision.ToolCallID, decision.ActionVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := agentruntime.DecodeApprovalProposal(json.RawMessage(record.ApprovalProposalJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proposal.Quote == nil || proposal.Quote.ModelRecordID != "model-record-1" || proposal.Quote.ModelKey != "gpt-image-2" ||
+		proposal.Quote.PriceVersion != 7 || proposal.Quote.AmountMicrocredits != 1_250_000 {
+		t.Fatalf("persisted media quote = %#v", proposal.Quote)
+	}
+}
+
 func TestCommitAgentRuntimeTransitionPersistsToolExecutionStartAtomically(t *testing.T) {
 	repo, _ := openAgentRuntimeRepositorySQLite(t)
 	scope := repositoryAgentScope()

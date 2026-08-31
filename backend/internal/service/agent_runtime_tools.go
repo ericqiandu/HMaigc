@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
@@ -25,6 +26,7 @@ type AgentToolApprovalSubmission struct {
 	ToolCallID    string
 	ActionVersion int
 	Decision      agentruntime.ToolApprovalDecision
+	ProposalHash  string
 }
 
 func (s *Service) SubmitAgentToolApproval(scope agentruntime.Scope, input AgentToolApprovalSubmission) (*AgentRuntimeProgress, error) {
@@ -32,6 +34,7 @@ func (s *Service) SubmitAgentToolApproval(scope agentruntime.Scope, input AgentT
 		return nil, err
 	}
 	input.ToolCallID = strings.TrimSpace(input.ToolCallID)
+	input.ProposalHash = strings.TrimSpace(input.ProposalHash)
 	if input.ToolCallID == "" || input.ActionVersion < 1 || (input.Decision != agentruntime.ToolApprovalApproved && input.Decision != agentruntime.ToolApprovalRejected) {
 		return nil, errors.New("agent tool approval submission is invalid")
 	}
@@ -47,6 +50,9 @@ func (s *Service) SubmitAgentToolApproval(scope agentruntime.Scope, input AgentT
 		if record.ApprovalDecision != input.Decision || record.ApprovalByUserID != scope.ActorUserID || record.ApprovalDecidedAt == nil {
 			return nil, errors.New("agent tool approval facts conflict")
 		}
+		if err := validateStoredApprovalProposal(scope, record, input.ProposalHash, time.Now().UTC(), false); err != nil {
+			return nil, err
+		}
 		if state.Status == agentruntime.RunCancelled {
 			if err := s.cancelAgentRunTreeContexts(scope); err != nil {
 				return nil, err
@@ -57,8 +63,11 @@ func (s *Service) SubmitAgentToolApproval(scope agentruntime.Scope, input AgentT
 	if state.PendingToolCall == nil {
 		return nil, errors.New("agent approval tool facts are missing")
 	}
-	_, policy, err := s.frozenAgentToolCall(scope, state.PendingToolCall, agentruntime.ToolCallWaitingApproval, state.Configuration.ExecutionMode)
+	record, policy, err := s.frozenAgentToolCall(scope, state.PendingToolCall, agentruntime.ToolCallWaitingApproval, state.Configuration.ExecutionMode)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateStoredApprovalProposal(scope, record, input.ProposalHash, time.Now().UTC(), true); err != nil {
 		return nil, err
 	}
 	project, access, err := s.canvasAccess(scope.ActorUserID, scope.CanvasID)
@@ -69,7 +78,7 @@ func (s *Service) SubmitAgentToolApproval(scope agentruntime.Scope, input AgentT
 		return nil, err
 	}
 	transition, err := agentruntime.ReviewToolApproval(state, agentruntime.ToolApproval{
-		ToolCallID: input.ToolCallID, ActionVersion: input.ActionVersion, Decision: input.Decision,
+		ToolCallID: input.ToolCallID, ActionVersion: input.ActionVersion, Decision: input.Decision, ProposalHash: input.ProposalHash,
 	})
 	if err != nil {
 		return nil, err
@@ -78,7 +87,7 @@ func (s *Service) SubmitAgentToolApproval(scope agentruntime.Scope, input AgentT
 	if err != nil {
 		return nil, err
 	}
-	record, err := s.repo.AgentToolCallForScope(scope, input.ToolCallID, input.ActionVersion)
+	record, err = s.repo.AgentToolCallForScope(scope, input.ToolCallID, input.ActionVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +105,39 @@ func (s *Service) SubmitAgentToolApproval(scope agentruntime.Scope, input AgentT
 		}
 	}
 	return s.advanceAgentRun(scope, agentWakeApprovalDecided)
+}
+
+func validateStoredApprovalProposal(scope agentruntime.Scope, record *model.AgentToolCall, proposalHash string, now time.Time, requireFresh bool) error {
+	if record == nil {
+		return errors.New("agent approval proposal facts are missing")
+	}
+	if record.ApprovalProposalHash == "" {
+		if proposalHash != "" {
+			return errors.New("agent approval proposal facts conflict")
+		}
+		return nil
+	}
+	if proposalHash == "" || proposalHash != record.ApprovalProposalHash || record.ApprovalExpiresAt == nil {
+		return errors.New("agent approval proposal facts conflict")
+	}
+	proposal, err := agentruntime.DecodeApprovalProposal(json.RawMessage(record.ApprovalProposalJSON))
+	if err != nil {
+		return err
+	}
+	if proposal.RunID != scope.RunID || proposal.ToolCallID != record.ToolCallID || proposal.ActionVersion != record.ActionVersion ||
+		string(proposal.ToolName) != record.ToolName || proposal.Scope.TenantKind != scope.TenantKind || proposal.Scope.TenantID != scope.TenantID ||
+		proposal.Scope.ActorUserID != scope.ActorUserID || proposal.Scope.DomainProjectID != scope.DomainProjectID || proposal.Scope.CanvasID != scope.CanvasID ||
+		proposal.Scope.ThreadID != scope.ThreadID || !record.ApprovalExpiresAt.Equal(proposal.ExpiresAt) {
+		return errors.New("agent approval proposal facts conflict")
+	}
+	if requireFresh {
+		return agentruntime.ValidateApprovalProposalDecision(proposal, proposalHash, now)
+	}
+	computedHash, err := proposal.Hash()
+	if err != nil || computedHash != proposalHash {
+		return errors.New("agent approval proposal facts conflict")
+	}
+	return nil
 }
 
 func (s *Service) CoordinatePendingAgentTool(scope agentruntime.Scope, input CoordinateAgentToolInput) (*AgentRuntimeProgress, error) {

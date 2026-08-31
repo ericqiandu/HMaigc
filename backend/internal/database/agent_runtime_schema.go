@@ -57,6 +57,10 @@ var agentRuntimeIntegrityIndexes = []agentRuntimeIntegrityIndex{
 		createSQL: `CREATE UNIQUE INDEX idx_agent_tool_calls_action ON agent_tool_calls(run_id, tool_call_id, action_version)`,
 	},
 	{
+		name: "idx_agent_tool_calls_run_proposal", table: "agent_tool_calls", columns: "run_id,approval_proposal_hash", predicate: "approval_proposal_hash <> ''", unique: true,
+		createSQL: `CREATE UNIQUE INDEX idx_agent_tool_calls_run_proposal ON agent_tool_calls(run_id, approval_proposal_hash) WHERE approval_proposal_hash <> ''`,
+	},
+	{
 		name: "idx_agent_threads_scope", table: "agent_threads", columns: "tenant_kind,tenant_id,canvas_id,updated_at",
 		createSQL: `CREATE INDEX idx_agent_threads_scope ON agent_threads(tenant_kind, tenant_id, canvas_id, updated_at)`,
 	},
@@ -265,6 +269,7 @@ func rejectAgentRuntimeIntegrityConflicts(db *gorm.DB) error {
 		{"agent_timeline_items", "run_id AS first_value, CAST(ordinal AS TEXT) AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, ordinal", "agent timeline ordinal"},
 		{"agent_timeline_items", "run_id AS first_value, CAST(source_event_sequence AS TEXT) AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, source_event_sequence", "agent timeline source event"},
 		{"agent_tool_calls", "run_id AS first_value, tool_call_id AS second_value, CAST(action_version AS TEXT) AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, tool_call_id, action_version", "agent tool action"},
+		{"agent_tool_calls", "run_id AS first_value, approval_proposal_hash AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "approval_proposal_hash <> ''", "run_id, approval_proposal_hash", "agent approval proposal"},
 		{"agent_production_plan_versions", "tenant_kind AS first_value, tenant_id AS second_value, domain_project_id AS third_value, canvas_id AS fourth_value, plan_key AS fifth_value, CAST(version AS TEXT) AS sixth_value, COUNT(*) AS count", "", "tenant_kind, tenant_id, domain_project_id, canvas_id, plan_key, version", "agent production plan version"},
 		{"agent_production_artifacts", "plan_version_id AS first_value, reference_key AS second_value, shot_key AS third_value, kind AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "plan_version_id, reference_key, shot_key, kind", "agent production artifact"},
 		{"agent_production_artifacts", "task_id AS first_value, '' AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "task_id <> ''", "task_id", "agent production task"},

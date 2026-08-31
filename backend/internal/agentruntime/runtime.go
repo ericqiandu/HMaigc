@@ -105,9 +105,11 @@ type RuntimeInput struct {
 }
 
 type RuntimeTransition struct {
-	State            RuntimeState
-	EventKinds       []EventKind
-	RejectedToolCall *ToolCallDecision
+	State                RuntimeState
+	EventKinds           []EventKind
+	RejectedToolCall     *ToolCallDecision
+	ApprovalProposalHash string
+	ApprovalCostQuote    *ApprovalCostQuote
 }
 
 type ToolResolution struct {
@@ -148,6 +150,7 @@ type ToolApproval struct {
 	ToolCallID    string
 	ActionVersion int
 	Decision      ToolApprovalDecision
+	ProposalHash  string
 }
 
 func AppendSteer(current RuntimeState, request SteerRequest) (RuntimeTransition, bool, error) {
@@ -575,6 +578,7 @@ func ReviewToolApproval(current RuntimeState, approval ToolApproval) (RuntimeTra
 		return RuntimeTransition{}, errors.New("agent runtime is not waiting for tool approval")
 	}
 	approval.ToolCallID = strings.TrimSpace(approval.ToolCallID)
+	approval.ProposalHash = strings.TrimSpace(approval.ProposalHash)
 	if approval.ToolCallID != current.PendingToolCall.ToolCallID || approval.ActionVersion != current.PendingToolCall.ActionVersion {
 		return RuntimeTransition{}, errors.New("agent tool approval identity is invalid")
 	}
@@ -591,10 +595,10 @@ func ReviewToolApproval(current RuntimeState, approval ToolApproval) (RuntimeTra
 				ToolCallID: approval.ToolCallID, ActionVersion: approval.ActionVersion,
 				Succeeded: false, Output: json.RawMessage(`{}`), ErrorCode: "step_budget_exhausted",
 			}
-			return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunFailed}}, nil
+			return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunFailed}, ApprovalProposalHash: approval.ProposalHash}, nil
 		}
 		next.Status = RunWaitingTool
-		return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventRunStatusChanged}}, nil
+		return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventRunStatusChanged}, ApprovalProposalHash: approval.ProposalHash}, nil
 	case ToolApprovalRejected:
 		next.Status = RunCancelled
 		next.PendingToolCall = nil
@@ -604,7 +608,7 @@ func ReviewToolApproval(current RuntimeState, approval ToolApproval) (RuntimeTra
 			Succeeded: false, Output: json.RawMessage(`{}`), ErrorCode: "tool_approval_rejected",
 		}
 		next.FailureCode = ""
-		return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunInterrupted}}, nil
+		return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunInterrupted}, ApprovalProposalHash: approval.ProposalHash}, nil
 	default:
 		return RuntimeTransition{}, errors.New("agent tool approval decision is invalid")
 	}
