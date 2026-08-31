@@ -23,6 +23,15 @@ const (
 type ToolName string
 
 const (
+	ToolCanvasRead     ToolName = "canvas.read"
+	ToolCanvasApplyOps ToolName = "canvas.apply_ops"
+	ToolAssetsRead     ToolName = "assets.read"
+	ToolAssetsPublish  ToolName = "assets.publish"
+	ToolMediaGenerate  ToolName = "media.generate"
+	ToolSkillsLoad     ToolName = "skills.load"
+
+	// Retired tool identities remain available only for decoding historical
+	// audit facts. They are never valid for the current schema.
 	ToolSkillLoad        ToolName = "skill.load"
 	ToolProductionPlan   ToolName = "production.plan"
 	ToolProductionRender ToolName = "production.render"
@@ -35,7 +44,9 @@ func (name ToolName) Valid() bool {
 }
 
 func (name ToolName) Known() bool {
-	return name.ValidForToolSchema(CurrentToolSchemaVersion) || name.ValidForToolSchema(LegacyToolSchemaVersion)
+	return name.ValidForToolSchema(CurrentToolSchemaVersion) ||
+		name.ValidForToolSchema(ProductionToolSchemaVersion) ||
+		name.ValidForToolSchema(LegacyToolSchemaVersion)
 }
 
 func (name ToolName) ValidForToolSchema(toolSchemaVersion int) bool {
@@ -47,9 +58,16 @@ func (name ToolName) ValidForToolSchema(toolSchemaVersion int) bool {
 		default:
 			return false
 		}
-	case CurrentToolSchemaVersion:
+	case ProductionToolSchemaVersion:
 		switch name {
 		case ToolSkillLoad, ToolSpecialistDelegate, ToolVisionAnalyze, ToolMediaGenerate, ToolCanvasProject, ToolMediaAssemble:
+			return true
+		default:
+			return false
+		}
+	case CurrentToolSchemaVersion:
+		switch name {
+		case ToolCanvasRead, ToolCanvasApplyOps, ToolAssetsRead, ToolAssetsPublish, ToolMediaGenerate, ToolSkillsLoad:
 			return true
 		default:
 			return false

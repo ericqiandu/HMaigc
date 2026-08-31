@@ -47,6 +47,10 @@ const (
 	ProductionToolSchemaVersion      = 5
 	CurrentProductionSchemaVersion   = 2
 	ProductionAgentUIProtocolVersion = 4
+	CloudRuntimeVersion              = 5
+	CloudPolicyVersion               = 5
+	CloudToolSchemaVersion           = 6
+	CloudAgentUIProtocolVersion      = 5
 	RetiredRuntimeVersion            = 3
 	RetiredPolicyVersion             = 3
 	RetiredToolSchemaVersion         = 4
@@ -56,11 +60,11 @@ const (
 	LegacyPolicyVersion              = 2
 	LegacyToolSchemaVersion          = 3
 
-	// Current* is a hard cut to the governed production runtime. New runs and
-	// their UI event stream must never re-enter a retired contract.
-	CurrentRuntimeVersion    = ProductionRuntimeVersion
-	CurrentPolicyVersion     = ProductionPolicyVersion
-	CurrentToolSchemaVersion = ProductionToolSchemaVersion
+	// Current* is a hard cut to the cloud capability runtime. Production*
+	// remains an immutable historical fact for v5 audit records only.
+	CurrentRuntimeVersion    = CloudRuntimeVersion
+	CurrentPolicyVersion     = CloudPolicyVersion
+	CurrentToolSchemaVersion = CloudToolSchemaVersion
 
 	FailureRuntimeSchemaRetired = "runtime_schema_retired"
 
@@ -147,14 +151,13 @@ func (policy CostPolicy) Valid() bool {
 	return policy == CostNone || policy == CostApprovalRequired
 }
 
-// AgentToolName is the v5 production-runtime tool vocabulary. ToolName remains
-// the decoder-facing type so existing runtime code has one canonical identity.
+// AgentToolName keeps one canonical decoder-facing tool identity across
+// current cloud capabilities and immutable historical audit records.
 type AgentToolName = ToolName
 
 const (
 	ToolSpecialistDelegate AgentToolName = "specialist.delegate"
 	ToolVisionAnalyze      AgentToolName = "vision.analyze"
-	ToolMediaGenerate      AgentToolName = "media.generate"
 	ToolCanvasProject      AgentToolName = "canvas.project"
 )
 

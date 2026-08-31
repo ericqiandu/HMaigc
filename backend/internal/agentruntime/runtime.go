@@ -530,7 +530,7 @@ func ResolveTool(current RuntimeState, resolution ToolResolution) (RuntimeTransi
 		ToolCallID: resolution.ToolCallID, ActionVersion: resolution.ActionVersion,
 		Succeeded: resolution.Succeeded, Output: append(json.RawMessage(nil), output...), ErrorCode: resolution.ErrorCode,
 	}
-	if resolution.Succeeded && current.PendingToolCall.ToolName == ToolSkillLoad {
+	if resolution.Succeeded && current.PendingToolCall.ToolName == ToolSkillsLoad {
 		loaded, err := resolvedSkillDir(current.Configuration.Skills, resolution.Output)
 		if err != nil {
 			return RuntimeTransition{}, err

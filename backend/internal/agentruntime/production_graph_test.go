@@ -8,10 +8,10 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 )
 
-func TestRuntimeV4ProductionContractIsTheOnlyCurrentContract(t *testing.T) {
-	if agentruntime.CurrentRuntimeVersion != 4 || agentruntime.CurrentPolicyVersion != 4 || agentruntime.CurrentToolSchemaVersion != 5 {
-		t.Fatalf("current runtime did not hard cut to production: runtime=%d policy=%d tools=%d",
-			agentruntime.CurrentRuntimeVersion, agentruntime.CurrentPolicyVersion, agentruntime.CurrentToolSchemaVersion)
+func TestRuntimeV5CloudContractIsTheOnlyCurrentContract(t *testing.T) {
+	if agentruntime.CurrentRuntimeVersion != 5 || agentruntime.CurrentPolicyVersion != 5 || agentruntime.CurrentToolSchemaVersion != 6 || agentruntime.CloudAgentUIProtocolVersion != 5 {
+		t.Fatalf("current runtime did not hard cut to cloud capabilities: runtime=%d policy=%d tools=%d ui=%d",
+			agentruntime.CurrentRuntimeVersion, agentruntime.CurrentPolicyVersion, agentruntime.CurrentToolSchemaVersion, agentruntime.CloudAgentUIProtocolVersion)
 	}
 	if agentruntime.ProductionRuntimeVersion != 4 || agentruntime.ProductionPolicyVersion != 4 || agentruntime.ProductionToolSchemaVersion != 5 ||
 		agentruntime.CurrentProductionSchemaVersion != 2 || agentruntime.ProductionAgentUIProtocolVersion != 4 {

@@ -7,6 +7,79 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 )
 
+func TestCurrentToolSchemaV6ExposesOnlyAtomicCapabilities(t *testing.T) {
+	t.Parallel()
+
+	policies, ok := agentruntime.ToolPoliciesForSchema(agentruntime.CurrentToolSchemaVersion)
+	if !ok {
+		t.Fatal("current tool schema is unavailable")
+	}
+
+	got := make([]agentruntime.ToolName, 0, len(policies))
+	for _, policy := range policies {
+		got = append(got, policy.Name)
+	}
+	want := []agentruntime.ToolName{
+		"canvas.read",
+		"canvas.apply_ops",
+		"assets.read",
+		"assets.publish",
+		"media.generate",
+		"skills.load",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("current tools = %#v, want %#v", got, want)
+	}
+
+	retired := []agentruntime.ToolName{
+		"skill.load",
+		"specialist.delegate",
+		"vision.analyze",
+		"canvas.project",
+		"media.assemble",
+		"production.plan",
+		"production.render",
+		"canvas.commit",
+	}
+	for _, name := range retired {
+		if _, exposed := agentruntime.ToolPolicyForSchema(name, agentruntime.CurrentToolSchemaVersion); exposed {
+			t.Fatalf("current schema exposed retired tool %q", name)
+		}
+	}
+}
+
+func TestCurrentWriteAndCostCapabilitiesAlwaysRequireApproval(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		tool agentruntime.ToolName
+		risk agentruntime.ToolRiskLevel
+	}{
+		{name: "canvas write", tool: "canvas.apply_ops", risk: agentruntime.ToolRiskWrite},
+		{name: "asset publish", tool: "assets.publish", risk: agentruntime.ToolRiskWrite},
+		{name: "paid media", tool: "media.generate", risk: agentruntime.ToolRiskCost},
+	}
+	modes := []agentruntime.ExecutionMode{agentruntime.ExecutionGuided, agentruntime.ExecutionAutomatic}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			policy, ok := agentruntime.ToolPolicyForSchema(testCase.tool, agentruntime.CurrentToolSchemaVersion)
+			if !ok {
+				t.Fatalf("missing current policy for %q", testCase.tool)
+			}
+			if policy.RiskLevel != testCase.risk || policy.RequiredAccess != agentruntime.AccessEditor {
+				t.Fatalf("policy for %q = %#v", testCase.tool, policy)
+			}
+			for _, mode := range modes {
+				if !agentruntime.ApprovalRequiredFor(policy, mode) {
+					t.Fatalf("%q did not require approval in mode %q", testCase.tool, mode)
+				}
+			}
+		})
+	}
+}
+
 func TestToolPolicyForSchemaFreezesProductionRiskAndAccess(t *testing.T) {
 	cases := []struct {
 		name   agentruntime.ToolName
@@ -32,8 +105,8 @@ func TestToolPolicyForSchemaFreezesProductionRiskAndAccess(t *testing.T) {
 	if _, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolProductionPlan, agentruntime.ProductionToolSchemaVersion); ok {
 		t.Fatal("production schema exposed retired production.plan")
 	}
-	if _, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolSpecialistDelegate, agentruntime.CurrentToolSchemaVersion); !ok {
-		t.Fatal("current schema did not expose specialist.delegate")
+	if _, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolSpecialistDelegate, agentruntime.CurrentToolSchemaVersion); ok {
+		t.Fatal("current schema exposed retired specialist.delegate")
 	}
 	if _, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolSpecialistDelegate, agentruntime.LegacyToolSchemaVersion); ok {
 		t.Fatal("legacy history schema exposed specialist.delegate")
@@ -86,10 +159,10 @@ func TestToolPoliciesForSchemaExposeExactFrozenVocabulary(t *testing.T) {
 	}
 }
 
-func TestToolSchemaV5AddsOnlyMediaAssembly(t *testing.T) {
+func TestProductionToolSchemaV5RemainsFrozenForHistoricalAudit(t *testing.T) {
 	t.Parallel()
 
-	policies, ok := agentruntime.ToolPoliciesForSchema(agentruntime.CurrentToolSchemaVersion)
+	policies, ok := agentruntime.ToolPoliciesForSchema(agentruntime.ProductionToolSchemaVersion)
 	if !ok {
 		t.Fatal("tool schema v5 is unavailable")
 	}
@@ -109,20 +182,20 @@ func TestToolSchemaV5AddsOnlyMediaAssembly(t *testing.T) {
 		t.Fatalf("v5 tools = %#v, want %#v", names, want)
 	}
 
-	policy, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolMediaAssemble, agentruntime.CurrentToolSchemaVersion)
+	policy, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolMediaAssemble, agentruntime.ProductionToolSchemaVersion)
 	if !ok || policy.RiskLevel != agentruntime.ToolRiskWrite || policy.RequiredAccess != agentruntime.AccessEditor {
 		t.Fatalf("media.assemble policy = %#v, found=%v", policy, ok)
 	}
 	if !agentruntime.ApprovalRequiredFor(policy, agentruntime.ExecutionGuided) {
 		t.Fatal("guided media.assemble did not require approval")
 	}
-	if agentruntime.ApprovalRequiredFor(policy, agentruntime.ExecutionAutomatic) {
-		t.Fatal("automatic media.assemble required a second tool approval")
+	if !agentruntime.ApprovalRequiredFor(policy, agentruntime.ExecutionAutomatic) {
+		t.Fatal("historical L1 policy bypassed approval in automatic mode")
 	}
 	if _, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolMediaAssemble, 4); ok {
 		t.Fatal("tool schema v4 exposed media.assemble")
 	}
-	if _, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolName("media.assemble.v2"), agentruntime.CurrentToolSchemaVersion); ok {
+	if _, ok := agentruntime.ToolPolicyForSchema(agentruntime.ToolName("media.assemble.v2"), agentruntime.ProductionToolSchemaVersion); ok {
 		t.Fatal("tool schema v5 accepted an unknown tool")
 	}
 }

@@ -58,12 +58,12 @@ func TestDecisionStreamObserverUsesFrozenToolSchema(t *testing.T) {
 		t.Fatal("production observer accepted retired legacy tool")
 	}
 
-	observer = NewDecisionStreamObserverForToolSchema(ProductionToolSchemaVersion)
-	production := `{"kind":"tool_call","toolCall":{"toolCallId":"delegate","toolName":"specialist.delegate","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`
-	if _, err := observer.Push(production); err != nil {
+	observer = NewDecisionStreamObserverForToolSchema(CurrentToolSchemaVersion)
+	current := `{"kind":"tool_call","toolCall":{"toolCallId":"read","toolName":"canvas.read","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`
+	if _, err := observer.Push(current); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := observer.Finish(); err != nil {
-		t.Fatalf("production observer rejected generic tool: %v", err)
+		t.Fatalf("current observer rejected cloud tool: %v", err)
 	}
 }

@@ -25,8 +25,10 @@ func ToolPoliciesForSchema(toolSchemaVersion int) ([]ToolPolicy, bool) {
 	switch toolSchemaVersion {
 	case LegacyToolSchemaVersion:
 		names = []ToolName{ToolSkillLoad, ToolProductionPlan, ToolProductionRender, ToolCanvasCommit}
-	case CurrentToolSchemaVersion:
+	case ProductionToolSchemaVersion:
 		names = []ToolName{ToolSkillLoad, ToolSpecialistDelegate, ToolVisionAnalyze, ToolMediaGenerate, ToolCanvasProject, ToolMediaAssemble}
+	case CurrentToolSchemaVersion:
+		names = []ToolName{ToolCanvasRead, ToolCanvasApplyOps, ToolAssetsRead, ToolAssetsPublish, ToolMediaGenerate, ToolSkillsLoad}
 	default:
 		return nil, false
 	}
@@ -56,7 +58,7 @@ func ToolPolicyForSchema(name ToolName, toolSchemaVersion int) (ToolPolicy, bool
 		default:
 			return ToolPolicy{}, false
 		}
-	case CurrentToolSchemaVersion:
+	case ProductionToolSchemaVersion:
 		switch name {
 		case ToolSkillLoad:
 			return ToolPolicy{Name: name, RiskLevel: ToolRiskRead, RequiredAccess: AccessViewer}, true
@@ -67,14 +69,22 @@ func ToolPolicyForSchema(name ToolName, toolSchemaVersion int) (ToolPolicy, bool
 		default:
 			return ToolPolicy{}, false
 		}
+	case CurrentToolSchemaVersion:
+		switch name {
+		case ToolCanvasRead, ToolAssetsRead, ToolSkillsLoad:
+			return ToolPolicy{Name: name, RiskLevel: ToolRiskRead, RequiredAccess: AccessViewer}, true
+		case ToolCanvasApplyOps, ToolAssetsPublish:
+			return ToolPolicy{Name: name, RiskLevel: ToolRiskWrite, RequiredAccess: AccessEditor}, true
+		case ToolMediaGenerate:
+			return ToolPolicy{Name: name, RiskLevel: ToolRiskCost, RequiredAccess: AccessEditor}, true
+		default:
+			return ToolPolicy{}, false
+		}
 	default:
 		return ToolPolicy{}, false
 	}
 }
 
-func ApprovalRequiredFor(policy ToolPolicy, mode ExecutionMode) bool {
-	if policy.RiskLevel == ToolRiskCost {
-		return true
-	}
-	return mode == ExecutionGuided && policy.RiskLevel == ToolRiskWrite
+func ApprovalRequiredFor(policy ToolPolicy, _ ExecutionMode) bool {
+	return policy.RiskLevel == ToolRiskWrite || policy.RiskLevel == ToolRiskCost
 }

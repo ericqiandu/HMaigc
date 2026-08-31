@@ -8,19 +8,12 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 )
 
-func TestToolSchemaV5ParsesStrictMediaAssemblyDecision(t *testing.T) {
+func TestCurrentToolSchemaRejectsHistoricalMediaAssemblyDecision(t *testing.T) {
 	t.Parallel()
 
 	payload := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"assemble-final","toolName":"media.assemble","actionVersion":1,"arguments":{"planRevision":{"artifactId":"plan-artifact","revisionId":"plan-r2"},"expectedDelivery":{"kind":"mixed","requiredArtifacts":["video","canvas_revision"],"targetCanvasId":"canvas-1","completionCriteria":[{"fact":"task_backed_resource","artifact":"video"},{"fact":"canvas_revision"}]}},"expectedDelivery":{"kind":"mixed","requiredArtifacts":["video","canvas_revision"],"targetCanvasId":"canvas-1","completionCriteria":[{"fact":"task_backed_resource","artifact":"video"},{"fact":"canvas_revision"}]}}}`)
-	decision, err := agentruntime.ParseModelDecisionForToolSchema(payload, agentruntime.CurrentToolSchemaVersion)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decision.ToolCall == nil || decision.ToolCall.ToolName != agentruntime.ToolMediaAssemble {
-		t.Fatalf("decision = %#v", decision)
-	}
-	if _, err := agentruntime.ParseModelDecisionForToolSchema(payload, 4); err == nil {
-		t.Fatal("tool schema v4 accepted media.assemble")
+	if _, err := agentruntime.ParseModelDecisionForToolSchema(payload, agentruntime.CurrentToolSchemaVersion); err == nil {
+		t.Fatal("current tool schema accepted retired media.assemble")
 	}
 }
 

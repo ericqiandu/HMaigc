@@ -7,6 +7,43 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 )
 
+func TestCurrentDecisionParserAcceptsV6AndRejectsV5Tools(t *testing.T) {
+	t.Parallel()
+
+	currentTools := []string{
+		"canvas.read",
+		"canvas.apply_ops",
+		"assets.read",
+		"assets.publish",
+		"media.generate",
+		"skills.load",
+	}
+	for _, toolName := range currentTools {
+		payload := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-current","toolName":"` + toolName + `","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
+		decision, err := agentruntime.ParseModelDecision(payload)
+		if err != nil {
+			t.Fatalf("current tool %q was rejected: %v", toolName, err)
+		}
+		if decision.ToolCall == nil || decision.ToolCall.ToolName != agentruntime.ToolName(toolName) {
+			t.Fatalf("decision for %q = %#v", toolName, decision)
+		}
+	}
+
+	retiredTools := []string{
+		"skill.load",
+		"specialist.delegate",
+		"vision.analyze",
+		"canvas.project",
+		"media.assemble",
+	}
+	for _, toolName := range retiredTools {
+		payload := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-retired","toolName":"` + toolName + `","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
+		if _, err := agentruntime.ParseModelDecision(payload); err == nil {
+			t.Fatalf("retired v5 tool %q remained executable", toolName)
+		}
+	}
+}
+
 func TestParseModelDecisionAcceptsStrictFinalAndToolCall(t *testing.T) {
 	finalJSON := []byte(`{"kind":"final","final":{"message":"已完成","expectedDelivery":{"kind":"answer","requiredArtifacts":["text"],"completionCriteria":[{"fact":"final_message"}]}}}`)
 	decision, err := agentruntime.ParseModelDecision(finalJSON)
@@ -17,35 +54,36 @@ func TestParseModelDecisionAcceptsStrictFinalAndToolCall(t *testing.T) {
 		t.Fatalf("final decision = %#v", decision)
 	}
 
-	toolJSON := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"specialist.delegate","actionVersion":1,"arguments":{"specialistKey":"narrative"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
+	toolJSON := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"canvas.read","actionVersion":1,"arguments":{"canvasId":"canvas-1"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
 	decision, err = agentruntime.ParseModelDecision(toolJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Kind != agentruntime.DecisionToolCall || decision.ToolCall == nil || decision.ToolCall.ToolName != agentruntime.ToolSpecialistDelegate {
+	if decision.Kind != agentruntime.DecisionToolCall || decision.ToolCall == nil || decision.ToolCall.ToolName != agentruntime.ToolCanvasRead {
 		t.Fatalf("tool decision = %#v", decision)
 	}
 }
 
 func TestParseModelDecisionForToolSchemaHardCutsCurrentTools(t *testing.T) {
 	legacy := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-legacy","toolName":"production.plan","actionVersion":1,"arguments":{"planKey":"plan-1"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
-	production := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-v3","toolName":"specialist.delegate","actionVersion":1,"arguments":{"specialistKey":"narrative"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
+	production := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-v5","toolName":"specialist.delegate","actionVersion":1,"arguments":{"specialistKey":"narrative"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
+	current := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-v6","toolName":"canvas.read","actionVersion":1,"arguments":{"canvasId":"canvas-1"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
 
 	if _, err := agentruntime.ParseModelDecisionForToolSchema(legacy, agentruntime.CurrentToolSchemaVersion); err == nil {
 		t.Fatal("current schema accepted retired legacy tool")
 	}
-	if _, err := agentruntime.ParseModelDecisionForToolSchema(production, agentruntime.CurrentToolSchemaVersion); err != nil {
-		t.Fatalf("current schema rejected production tool: %v", err)
+	if _, err := agentruntime.ParseModelDecisionForToolSchema(production, agentruntime.CurrentToolSchemaVersion); err == nil {
+		t.Fatal("current schema accepted retired production tool")
 	}
-	if _, err := agentruntime.ParseModelDecisionForToolSchema(legacy, agentruntime.ProductionToolSchemaVersion); err == nil {
-		t.Fatal("production schema accepted retired legacy tool")
-	}
-	decision, err := agentruntime.ParseModelDecisionForToolSchema(production, agentruntime.ProductionToolSchemaVersion)
+	decision, err := agentruntime.ParseModelDecisionForToolSchema(current, agentruntime.CurrentToolSchemaVersion)
 	if err != nil {
-		t.Fatalf("production schema rejected generic tool: %v", err)
+		t.Fatalf("current schema rejected cloud tool: %v", err)
 	}
-	if decision.ToolCall == nil || decision.ToolCall.ToolName != agentruntime.ToolSpecialistDelegate {
-		t.Fatalf("production decision = %#v", decision)
+	if decision.ToolCall == nil || decision.ToolCall.ToolName != agentruntime.ToolCanvasRead {
+		t.Fatalf("current decision = %#v", decision)
+	}
+	if _, err := agentruntime.ParseModelDecisionForToolSchema(production, agentruntime.ProductionToolSchemaVersion); err == nil {
+		t.Fatal("retired production schema remained executable after hard cut")
 	}
 	if _, err := agentruntime.ParseModelDecisionForToolSchema(production, 999); err == nil {
 		t.Fatal("unknown tool schema was accepted")
@@ -110,7 +148,7 @@ func TestParseModelDecisionFailsClosed(t *testing.T) {
 		"unknown field":         `{"kind":"final","extra":true,"final":{"message":"ok","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`,
 		"two documents":         `{"kind":"final","final":{"message":"ok","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}} {}`,
 		"unknown tool":          `{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"shell.exec","actionVersion":1,"arguments":{}}}`,
-		"retired canvas tool":   `{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"canvas.apply_ops","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`,
+		"retired canvas tool":   `{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"canvas.project","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`,
 		"retired generation":    `{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"generation.submit","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`,
 		"missing criteria":      `{"kind":"final","final":{"message":"ok","expectedDelivery":{"kind":"answer"}}}`,
 		"both payloads":         `{"kind":"final","final":{"message":"ok","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}},"toolCall":{"toolCallId":"call-1","toolName":"canvas.read_state","actionVersion":1,"arguments":{}}}`,
