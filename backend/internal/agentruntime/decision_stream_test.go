@@ -59,7 +59,7 @@ func TestDecisionStreamObserverUsesFrozenToolSchema(t *testing.T) {
 	}
 
 	observer = NewDecisionStreamObserverForToolSchema(CurrentToolSchemaVersion)
-	current := `{"kind":"tool_call","toolCall":{"toolCallId":"read","toolName":"canvas.read","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`
+	current := `{"kind":"tool_call","toolCall":{"toolCallId":"read","toolName":"canvas.read","actionVersion":1,"arguments":{"canvasId":"canvas-1","selectedNodeIds":[],"includeViewport":true},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`
 	if _, err := observer.Push(current); err != nil {
 		t.Fatal(err)
 	}

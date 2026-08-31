@@ -36,7 +36,7 @@ func TestAdvanceRuntimeTransitionsFromFacts(t *testing.T) {
 		t.Fatalf("repairable transition = %#v", repairable)
 	}
 
-	tool := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{ToolCallID: "call-1", ToolName: agentruntime.ToolCanvasRead, ActionVersion: 1, Arguments: []byte(`{}`), ExpectedDelivery: answer}}
+	tool := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{ToolCallID: "call-1", ToolName: agentruntime.ToolCanvasRead, ActionVersion: 1, Arguments: validCapabilityArgumentsForTest(agentruntime.ToolCanvasRead), ExpectedDelivery: answer}}
 	waiting, err := agentruntime.Advance(base, agentruntime.RuntimeInput{Decision: tool})
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +45,7 @@ func TestAdvanceRuntimeTransitionsFromFacts(t *testing.T) {
 		t.Fatalf("tool transition = %#v", waiting)
 	}
 
-	writeTool := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{ToolCallID: "call-2", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1, Arguments: []byte(`{"mediaKind":"image"}`), ExpectedDelivery: answer}}
+	writeTool := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{ToolCallID: "call-2", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1, Arguments: validCapabilityArgumentsForTest(agentruntime.ToolMediaGenerate), ExpectedDelivery: answer}}
 	waitingApproval, err := agentruntime.Advance(base, agentruntime.RuntimeInput{Decision: writeTool})
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +78,7 @@ func TestAdvanceForCurrentToolSchemaRequiresApprovalForAutomaticWrites(t *testin
 			ToolCallID:       "publish-1",
 			ToolName:         agentruntime.ToolAssetsPublish,
 			ActionVersion:    1,
-			Arguments:        json.RawMessage(`{"specialistKey":"script"}`),
+			Arguments:        validCapabilityArgumentsForTest(agentruntime.ToolAssetsPublish),
 			ExpectedDelivery: answer,
 		},
 	}
@@ -143,7 +143,7 @@ func TestAgentRuntimeSkillLoadIsRequiredBeforeFinal(t *testing.T) {
 
 	load := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
 		ToolCallID: "load-storyboard", ToolName: agentruntime.ToolSkillsLoad, ActionVersion: 1,
-		Arguments: json.RawMessage(`{"dir":"storyboard-director"}`), ExpectedDelivery: answer,
+		Arguments: validCapabilityArgumentsForTest(agentruntime.ToolSkillsLoad), ExpectedDelivery: answer,
 	}}
 	waiting, err := agentruntime.Advance(rejected.State, agentruntime.RuntimeInput{Decision: load})
 	if err != nil {
@@ -216,7 +216,7 @@ func TestAdvanceRuntimeFreezesExpectedDeliveryAndRejectsFinalDowngrade(t *testin
 		Kind: agentruntime.DecisionToolCall,
 		ToolCall: &agentruntime.ToolCallDecision{
 			ToolCallID: "read-canvas", ToolName: agentruntime.ToolCanvasRead, ActionVersion: 1,
-			Arguments: json.RawMessage(`{}`), ExpectedDelivery: generatedImage,
+			Arguments: validCapabilityArgumentsForTest(agentruntime.ToolCanvasRead), ExpectedDelivery: generatedImage,
 		},
 	}
 	waiting, err := agentruntime.Advance(base, agentruntime.RuntimeInput{Decision: firstDecision})
@@ -291,7 +291,7 @@ func TestApprovalMatrixDependsOnExecutionModeAndToolRisk(t *testing.T) {
 					ToolCallID:       fmt.Sprintf("call-%d", index),
 					ToolName:         testCase.tool,
 					ActionVersion:    1,
-					Arguments:        json.RawMessage(`{}`),
+					Arguments:        validCapabilityArgumentsForTest(testCase.tool),
 					ExpectedDelivery: answer,
 				},
 			}
@@ -736,7 +736,7 @@ func TestAdvanceRuntimeRejectsNewToolCallOnFinalModelStep(t *testing.T) {
 	}
 	decision := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
 		ToolCallID: "last-step-generation", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
-		Arguments: json.RawMessage(`{"type":"canvas_image"}`), ExpectedDelivery: answer,
+		Arguments: validCapabilityArgumentsForTest(agentruntime.ToolMediaGenerate), ExpectedDelivery: answer,
 	}}
 	transition, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: decision})
 	if err != nil {

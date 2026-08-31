@@ -19,7 +19,7 @@ func TestCurrentDecisionParserAcceptsV6AndRejectsV5Tools(t *testing.T) {
 		"skills.load",
 	}
 	for _, toolName := range currentTools {
-		payload := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-current","toolName":"` + toolName + `","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
+		payload := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-current","toolName":"` + toolName + `","actionVersion":1,"arguments":` + string(validCapabilityArgumentsForTest(agentruntime.ToolName(toolName))) + `,"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
 		decision, err := agentruntime.ParseModelDecision(payload)
 		if err != nil {
 			t.Fatalf("current tool %q was rejected: %v", toolName, err)
@@ -54,7 +54,7 @@ func TestParseModelDecisionAcceptsStrictFinalAndToolCall(t *testing.T) {
 		t.Fatalf("final decision = %#v", decision)
 	}
 
-	toolJSON := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"canvas.read","actionVersion":1,"arguments":{"canvasId":"canvas-1"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
+	toolJSON := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-1","toolName":"canvas.read","actionVersion":1,"arguments":{"canvasId":"canvas-1","selectedNodeIds":[],"includeViewport":true},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
 	decision, err = agentruntime.ParseModelDecision(toolJSON)
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestParseModelDecisionAcceptsStrictFinalAndToolCall(t *testing.T) {
 func TestParseModelDecisionForToolSchemaHardCutsCurrentTools(t *testing.T) {
 	legacy := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-legacy","toolName":"production.plan","actionVersion":1,"arguments":{"planKey":"plan-1"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
 	production := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-v5","toolName":"specialist.delegate","actionVersion":1,"arguments":{"specialistKey":"narrative"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
-	current := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-v6","toolName":"canvas.read","actionVersion":1,"arguments":{"canvasId":"canvas-1"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
+	current := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"call-v6","toolName":"canvas.read","actionVersion":1,"arguments":{"canvasId":"canvas-1","selectedNodeIds":[],"includeViewport":true},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
 
 	if _, err := agentruntime.ParseModelDecisionForToolSchema(legacy, agentruntime.CurrentToolSchemaVersion); err == nil {
 		t.Fatal("current schema accepted retired legacy tool")

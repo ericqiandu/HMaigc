@@ -1,7 +1,11 @@
 import { localForageStorage } from "@/lib/localforage-storage";
+import { isAgentToolName, parseAgentCapabilityArguments, type AgentCapabilityArguments, type AgentToolName } from "./agent-capabilities";
 import { parseClarificationHistory, parsePendingClarification, type AgentClarificationAnswerInput, type AgentCompletedClarification, type AgentPendingClarification } from "./agent-clarification";
 import { parseAgentProductionTimelineContent, type AgentProductionTimelineContent } from "./agent-production";
 import { array, exactObject, flag, integer, object, text } from "./strict-contract";
+
+export { parseAgentCapabilityArguments } from "./agent-capabilities";
+export type { AgentCanvasOperation, AgentCanvasPoint, AgentCanvasViewport, AgentCapabilityArguments, AgentToolName } from "./agent-capabilities";
 
 export type {
     AgentClarificationAnswer,
@@ -27,7 +31,6 @@ export type AgentRuntimeEventKind =
     | "approval.requested"
     | "approval.resolved"
     | "state.snapshot";
-export type AgentToolName = "skill.load" | "specialist.delegate" | "vision.analyze" | "media.generate" | "canvas.project" | "media.assemble";
 export type AgentArtifactKind = "image" | "video" | "audio" | "text" | "canvas_revision";
 export type AgentDeliveryFact = "final_message" | "canvas_revision" | "artifact" | "artifact_revision" | "resource" | "task_backed_resource" | "publication";
 
@@ -37,7 +40,7 @@ export type AgentExpectedDelivery = {
     targetCanvasId?: string;
     completionCriteria: Array<{ fact: AgentDeliveryFact; artifact?: AgentArtifactKind }>;
 };
-export type AgentToolCall = { toolCallId: string; toolName: AgentToolName; actionVersion: number; arguments: Record<string, unknown>; expectedDelivery: AgentExpectedDelivery };
+export type AgentToolCall = { toolCallId: string; toolName: AgentToolName; actionVersion: number; arguments: AgentCapabilityArguments; expectedDelivery: AgentExpectedDelivery };
 export type AgentDeliveryVerification = { status: "satisfied" | "repairable" | "failed"; rationale: string; missingCriteria?: Array<{ fact: string; artifact?: string }> };
 export type AgentRuntimeGenerationModelSelection = { channelId: string; model: string };
 export type AgentRuntimeGenerationModelSelections = { image?: AgentRuntimeGenerationModelSelection; video?: AgentRuntimeGenerationModelSelection };
@@ -96,7 +99,7 @@ export type AgentRunEventPayload = {
     failureCode?: string;
     item?: { kind: AgentTimelineItemKind; status: AgentTimelineItemStatus; content: AgentTimelineItemContent };
 };
-type AgentUIEventBase = { protocolVersion: 4; threadId: string; runId: string; sequence: number; createdAt: string };
+type AgentUIEventBase = { protocolVersion: 5; threadId: string; runId: string; sequence: number; createdAt: string };
 export type AgentRuntimeEvent =
     | (AgentUIEventBase & { kind: "run.started" | "state.snapshot"; itemId?: string; payload: AgentRunEventPayload })
     | (AgentUIEventBase & { kind: "run.completed" | "run.failed" | "run.interrupted"; itemId: string; payload: AgentRunEventPayload & { item: NonNullable<AgentRunEventPayload["item"]> } })
@@ -179,15 +182,14 @@ const eventKinds = new Set<AgentRuntimeEventKind>([
 const runEventKinds = new Set<AgentRuntimeEventKind>(["run.started", "run.completed", "run.failed", "run.interrupted", "state.snapshot"]);
 const timelineItemKinds = new Set<AgentTimelineItemKind>(["user_message", "agent_message", "status", "clarification", "tool_call", "tool_result", "approval", "artifact", "error"]);
 const timelineItemStatuses = new Set<AgentTimelineItemStatus>(["in_progress", "completed", "failed", "declined", "interrupted"]);
-const toolNames = new Set<AgentToolName>(["skill.load", "specialist.delegate", "vision.analyze", "media.generate", "canvas.project", "media.assemble"]);
 const deliveryFacts = new Set(["final_message", "canvas_revision", "artifact", "artifact_revision", "resource", "task_backed_resource", "publication"]);
 const artifactKinds = new Set(["image", "video", "audio", "text", "canvas_revision"]);
 const isoInstantPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/;
 const baseURL = String(import.meta.env.VITE_CANVAS_BACKEND_URL || "/api").replace(/\/+$/, "");
-const currentRuntimeVersion = 4;
-const currentPolicyVersion = 4;
-const currentToolSchemaVersion = 5;
-const currentAgentUIProtocolVersion = 4;
+const currentRuntimeVersion = 5;
+const currentPolicyVersion = 5;
+const currentToolSchemaVersion = 6;
+const currentAgentUIProtocolVersion = 5;
 const retiredRuntimeVersion = 3;
 const retiredPolicyVersion = 3;
 const retiredToolSchemaVersion = 4;
@@ -408,6 +410,8 @@ function parseTimelineContent(value: unknown, label: string, kind: AgentTimeline
     } else {
         content = kind === "artifact"
             ? exactObject(source, label, ["artifactId", "kind", "planKey", "planVersion", "referenceKey", "shotKey", "resourceId", "status"])
+            : kind === "tool_call" && source.toolName !== undefined
+                ? parseToolCall(source)
             : source;
     }
     rejectTransientMediaLocator(content, label);
@@ -559,14 +563,14 @@ function sameExpectedDelivery(left: AgentExpectedDelivery, right: AgentExpectedD
 }
 
 function parseToolCall(value: unknown): AgentToolCall {
-    const source = object(value, "pendingToolCall");
+    const source = exactObject(value, "pendingToolCall", ["toolCallId", "toolName", "actionVersion", "arguments", "expectedDelivery"]);
     const toolName = source.toolName;
-    if (typeof toolName !== "string" || !toolNames.has(toolName as AgentToolName)) throw new Error(`不受支持的 Agent 工具: ${String(toolName)}`);
+    if (!isAgentToolName(toolName)) throw new Error(`不受支持的 Agent 工具: ${String(toolName)}`);
     return {
         toolCallId: text(source.toolCallId, "toolCallId"),
-        toolName: toolName as AgentToolName,
+        toolName,
         actionVersion: integer(source.actionVersion, "actionVersion"),
-        arguments: object(source.arguments, "tool arguments"),
+        arguments: parseAgentCapabilityArguments(toolName, source.arguments),
         expectedDelivery: parseExpectedDelivery(source.expectedDelivery),
     };
 }

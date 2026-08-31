@@ -181,15 +181,15 @@ func (decision ModelDecision) ValidateForToolSchema(toolSchemaVersion int) error
 		if err := call.ExpectedDelivery.Validate(); err != nil {
 			return err
 		}
-		arguments := bytes.TrimSpace(call.Arguments)
-		if len(arguments) == 0 || bytes.Equal(arguments, []byte("null")) || arguments[0] != '{' || !json.Valid(arguments) {
+		arguments, err := DecodeCapabilityArguments(call.ToolName, call.Arguments)
+		if err != nil {
 			return errors.New("agent tool call arguments are invalid")
 		}
-		var compact bytes.Buffer
-		if err := json.Compact(&compact, arguments); err != nil {
+		canonical, err := json.Marshal(arguments)
+		if err != nil {
 			return errors.New("agent tool call arguments are invalid")
 		}
-		call.Arguments = append(call.Arguments[:0], compact.Bytes()...)
+		call.Arguments = append(call.Arguments[:0], canonical...)
 		return nil
 	case DecisionClarificationRequest:
 		if decision.Clarification == nil || decision.Final != nil || decision.ToolCall != nil {
