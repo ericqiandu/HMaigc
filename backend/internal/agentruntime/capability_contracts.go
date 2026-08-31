@@ -39,7 +39,7 @@ type CapabilityResult interface {
 
 type CanvasReadArguments struct {
 	CanvasID        string   `json:"canvasId"`
-	SelectedNodeIDs []string `json:"selectedNodeIds,omitempty"`
+	SelectedNodeIDs []string `json:"selectedNodeIds"`
 	IncludeViewport bool     `json:"includeViewport"`
 }
 

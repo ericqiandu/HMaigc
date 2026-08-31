@@ -59,6 +59,56 @@ type CanvasOperation struct {
 	Viewport      *CanvasViewport        `json:"viewport,omitempty"`
 }
 
+func (operation CanvasOperation) MarshalJSON() ([]byte, error) {
+	switch operation.Type {
+	case CanvasOperationAddNode:
+		return json.Marshal(struct {
+			OperationID string              `json:"operationId"`
+			Type        CanvasOperationType `json:"type"`
+			Node        *CanvasNodeInput    `json:"node"`
+		}{OperationID: operation.OperationID, Type: operation.Type, Node: operation.Node})
+	case CanvasOperationUpdateNode:
+		return json.Marshal(struct {
+			OperationID string              `json:"operationId"`
+			Type        CanvasOperationType `json:"type"`
+			NodeID      string              `json:"nodeId"`
+			Patch       json.RawMessage     `json:"patch"`
+		}{OperationID: operation.OperationID, Type: operation.Type, NodeID: operation.NodeID, Patch: operation.Patch})
+	case CanvasOperationDeleteNode:
+		return json.Marshal(struct {
+			OperationID string              `json:"operationId"`
+			Type        CanvasOperationType `json:"type"`
+			NodeID      string              `json:"nodeId"`
+		}{OperationID: operation.OperationID, Type: operation.Type, NodeID: operation.NodeID})
+	case CanvasOperationConnectNodes:
+		return json.Marshal(struct {
+			OperationID string                 `json:"operationId"`
+			Type        CanvasOperationType    `json:"type"`
+			Connection  *CanvasConnectionInput `json:"connection"`
+		}{OperationID: operation.OperationID, Type: operation.Type, Connection: operation.Connection})
+	case CanvasOperationDeleteConnections:
+		return json.Marshal(struct {
+			OperationID   string              `json:"operationId"`
+			Type          CanvasOperationType `json:"type"`
+			ConnectionIDs []string            `json:"connectionIds"`
+		}{OperationID: operation.OperationID, Type: operation.Type, ConnectionIDs: operation.ConnectionIDs})
+	case CanvasOperationSetViewport:
+		return json.Marshal(struct {
+			OperationID string              `json:"operationId"`
+			Type        CanvasOperationType `json:"type"`
+			Viewport    *CanvasViewport     `json:"viewport"`
+		}{OperationID: operation.OperationID, Type: operation.Type, Viewport: operation.Viewport})
+	case CanvasOperationSelectNodes:
+		return json.Marshal(struct {
+			OperationID string              `json:"operationId"`
+			Type        CanvasOperationType `json:"type"`
+			NodeIDs     []string            `json:"nodeIds"`
+		}{OperationID: operation.OperationID, Type: operation.Type, NodeIDs: operation.NodeIDs})
+	default:
+		return nil, errCapabilityArgumentsInvalid
+	}
+}
+
 func decodeCanvasOperation(payload json.RawMessage) (CanvasOperation, error) {
 	var discriminator struct {
 		Type CanvasOperationType `json:"type"`

@@ -91,6 +91,28 @@ func TestCapabilityArgumentsDecodeExactCurrentContracts(t *testing.T) {
 	}
 }
 
+func TestCapabilityArgumentsRoundTripPreservesExplicitEmptyCollections(t *testing.T) {
+	t.Parallel()
+
+	for _, tool := range []agentruntime.ToolName{
+		agentruntime.ToolCanvasRead,
+		agentruntime.ToolCanvasApplyOps,
+	} {
+		arguments, err := agentruntime.DecodeCapabilityArguments(tool, validCapabilityArgumentsForTest(tool))
+		if err != nil {
+			t.Fatalf("DecodeCapabilityArguments(%q) error = %v", tool, err)
+		}
+
+		encoded, err := json.Marshal(arguments)
+		if err != nil {
+			t.Fatalf("json.Marshal(%q) error = %v", tool, err)
+		}
+		if _, err := agentruntime.DecodeCapabilityArguments(tool, encoded); err != nil {
+			t.Fatalf("round-trip DecodeCapabilityArguments(%q) error = %v; payload = %s", tool, err, encoded)
+		}
+	}
+}
+
 func TestCapabilityArgumentsRejectUnknownFieldsAndInvalidIdentifiers(t *testing.T) {
 	t.Parallel()
 
