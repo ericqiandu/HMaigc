@@ -44,6 +44,7 @@ func TestProductionPlanArgumentsRequireServerControlledInitialIdentity(t *testin
 }
 
 func TestAgentRuntimeSkillLoadExposesFrozenInstructionsOnNextStep(t *testing.T) {
+	skipPendingAtomicSkillAdapter(t)
 	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"load-storyboard","toolName":"skill.load","actionVersion":1,"arguments":{"dir":"storyboard-director"}}}`
 	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestAnswerDelivery())
 	defer server.Close()

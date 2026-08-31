@@ -503,6 +503,59 @@ func TestEncodeProductionAgentRuntimePromptUsesOnlyGraphAndGenericTools(t *testi
 	}
 }
 
+func TestEncodeCloudAgentRuntimePromptContainsOnlyAtomicCapabilities(t *testing.T) {
+	t.Parallel()
+
+	startedAt := time.Date(2026, time.September, 1, 8, 0, 0, 0, time.UTC)
+	state := agentruntime.RuntimeState{
+		StateVersion: 1, StepNumber: 0, MaxSteps: 24, Status: agentruntime.RunRunning,
+		UserMessage:   "读取当前画布后给出建议",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+		Limits: &agentruntime.RuntimeLimits{
+			MaxToolCalls: 24, StartedAt: startedAt, DeadlineAt: startedAt.Add(30 * time.Minute),
+		},
+	}
+	prompt, err := encodeAgentRuntimeModelPromptForToolSchema(
+		agentRuntimeServiceScope(), state, 11, agentruntime.CurrentToolSchemaVersion,
+		nil, nil, nil, nil, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(prompt, agentRuntimeModelPromptPrefix)), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, retiredField := range []string{"productionPlan", "productionGraph", "currentStage", "artifacts"} {
+		if _, found := raw[retiredField]; found {
+			t.Fatalf("cloud prompt exposed retired field %q", retiredField)
+		}
+	}
+	if _, found := raw["limits"]; !found {
+		t.Fatal("cloud prompt omitted frozen runtime limits")
+	}
+	context := decodeAgentRuntimePromptContextForTest(t, prompt)
+	wantTools := []agentruntime.ToolName{
+		agentruntime.ToolCanvasRead,
+		agentruntime.ToolCanvasApplyOps,
+		agentruntime.ToolAssetsRead,
+		agentruntime.ToolAssetsPublish,
+		agentruntime.ToolMediaGenerate,
+		agentruntime.ToolSkillsLoad,
+	}
+	if len(context.CallableTools) != len(wantTools) {
+		t.Fatalf("callable tools = %#v", context.CallableTools)
+	}
+	for index, want := range wantTools {
+		if context.CallableTools[index].Name != want {
+			t.Fatalf("callable tool[%d] = %q, want %q", index, context.CallableTools[index].Name, want)
+		}
+	}
+	if _, err := frozenAgentRuntimeModelContext(agentRuntimeServiceScope(), state, prompt); err != nil {
+		t.Fatalf("frozen cloud prompt rejected: %v", err)
+	}
+}
+
 func TestLoadAgentRuntimeProductionContextFactUsesExactHeadFactsWithoutPayload(t *testing.T) {
 	svc, _, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
 	scope := agentRuntimeServiceScope()
@@ -608,6 +661,23 @@ func TestProductionAgentRuntimeSystemPromptExposesOnlyGenericTools(t *testing.T)
 	for _, legacy := range []string{"production.plan", "production.render", "canvas.commit"} {
 		if strings.Contains(prompt, legacy) {
 			t.Fatalf("production system prompt exposed legacy tool %q", legacy)
+		}
+	}
+}
+
+func TestCloudAgentRuntimeSystemPromptExposesOnlyAtomicCapabilities(t *testing.T) {
+	prompt, err := agentRuntimeSystemPromptForToolSchema(agentruntime.CurrentToolSchemaVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"canvas.read", "canvas.apply_ops", "assets.read", "assets.publish", "media.generate", "skills.load"} {
+		if !strings.Contains(prompt, required) {
+			t.Fatalf("cloud system prompt is missing %q", required)
+		}
+	}
+	for _, retired := range []string{"specialist.delegate", "vision.analyze", "canvas.project", "media.assemble", "production.plan", "production.render", "canvas.commit"} {
+		if strings.Contains(prompt, retired) {
+			t.Fatalf("cloud system prompt exposed retired tool %q", retired)
 		}
 	}
 }

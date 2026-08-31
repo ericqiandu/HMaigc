@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
@@ -422,18 +421,14 @@ func TestTaskOutboxRejectsRunScopeThatConflictsWithTerminalTask(t *testing.T) {
 }
 
 func TestAgentTaskOutboxIgnoresStaleModelWakeupAfterRunAdvances(t *testing.T) {
-	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"outbox-skill","toolName":"skill.load","actionVersion":1,"arguments":{"dir":"storyboard-director"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`
+	decision := `{"kind":"clarification_request","clarification":{"requestId":"outbox-clarification","questions":[{"id":"duration","prompt":"广告时长是多少？","type":"single_choice","options":[{"id":"15s","label":"15 秒"},{"id":"30s","label":"30 秒"}]}],"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`
 	server, _ := newAgentRuntimeDecisionServer(t, decision)
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
-	svc.agentRuntimeSkillResolver = func(_ context.Context, _ string, dir string) (*Skill, error) {
-		instructions := "冻结说明"
-		return &Skill{Dir: dir, Name: "分镜导演", Description: "拆解镜头", DetailText: instructions, Version: 1, Checksum: agentRuntimeTestSkillChecksum(instructions)}, nil
-	}
 	scope := agentRuntimeServiceScope()
 	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
-		Scope: scope, ClientRequestID: "stale-model-outbox", UserMessage: "加载分镜技能",
-		Configuration: AgentRuntimeConfigurationInput{SkillDirs: []string{"storyboard-director"}, ExecutionMode: agentruntime.ExecutionAutomatic},
+		Scope: scope, ClientRequestID: "stale-model-outbox", UserMessage: "生成汽车广告剧本",
+		Configuration: guidedAgentRuntimeConfigurationInput(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -445,11 +440,25 @@ func TestAgentTaskOutboxIgnoresStaleModelWakeupAfterRunAdvances(t *testing.T) {
 	if err := svc.ProcessNextTask(); err != nil {
 		t.Fatal(err)
 	}
-	state, err := svc.repo.LoadAgentCheckpoint(scope)
+	waiting, err := svc.advanceAgentRun(scope, agentWakeModelTaskFinished)
 	if err != nil {
 		t.Fatal(err)
 	}
-	currentTaskID := agentRuntimeModelTaskID(scope.RunID, state.StepNumber)
+	if waiting.State.Status != agentruntime.RunWaitingInput || waiting.State.PendingClarification == nil {
+		t.Fatalf("run did not pause for the current clarification: %#v", waiting.State)
+	}
+	resumed, err := svc.SubmitAgentClarificationResponse(scope, agentruntime.ClarificationResponseSubmission{
+		RequestID: "outbox-clarification", ExpectedStateVersion: waiting.State.StateVersion,
+		QuestionID: "duration", Answer: agentruntime.ClarificationAnswerInput{SelectedOptionIDs: []string{"30s"}}, Complete: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.ModelTask == nil {
+		t.Fatal("clarification completion did not create the next model task")
+	}
+	state := resumed.State
+	currentTaskID := resumed.ModelTask.ID
 	if currentTaskID == staleTaskID {
 		t.Fatalf("run did not advance beyond stale task %q", staleTaskID)
 	}

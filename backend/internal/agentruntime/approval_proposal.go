@@ -22,6 +22,11 @@ const (
 	approvalProposalPayloadLimit   = 256 * 1024
 )
 
+var (
+	ErrApprovalProposalMismatch = errors.New("approval proposal hash mismatch")
+	ErrApprovalProposalExpired  = errors.New("approval proposal expired")
+)
+
 type ApprovalEffectKind string
 
 const (
@@ -205,10 +210,10 @@ func ValidateApprovalProposalDecision(proposal ApprovalProposal, proposalHash st
 	}
 	provided, err := hex.DecodeString(strings.TrimSpace(proposalHash))
 	if err != nil || len(provided) != sha256.Size || subtle.ConstantTimeCompare(provided, mustDecodeApprovalHash(expectedHash)) != 1 {
-		return errors.New("approval proposal hash mismatch")
+		return ErrApprovalProposalMismatch
 	}
 	if !now.UTC().Before(proposal.ExpiresAt.UTC()) {
-		return errors.New("approval proposal expired")
+		return ErrApprovalProposalExpired
 	}
 	if proposal.ToolName == ToolMediaGenerate && proposal.Quote == nil {
 		return errors.New("approval proposal cost quote is required")

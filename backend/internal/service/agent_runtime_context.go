@@ -118,8 +118,9 @@ func (s *Service) agentRuntimeModelPrompt(scope agentruntime.Scope, state agentr
 	switch run.ToolSchemaVersion {
 	case agentruntime.LegacyToolSchemaVersion:
 		productionPlan, err = s.agentRuntimeProductionPlanFact(scope)
-	case agentruntime.CurrentToolSchemaVersion:
+	case agentruntime.ProductionToolSchemaVersion:
 		production, err = s.loadAgentRuntimeProductionContextFact(scope)
+	case agentruntime.CurrentToolSchemaVersion:
 	default:
 		return "", errors.New("agent runtime tool schema version is invalid")
 	}
@@ -368,7 +369,7 @@ func encodeAgentRuntimeModelPromptForToolSchema(
 		if production != nil {
 			return "", errors.New("legacy agent runtime context contains production graph facts")
 		}
-	case agentruntime.CurrentToolSchemaVersion:
+	case agentruntime.ProductionToolSchemaVersion:
 		if productionPlan != nil || production == nil {
 			return "", errors.New("production agent runtime context facts are invalid")
 		}
@@ -379,6 +380,10 @@ func encodeAgentRuntimeModelPromptForToolSchema(
 		productionGraph = canonical.Graph
 		currentStage = canonical.CurrentStage
 		artifacts = canonical.Artifacts
+	case agentruntime.CurrentToolSchemaVersion:
+		if productionPlan != nil || production != nil {
+			return "", errors.New("cloud agent runtime context contains retired production facts")
+		}
 	default:
 		return "", errors.New("agent runtime tool schema version is invalid")
 	}
@@ -387,7 +392,7 @@ func encodeAgentRuntimeModelPromptForToolSchema(
 		UserMessage: state.UserMessage, ExpectedDelivery: state.ExpectedDelivery, DeliveryEvidence: deliveryEvidence,
 		Verification: deliveryVerification, LastToolResult: state.LastToolResult, DecisionFeedback: state.DecisionFeedback, PreviousMessage: state.FinalMessage,
 		Configuration: promptAgentRuntimeConfiguration(state), LoadedSkillDirs: append([]string(nil), state.LoadedSkillDirs...), CallableTools: callableTools, CallableModels: models,
-		ClarificationHistory: append([]agentruntime.CompletedClarification(nil), state.ClarificationHistory...), ProductionPlan: productionPlan,
+		ClarificationHistory: append([]agentruntime.CompletedClarification(nil), state.ClarificationHistory...), Limits: state.Limits, ProductionPlan: productionPlan,
 		ProductionGraph: productionGraph, CurrentStage: currentStage, Artifacts: artifacts,
 	}
 	encoded, err := json.Marshal(context)

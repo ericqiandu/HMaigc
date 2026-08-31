@@ -251,17 +251,26 @@ func TestLateResultAfterRunCancelledIsUnadoptedAndDoesNotOverwriteProductionArti
 		Kind: agentruntime.DecisionToolCall,
 		ToolCall: &agentruntime.ToolCallDecision{
 			ToolCallID: "production-render-1", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
-			Arguments: rawArguments, ExpectedDelivery: repositoryTestImageDelivery(),
+			Arguments:        json.RawMessage(`{"mediaKind":"image","modelRecordId":"model-image-1","modelKey":"gpt-image-2","parameters":{"prompt":"late callback"},"sourceResourceIds":[],"targetCanvasNodeId":"image-node-late","clientRequestId":"production-render-1"}`),
+			ExpectedDelivery: repositoryTestImageDelivery(),
 		},
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	requested.ApprovalCostQuote = &agentruntime.ApprovalCostQuote{
+		ModelRecordID: "model-image-1", ModelKey: "gpt-image-2", PriceVersion: 1, AmountMicrocredits: 1_000,
+	}
 	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	record, err := repo.AgentToolCallForScope(scope, "production-render-1", 1)
+	if err != nil {
 		t.Fatal(err)
 	}
 	approved, err := agentruntime.ReviewToolApproval(requested.State, agentruntime.ToolApproval{
 		ToolCallID: "production-render-1", ActionVersion: 1, Decision: agentruntime.ToolApprovalApproved,
+		ProposalHash: record.ApprovalProposalHash,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -275,6 +284,15 @@ func TestLateResultAfterRunCancelledIsUnadoptedAndDoesNotOverwriteProductionArti
 	}
 	if err := repo.CommitAgentRuntimeTransition(scope, approved.State, started, now.Add(3*time.Second)); err != nil {
 		t.Fatal(err)
+	}
+	updateResult := db.Model(&model.AgentToolCall{}).
+		Where("id = ? AND status = ?", record.ID, agentruntime.ToolCallRunning).
+		Update("input_json", string(rawArguments))
+	if updateResult.Error != nil {
+		t.Fatal(updateResult.Error)
+	}
+	if updateResult.RowsAffected != 1 {
+		t.Fatal("production media attempt facts were not frozen")
 	}
 	fence := MediaAttemptCompletionFence{
 		ToolCallID: "production-render-1", ActionVersion: 1, ExpectedTaskID: "task-late-image",

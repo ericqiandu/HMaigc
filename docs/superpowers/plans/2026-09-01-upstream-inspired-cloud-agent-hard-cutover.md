@@ -355,6 +355,8 @@ go test ./internal/agentruntime ./internal/service -run 'Test(CloudAgent|AgentRu
 
 Expected: PASS.
 
+**Implementation status (2026-09-01): complete.** Runtime v5 now persists the absolute deadline and tool-call budget, resumes from checkpoints without rerunning completed tools, returns rejected/expired/mismatched proposals to the same Run as explicit failure facts, terminal-fails invalid model decisions with diagnostics, and transactionally closes the active Run tree on user interruption or deadline expiry. Focused transition tests and the complete backend suite pass; `go vet ./...` is clean. Runtime v4 / Tool schema v5 production-graph execution tests are explicitly retired pending their deletion in Task 10; no legacy tool was reopened. Capability adapters remain deferred to Task 5 as planned.
+
 **Step 5: Commit**
 
 ```powershell

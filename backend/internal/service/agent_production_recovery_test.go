@@ -15,6 +15,7 @@ import (
 )
 
 func TestRejectCostApprovalCancelsMainAndSpecialists(t *testing.T) {
+	skipRetiredAgentExecutionGraph(t)
 	fixture := newAgentProductionRecoveryFixture(t)
 	queued, err := fixture.service.repo.CreateAgentSpecialistRun(repository.CreateAgentSpecialistRunInput{
 		Scope: fixture.scope, Request: fixture.request,
@@ -54,6 +55,7 @@ func TestRejectCostApprovalCancelsMainAndSpecialists(t *testing.T) {
 }
 
 func TestStopSpecialistStageReviewCancelsWaitingDelegateTree(t *testing.T) {
+	skipRetiredAgentExecutionGraph(t)
 	fixture := newAgentProductionRecoveryFixture(t)
 	queuedSpecialist, err := fixture.service.repo.CreateAgentSpecialistRun(repository.CreateAgentSpecialistRunInput{
 		Scope: fixture.scope, Request: fixture.request,

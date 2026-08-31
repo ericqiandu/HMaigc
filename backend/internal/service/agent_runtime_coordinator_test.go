@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -9,6 +10,113 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
 )
+
+func TestAdvanceAgentRunExpiresPersistedDeadlineBeforeResumingWork(t *testing.T) {
+	server, calls := newAgentRuntimeDecisionServer(t, `{"kind":"final","final":{"message":"完成。","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	scope := agentRuntimeServiceScope()
+	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: scope, ClientRequestID: "expired-runtime", UserMessage: "回答问题",
+		Configuration: guidedAgentRuntimeConfigurationInput(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := svc.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	state.Limits = &agentruntime.RuntimeLimits{
+		MaxToolCalls: agentRuntimeMaxToolCalls, StartedAt: now.Add(-time.Hour), DeadlineAt: now.Add(-time.Minute),
+	}
+	stateJSON, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentCheckpoint{}).
+		Where("run_id = ? AND state_version = ?", scope.RunID, state.StateVersion).
+		Update("state_json", string(stateJSON)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	progress, err := svc.advanceAgentRun(scope, agentWakeStaleRecovery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.State.Status != agentruntime.RunFailed || progress.State.FailureCode != "runtime_deadline_exceeded" || progress.ModelTask != nil {
+		t.Fatalf("expired runtime progress = %#v", progress)
+	}
+	if calls.Load() != 0 || started.ModelTask == nil {
+		t.Fatalf("deadline recovery side effects: modelCalls=%d startedTask=%#v", calls.Load(), started.ModelTask)
+	}
+	var storedTask model.Task
+	if err := db.Where("id = ?", started.ModelTask.ID).First(&storedTask).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedTask.Status != model.TaskStatusCancelled {
+		t.Fatalf("expired runtime model task status = %q, want %q", storedTask.Status, model.TaskStatusCancelled)
+	}
+}
+
+func TestCoordinateCompletedCloudToolNeverExecutesAgainAfterRestart(t *testing.T) {
+	server, _ := newAgentRuntimeDecisionServer(t, `{"kind":"final","final":{"message":"完成。","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	scope := agentRuntimeServiceScope()
+	if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: scope, ClientRequestID: "completed-tool-restart", UserMessage: "读取画布",
+		Configuration: AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionAutomatic},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := svc.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, err := agentruntime.Advance(state, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall,
+		ToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "completed-read", ToolName: agentruntime.ToolCanvasRead, ActionVersion: 1,
+			Arguments:        json.RawMessage(`{"canvasId":"runtime-canvas","selectedNodeIds":[],"includeViewport":true}`),
+			ExpectedDelivery: agentRuntimeTestAnswerDelivery(),
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.repo.CommitAgentRuntimeTransition(scope, state, requested, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := agentruntime.ResolveTool(requested.State, agentruntime.ToolResolution{
+		ToolCallID: "completed-read", ActionVersion: 1, Succeeded: true,
+		Output: json.RawMessage(`{"canvasId":"runtime-canvas","revision":7}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.repo.CommitAgentRuntimeTransition(scope, requested.State, resolved, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	progress, err := svc.coordinatePendingAgentTool(scope, CoordinateAgentToolInput{
+		ToolCallID: "completed-read", ActionVersion: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.State.StateVersion != resolved.State.StateVersion || progress.State.Status != agentruntime.RunRunning {
+		t.Fatalf("completed tool replay changed checkpoint = %#v", progress.State)
+	}
+	var toolCount int64
+	if err := db.Model(&model.AgentToolCall{}).Where("run_id = ? AND tool_call_id = ?", scope.RunID, "completed-read").Count(&toolCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if toolCount != 1 {
+		t.Fatalf("completed tool replay count = %d, want 1", toolCount)
+	}
+}
 
 func TestAdvanceAgentRunReusesOneDeterministicModelTask(t *testing.T) {
 	server, calls := newAgentRuntimeDecisionServer(t, `{"kind":"final","final":{"message":"完成。","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
@@ -84,6 +192,7 @@ func TestRecoverStaleAgentRunsSerializesConcurrentRecovery(t *testing.T) {
 }
 
 func TestAdvanceAgentRunExecutesFreeSkillOnceAndCreatesOneNextModelTask(t *testing.T) {
+	skipPendingAtomicSkillAdapter(t)
 	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"coordinator-skill","toolName":"skill.load","actionVersion":1,"arguments":{"dir":"storyboard-director"}}}`
 	server, calls := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestAnswerDelivery())
 	defer server.Close()

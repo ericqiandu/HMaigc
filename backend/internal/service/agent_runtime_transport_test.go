@@ -12,19 +12,24 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
-func TestCurrentAgentContractsHardCutToProductionV4(t *testing.T) {
-	if agentruntime.CurrentRuntimeVersion != agentruntime.ProductionRuntimeVersion ||
-		agentruntime.CurrentPolicyVersion != agentruntime.ProductionPolicyVersion ||
-		agentruntime.CurrentToolSchemaVersion != agentruntime.ProductionToolSchemaVersion {
+func TestCurrentAgentContractsHardCutToCloudV6(t *testing.T) {
+	if agentruntime.CurrentRuntimeVersion != agentruntime.CloudRuntimeVersion ||
+		agentruntime.CurrentPolicyVersion != agentruntime.CloudPolicyVersion ||
+		agentruntime.CurrentToolSchemaVersion != agentruntime.CloudToolSchemaVersion {
 		t.Fatalf(
-			"current contracts = runtime %d, policy %d, tools %d; production = runtime %d, policy %d, tools %d",
+			"current contracts = runtime %d, policy %d, tools %d; cloud = runtime %d, policy %d, tools %d",
 			agentruntime.CurrentRuntimeVersion,
 			agentruntime.CurrentPolicyVersion,
 			agentruntime.CurrentToolSchemaVersion,
-			agentruntime.ProductionRuntimeVersion,
-			agentruntime.ProductionPolicyVersion,
-			agentruntime.ProductionToolSchemaVersion,
+			agentruntime.CloudRuntimeVersion,
+			agentruntime.CloudPolicyVersion,
+			agentruntime.CloudToolSchemaVersion,
 		)
+	}
+	if agentruntime.CurrentRuntimeVersion == agentruntime.ProductionRuntimeVersion ||
+		agentruntime.CurrentPolicyVersion == agentruntime.ProductionPolicyVersion ||
+		agentruntime.CurrentToolSchemaVersion == agentruntime.ProductionToolSchemaVersion {
+		t.Fatal("current cloud contracts reopened the retired production v4/v5 execution path")
 	}
 	if CurrentAgentUIProtocolVersion != agentruntime.ProductionAgentUIProtocolVersion {
 		t.Fatalf("current UI protocol = %d, want production protocol %d", CurrentAgentUIProtocolVersion, agentruntime.ProductionAgentUIProtocolVersion)

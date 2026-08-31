@@ -677,6 +677,7 @@ func TestDirectedRegenerationFreezesStructuralLineageWithoutProviderMedia(t *tes
 }
 
 func TestAgentMediaGenerationMaterializesEveryCandidateExactlyOnce(t *testing.T) {
+	skipRetiredAgentExecutionGraph(t)
 	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
 	scope := agentRuntimeServiceScope()
 	scope.DomainProjectID = "runtime-project"
@@ -740,6 +741,7 @@ func TestAgentMediaGenerationMaterializesEveryCandidateExactlyOnce(t *testing.T)
 }
 
 func TestAgentMediaGenerationLateResultAfterCancellationIsUnadopted(t *testing.T) {
+	skipRetiredAgentExecutionGraph(t)
 	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
 	scope := agentRuntimeServiceScope()
 	scope.DomainProjectID = "runtime-project"
@@ -925,6 +927,7 @@ func TestIndependentAudioUsesSeparateAudioCapabilityAndQuoteIdentity(t *testing.
 }
 
 func TestCoordinatePendingAgentMediaGenerationCreatesInternalTaskAndResolvesCandidates(t *testing.T) {
+	skipRetiredAgentExecutionGraph(t)
 	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
 	createAgentRuntimeCanvas(t, db)
 	createAgentRuntimeImageModel(t, db, fixture)

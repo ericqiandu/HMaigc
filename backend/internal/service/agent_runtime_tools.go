@@ -67,8 +67,27 @@ func (s *Service) SubmitAgentToolApproval(scope agentruntime.Scope, input AgentT
 	if err != nil {
 		return nil, err
 	}
-	if err := validateStoredApprovalProposal(scope, record, input.ProposalHash, time.Now().UTC(), true); err != nil {
-		return nil, err
+	now := time.Now().UTC()
+	if proposalErr := validateStoredApprovalProposal(scope, record, input.ProposalHash, now, true); proposalErr != nil {
+		invalidationCode := approvalProposalInvalidationCode(proposalErr)
+		if invalidationCode == "" {
+			return nil, proposalErr
+		}
+		transition, transitionErr := agentruntime.InvalidateToolApproval(state, agentruntime.ToolApprovalInvalidation{
+			ToolCallID: input.ToolCallID, ActionVersion: input.ActionVersion,
+			ProposalHash: record.ApprovalProposalHash, ErrorCode: invalidationCode,
+		})
+		if transitionErr != nil {
+			return nil, transitionErr
+		}
+		progress, commitErr := s.commitAgentRuntimeState(scope, state, transition)
+		if commitErr != nil {
+			return nil, commitErr
+		}
+		if progress.State.Status != agentruntime.RunRunning {
+			return progress, nil
+		}
+		return s.advanceAgentRun(scope, agentWakeApprovalDecided)
 	}
 	project, access, err := s.canvasAccess(scope.ActorUserID, scope.CanvasID)
 	if err != nil {
@@ -107,6 +126,17 @@ func (s *Service) SubmitAgentToolApproval(scope agentruntime.Scope, input AgentT
 	return s.advanceAgentRun(scope, agentWakeApprovalDecided)
 }
 
+func approvalProposalInvalidationCode(err error) string {
+	switch {
+	case errors.Is(err, agentruntime.ErrApprovalProposalExpired):
+		return agentruntime.ApprovalProposalExpired
+	case errors.Is(err, agentruntime.ErrApprovalProposalMismatch):
+		return agentruntime.ApprovalProposalMismatch
+	default:
+		return ""
+	}
+}
+
 func validateStoredApprovalProposal(scope agentruntime.Scope, record *model.AgentToolCall, proposalHash string, now time.Time, requireFresh bool) error {
 	if record == nil {
 		return errors.New("agent approval proposal facts are missing")
@@ -117,7 +147,10 @@ func validateStoredApprovalProposal(scope agentruntime.Scope, record *model.Agen
 		}
 		return nil
 	}
-	if proposalHash == "" || proposalHash != record.ApprovalProposalHash || record.ApprovalExpiresAt == nil {
+	if proposalHash == "" || proposalHash != record.ApprovalProposalHash {
+		return agentruntime.ErrApprovalProposalMismatch
+	}
+	if record.ApprovalExpiresAt == nil {
 		return errors.New("agent approval proposal facts conflict")
 	}
 	proposal, err := agentruntime.DecodeApprovalProposal(json.RawMessage(record.ApprovalProposalJSON))

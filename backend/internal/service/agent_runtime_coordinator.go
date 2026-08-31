@@ -42,6 +42,13 @@ func (s *Service) advanceAgentRun(scope agentruntime.Scope, wakeup agentRunWakeu
 			return nil, err
 		}
 		previousVersion := view.State.StateVersion
+		expiration, expired, expirationErr := agentruntime.ExpireRuntimeAt(view.State, time.Now().UTC())
+		if expirationErr != nil {
+			return nil, expirationErr
+		}
+		if expired {
+			return s.commitAgentRuntimeState(scope, view.State, expiration)
+		}
 		switch view.State.Status {
 		case agentruntime.RunQueued, agentruntime.RunRunning:
 			progress, stepErr := s.resumeAgentRuntimeStep(scope)
@@ -144,11 +151,6 @@ func (s *Service) advanceAgentRunReferenceWithTaskFence(reference repository.Act
 		}
 		if expectedTaskID != taskID {
 			return nil
-		}
-	}
-	if wakeup == agentWakeStaleRecovery {
-		if err := s.RecoverAgentRunTree(scope); err != nil {
-			return err
 		}
 	}
 	_, err = s.advanceAgentRun(scope, wakeup)

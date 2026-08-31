@@ -1120,6 +1120,7 @@ func generatedCandidateFixture(t *testing.T, count int) generatedCandidateReview
 }
 
 func TestCoordinatePendingAgentVisualAnalysisCreatesTaskAndResolvesPersistedEvidence(t *testing.T) {
+	skipRetiredAgentExecutionGraph(t)
 	t.Setenv("CANVAS_ENVIRONMENT", "development")
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	var evidenceJSON string
@@ -1639,6 +1640,7 @@ func TestFreezeAgentVisualAnalysisArgumentsFreezesCurrentSourceModelAndQuoteWith
 }
 
 func TestAgentRuntimeVisionAnalyzeFreezesPaidFactsBeforeApproval(t *testing.T) {
+	skipRetiredAgentExecutionGraph(t)
 	var decision string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writeAgentRuntimeChatStream(t, writer, "chatcmpl-visual-freeze", decision, 0, 0, 0)

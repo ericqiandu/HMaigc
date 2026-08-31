@@ -17,6 +17,7 @@ import (
 )
 
 func TestSpecialistDelegateCreatesGraphRunsSpecialistAndWaitsForStageReview(t *testing.T) {
+	skipRetiredAgentExecutionGraph(t)
 	scope := specialistRuntimeScope()
 	request := scriptSpecialistRuntimeRequestFixture("runtime-token-agent-model", "deepseek-v4-flash")
 	request.StageID = repositoryProductionStageIDForTest(scope, "short-film-production", "script")

@@ -30,6 +30,7 @@ type InitializeAgentRunInput struct {
 	PolicyVersion     int
 	UserMessage       string
 	Configuration     agentruntime.RunConfiguration
+	Limits            *agentruntime.RuntimeLimits
 	Now               time.Time
 }
 
@@ -102,6 +103,10 @@ func (r *Repository) InitializeAgentRun(input InitializeAgentRunInput) (*Initial
 		StateVersion: 1, StepNumber: 0, MaxSteps: input.MaxSteps,
 		Status: agentruntime.RunQueued, UserMessage: input.UserMessage, Configuration: input.Configuration,
 		ClarificationHistory: []agentruntime.CompletedClarification{},
+		Limits:               input.Limits,
+	}
+	if err := agentruntime.ValidateRuntimeState(state); err != nil {
+		return nil, err
 	}
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
@@ -266,7 +271,6 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 	var facts struct {
 		LastEventSequence int64 `gorm:"column:last_event_sequence"`
 		ToolSchemaVersion int   `gorm:"column:tool_schema_version"`
-		RuntimeVersion    int   `gorm:"column:runtime_version"`
 	}
 	var completedAt *time.Time
 	if state.Status == agentruntime.RunSucceeded || state.Status == agentruntime.RunFailed || state.Status == agentruntime.RunCancelled {
@@ -283,7 +287,7 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 			          AND tenant_kind = ? AND tenant_id = ? AND created_by_user_id = ?
 			          AND domain_project_id = ? AND canvas_id = ?
 			   )
-		 RETURNING last_event_sequence, tool_schema_version, runtime_version`,
+	 RETURNING last_event_sequence, tool_schema_version`,
 		state.StateVersion, state.StepNumber, state.Status, len(transition.EventKinds), now, completedAt,
 		scope.RunID, scope.ThreadID, scope.ActorUserID, previous.StateVersion, previous.StepNumber, state.MaxSteps, previous.Status,
 		scope.TenantKind, scope.TenantID, scope.ActorUserID, scope.DomainProjectID, scope.CanvasID,
@@ -300,10 +304,12 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 	if err := persistRejectedAgentToolDecision(tx, scope, previous, transition, facts.ToolSchemaVersion, now); err != nil {
 		return err
 	}
-	if err := persistAgentToolTransition(tx, scope, previous, state, transition.ApprovalProposalHash, transition.ApprovalCostQuote, facts.ToolSchemaVersion, now); err != nil {
+	if err := persistAgentToolTransition(tx, scope, previous, state, transition.ApprovalProposalHash, transition.ApprovalCostQuote, transition.ApprovalResolution, facts.ToolSchemaVersion, now); err != nil {
 		return err
 	}
-	if state.Status == agentruntime.RunCancelled && interruptAudit == nil && facts.RuntimeVersion == agentruntime.ProductionRuntimeVersion {
+	shouldDisposeRunTree := state.Status == agentruntime.RunCancelled ||
+		(state.Status == agentruntime.RunFailed && state.FailureCode == agentruntime.FailureRuntimeDeadlineExceeded)
+	if shouldDisposeRunTree && interruptAudit == nil {
 		if err := r.cancelAgentRunTreeTx(tx, scope, now); err != nil {
 			return err
 		}
@@ -535,6 +541,7 @@ func persistAgentToolTransition(
 	next agentruntime.RuntimeState,
 	approvalProposalHash string,
 	approvalCostQuote *agentruntime.ApprovalCostQuote,
+	approvalResolution agentruntime.ApprovalResolution,
 	toolSchemaVersion int,
 	now time.Time,
 ) error {
@@ -592,6 +599,9 @@ func persistAgentToolTransition(
 		previous.PendingToolCall != nil && next.PendingToolCall != nil &&
 		previous.PendingToolCall.ToolCallID == next.PendingToolCall.ToolCallID &&
 		previous.PendingToolCall.ActionVersion == next.PendingToolCall.ActionVersion {
+		if toolSchemaVersion == agentruntime.CurrentToolSchemaVersion && approvalResolution != agentruntime.ApprovalResolutionApproved {
+			return ErrAgentRuntimeStepConflict
+		}
 		query := db.Model(&model.AgentToolCall{}).
 			Where("run_id = ? AND tool_call_id = ? AND action_version = ? AND status = ?", runID,
 				previous.PendingToolCall.ToolCallID, previous.PendingToolCall.ActionVersion, agentruntime.ToolCallWaitingApproval)
@@ -648,15 +658,22 @@ func persistAgentToolTransition(
 		if approvalProposalHash == "" {
 			return ErrAgentRuntimeStepConflict
 		}
-		query = query.Where("approval_proposal_hash = ? AND approval_expires_at > ?", approvalProposalHash, now)
+		switch approvalResolution {
+		case agentruntime.ApprovalResolutionApproved, agentruntime.ApprovalResolutionRejected:
+			query = query.Where("approval_proposal_hash = ? AND approval_expires_at > ?", approvalProposalHash, now)
+		case agentruntime.ApprovalResolutionInvalidated:
+			query = query.Where("approval_proposal_hash = ?", approvalProposalHash)
+		default:
+			return ErrAgentRuntimeStepConflict
+		}
 	}
 	result := query.
 		Updates(agentToolCompletionUpdates{
 			Status: status, OutputJSON: string(next.LastToolResult.Output),
 			ErrorCode: next.LastToolResult.ErrorCode, UpdatedAt: now,
-			ApprovalDecision:  approvalDecisionForToolResult(previous, next),
-			ApprovalByUserID:  approvalActorForToolResult(scope, previous, next),
-			ApprovalDecidedAt: approvalTimeForToolResult(now, previous, next),
+			ApprovalDecision:  approvalDecisionForToolResult(previous, approvalResolution),
+			ApprovalByUserID:  approvalActorForToolResult(scope, previous, approvalResolution),
+			ApprovalDecidedAt: approvalTimeForToolResult(now, previous, approvalResolution),
 		})
 	if result.Error != nil {
 		return result.Error
@@ -798,22 +815,29 @@ type agentToolExecutionUpdates struct {
 	UpdatedAt time.Time                   `gorm:"column:updated_at"`
 }
 
-func approvalDecisionForToolResult(previous agentruntime.RuntimeState, next agentruntime.RuntimeState) agentruntime.ToolApprovalDecision {
-	if previous.Status == agentruntime.RunWaitingApproval && next.LastToolResult != nil && next.LastToolResult.ErrorCode == "tool_approval_rejected" {
-		return agentruntime.ToolApprovalRejected
+func approvalDecisionForToolResult(previous agentruntime.RuntimeState, resolution agentruntime.ApprovalResolution) agentruntime.ToolApprovalDecision {
+	if previous.Status != agentruntime.RunWaitingApproval {
+		return ""
 	}
-	return ""
+	switch resolution {
+	case agentruntime.ApprovalResolutionApproved:
+		return agentruntime.ToolApprovalApproved
+	case agentruntime.ApprovalResolutionRejected:
+		return agentruntime.ToolApprovalRejected
+	default:
+		return ""
+	}
 }
 
-func approvalActorForToolResult(scope agentruntime.Scope, previous agentruntime.RuntimeState, next agentruntime.RuntimeState) string {
-	if approvalDecisionForToolResult(previous, next) != "" {
+func approvalActorForToolResult(scope agentruntime.Scope, previous agentruntime.RuntimeState, resolution agentruntime.ApprovalResolution) string {
+	if approvalDecisionForToolResult(previous, resolution) != "" {
 		return scope.ActorUserID
 	}
 	return ""
 }
 
-func approvalTimeForToolResult(now time.Time, previous agentruntime.RuntimeState, next agentruntime.RuntimeState) *time.Time {
-	if approvalDecisionForToolResult(previous, next) == "" {
+func approvalTimeForToolResult(now time.Time, previous agentruntime.RuntimeState, resolution agentruntime.ApprovalResolution) *time.Time {
+	if approvalDecisionForToolResult(previous, resolution) == "" {
 		return nil
 	}
 	return &now

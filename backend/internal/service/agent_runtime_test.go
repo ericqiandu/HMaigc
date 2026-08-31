@@ -43,22 +43,20 @@ func TestAgentRuntimeModelTaskSettlesCreditsAndResumesFromStoredDecision(t *test
 			t.Error(err)
 		}
 		encoded, _ := json.Marshal(body)
-		if body.Model != "gpt-5.5" || body.ResponseFormat.Type != "json_object" || len(body.Messages) != 2 ||
-			!strings.Contains(body.Messages[0].Content, "specialist.delegate") ||
-			!strings.Contains(body.Messages[0].Content, `"productionGraph":{"graphKey":"..."`) ||
-			!strings.Contains(body.Messages[0].Content, `"expectedGraphVersion":0`) ||
-			!strings.Contains(body.Messages[0].Content, `"stageKey":"..."`) ||
-			!strings.Contains(body.Messages[0].Content, "vision.analyze") ||
-			!strings.Contains(body.Messages[0].Content, "media.generate") ||
-			!strings.Contains(body.Messages[0].Content, `"expectedOutputSchema":"media_candidate.v1"`) ||
-			!strings.Contains(body.Messages[0].Content, "canvas.project") ||
-			strings.Contains(body.Messages[0].Content, "production.plan") ||
-			strings.Contains(body.Messages[0].Content, "production.render") ||
-			strings.Contains(body.Messages[0].Content, "canvas.commit") ||
-			strings.Contains(body.Messages[0].Content, "generation.submit") ||
-			strings.Contains(body.Messages[0].Content, "canvas.apply_ops") ||
-			!strings.Contains(body.Messages[0].Content, "每个新工具调用必须使用新的 toolCallId，重试也不得复用") ||
-			strings.Contains(string(encoded), "runtime-secret-key") {
+		systemPrompt := body.Messages[0].Content
+		currentTools := []string{"canvas.read", "canvas.apply_ops", "assets.read", "assets.publish", "media.generate", "skills.load"}
+		retiredTools := []string{"specialist.delegate", "vision.analyze", "canvas.project", "production.plan", "production.render", "canvas.commit", "generation.submit", "skill.load"}
+		contractMismatch := body.Model != "gpt-5.5" || body.ResponseFormat.Type != "json_object" || len(body.Messages) != 2 ||
+			!strings.Contains(systemPrompt, "每个新工具调用必须使用新的 toolCallId，重试也不得复用") ||
+			strings.Contains(systemPrompt, `"productionGraph"`) || strings.Contains(systemPrompt, `"stageKey"`) ||
+			strings.Contains(string(encoded), "runtime-secret-key")
+		for _, toolName := range currentTools {
+			contractMismatch = contractMismatch || !strings.Contains(systemPrompt, toolName)
+		}
+		for _, toolName := range retiredTools {
+			contractMismatch = contractMismatch || strings.Contains(systemPrompt, toolName)
+		}
+		if contractMismatch {
 			t.Errorf("model request = %s", encoded)
 		}
 		decision := `{"kind":"final","final":{"message":"我会先读取画布事实再给出建议。","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`
@@ -306,7 +304,7 @@ func TestAgentRuntimeModelRequestPersistsRunningBeforeProviderReply(t *testing.T
 	}
 }
 
-func TestAgentRuntimeInvalidDecisionIsFedBackIntoNextModelStep(t *testing.T) {
+func TestAgentRuntimeInvalidDecisionFailsExplicitlyWithDiagnostics(t *testing.T) {
 	t.Setenv("CANVAS_ENVIRONMENT", "development")
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -325,7 +323,7 @@ func TestAgentRuntimeInvalidDecisionIsFedBackIntoNextModelStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := svc.ProcessNextTask(); err != nil {
-		t.Fatalf("invalid model decision must remain a repairable runtime fact: %v", err)
+		t.Fatalf("invalid model decision must remain a persisted runtime fact: %v", err)
 	}
 	var rejectedMessage model.AgentTimelineItem
 	if err := db.First(&rejectedMessage, "id = ?", agentruntime.AgentMessageItemID(input.Scope.RunID, 0)).Error; err != nil {
@@ -339,19 +337,17 @@ func TestAgentRuntimeInvalidDecisionIsFedBackIntoNextModelStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if progress.State.Status != agentruntime.RunRunning || progress.State.StepNumber != 1 || progress.ModelTask == nil {
-		t.Fatalf("repairable runtime = %#v", progress)
+	if progress.State.Status != agentruntime.RunFailed || progress.State.StepNumber != 1 ||
+		progress.State.FailureCode != "model_decision_invalid" || progress.ModelTask != nil {
+		t.Fatalf("invalid runtime = %#v", progress)
 	}
-	nextTask, err := svc.repo.TaskForUser(input.Scope.ActorUserID, progress.ModelTask.ID)
+	completedTask, err := svc.repo.TaskForUser(input.Scope.ActorUserID, started.ModelTask.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(nextTask.Prompt, `"code":"model_decision_invalid"`) ||
-		!strings.Contains(nextTask.Prompt, `"reason":"answer delivery facts are inconsistent"`) {
-		t.Fatalf("next model prompt lacks structured repair facts: %s", nextTask.Prompt)
-	}
-	if started.ModelTask == nil || nextTask.ID == started.ModelTask.ID {
-		t.Fatalf("repair reused the failed model step: started=%#v next=%#v", started.ModelTask, nextTask)
+	if !strings.Contains(completedTask.ResultJSON, `"code":"model_decision_invalid"`) ||
+		!strings.Contains(completedTask.ResultJSON, `"reason":"answer delivery facts are inconsistent"`) {
+		t.Fatalf("failed model task lacks structured diagnostics: %s", completedTask.ResultJSON)
 	}
 }
 
@@ -408,7 +404,8 @@ func TestStartAgentRuntimeCreatesOneBilledFrozenModelTask(t *testing.T) {
 		t.Fatalf("initial runtime = %#v", first)
 	}
 	if first.Run.ModelRecordID != fixture.channelModel.ID || first.Run.ModelKey != fixture.channelModel.ModelKey ||
-		first.Run.ToolSchemaVersion != 5 || first.Run.RuntimeVersion != 4 || first.Run.PolicyVersion != 4 {
+		first.Run.ToolSchemaVersion != agentruntime.CurrentToolSchemaVersion ||
+		first.Run.RuntimeVersion != agentruntime.CurrentRuntimeVersion || first.Run.PolicyVersion != agentruntime.CurrentPolicyVersion {
 		t.Fatalf("frozen run model = %#v", first.Run)
 	}
 	if first.ModelTask == nil || first.ModelTask.Status != model.TaskStatusQueued || first.ModelTask.Type != agentRuntimeModelTaskType || first.ModelTask.Model != fixture.channelModel.ModelKey {
@@ -837,8 +834,8 @@ func TestAgentRuntimeInvalidDecisionDoesNotRefundSuccessfulTokenCall(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if progress.State.Status != agentruntime.RunRunning || progress.State.DecisionFeedback == nil || progress.ModelTask == nil {
-		t.Fatalf("invalid paid decision was not returned to the same runtime: %#v", progress)
+	if progress.State.Status != agentruntime.RunFailed || progress.State.FailureCode != "model_decision_invalid" || progress.ModelTask != nil {
+		t.Fatalf("invalid paid decision did not fail explicitly: %#v", progress)
 	}
 	if err := svc.RunKuaiziBillingReconciliationBatch(context.Background(), time.Now().Add(time.Minute), 10); err != nil {
 		t.Fatal(err)

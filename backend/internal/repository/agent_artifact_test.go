@@ -237,17 +237,26 @@ func TestMediaAttemptFenceRetainsReplacedAttemptResultAsUnadopted(t *testing.T) 
 		Kind: agentruntime.DecisionToolCall,
 		ToolCall: &agentruntime.ToolCallDecision{
 			ToolCallID: newFence.ToolCallID, ToolName: agentruntime.ToolMediaGenerate, ActionVersion: newFence.ActionVersion,
-			Arguments: json.RawMessage(newInput), ExpectedDelivery: repositoryTestImageDelivery(),
+			Arguments:        json.RawMessage(`{"mediaKind":"image","modelRecordId":"model-image-1","modelKey":"gpt-image-2","parameters":{"prompt":"replacement"},"sourceResourceIds":[],"targetCanvasNodeId":"image-node-2","clientRequestId":"media-call-new"}`),
+			ExpectedDelivery: repositoryTestImageDelivery(),
 		},
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	requestedNew.ApprovalCostQuote = &agentruntime.ApprovalCostQuote{
+		ModelRecordID: "model-image-1", ModelKey: "gpt-image-2", PriceVersion: 1, AmountMicrocredits: 1_000,
+	}
 	if err := repo.CommitAgentRuntimeTransition(scope, resolvedOld.State, requestedNew, now.Add(5*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	newRecord, err := repo.AgentToolCallForScope(scope, newFence.ToolCallID, newFence.ActionVersion)
+	if err != nil {
 		t.Fatal(err)
 	}
 	approvedNew, err := agentruntime.ReviewToolApproval(requestedNew.State, agentruntime.ToolApproval{
 		ToolCallID: newFence.ToolCallID, ActionVersion: newFence.ActionVersion, Decision: agentruntime.ToolApprovalApproved,
+		ProposalHash: newRecord.ApprovalProposalHash,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -263,6 +272,15 @@ func TestMediaAttemptFenceRetainsReplacedAttemptResultAsUnadopted(t *testing.T) 
 	}
 	if err := repo.CommitAgentRuntimeTransition(scope, approvedNew.State, startedNew, now.Add(7*time.Second)); err != nil {
 		t.Fatal(err)
+	}
+	result := db.Model(&model.AgentToolCall{}).
+		Where("id = ? AND status = ?", newRecord.ID, agentruntime.ToolCallRunning).
+		Update("input_json", newInput)
+	if result.Error != nil {
+		t.Fatal(result.Error)
+	}
+	if result.RowsAffected != 1 {
+		t.Fatal("replacement media attempt facts were not frozen")
 	}
 
 	currentDraft := mediaCandidateDraftFixture("candidate-current-attempt", "resource-current-attempt", newFence.ExpectedTaskID, "request-current-attempt")
@@ -323,17 +341,26 @@ func startRepositoryMediaAttempt(
 		Kind: agentruntime.DecisionToolCall,
 		ToolCall: &agentruntime.ToolCallDecision{
 			ToolCallID: toolCallID, ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
-			Arguments: arguments, ExpectedDelivery: repositoryTestImageDelivery(),
+			Arguments:        json.RawMessage(`{"mediaKind":"image","modelRecordId":"model-image-1","modelKey":"gpt-image-2","parameters":{"prompt":"test"},"sourceResourceIds":[],"targetCanvasNodeId":"image-node-1","clientRequestId":"` + toolCallID + `"}`),
+			ExpectedDelivery: repositoryTestImageDelivery(),
 		},
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	requested.ApprovalCostQuote = &agentruntime.ApprovalCostQuote{
+		ModelRecordID: "model-image-1", ModelKey: "gpt-image-2", PriceVersion: 1, AmountMicrocredits: 1_000,
+	}
 	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	record, err := repo.AgentToolCallForScope(scope, toolCallID, 1)
+	if err != nil {
 		t.Fatal(err)
 	}
 	approved, err := agentruntime.ReviewToolApproval(requested.State, agentruntime.ToolApproval{
 		ToolCallID: toolCallID, ActionVersion: 1, Decision: agentruntime.ToolApprovalApproved,
+		ProposalHash: record.ApprovalProposalHash,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -347,6 +374,15 @@ func startRepositoryMediaAttempt(
 	}
 	if err := repo.CommitAgentRuntimeTransition(scope, approved.State, started, now.Add(3*time.Second)); err != nil {
 		t.Fatal(err)
+	}
+	result := repo.db.Model(&model.AgentToolCall{}).
+		Where("id = ? AND status = ?", record.ID, agentruntime.ToolCallRunning).
+		Update("input_json", string(arguments))
+	if result.Error != nil {
+		t.Fatal(result.Error)
+	}
+	if result.RowsAffected != 1 {
+		t.Fatal("authoritative media attempt facts were not frozen")
 	}
 	return started.State
 }

@@ -14,6 +14,7 @@ import (
 )
 
 func TestCanvasProjectCommitsApprovedExactArtifactRevisionOnce(t *testing.T) {
+	skipRetiredAgentExecutionGraph(t)
 	var decision string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writeAgentRuntimeChatStream(t, writer, "chatcmpl-canvas-project", decision, 0, 0, 0)

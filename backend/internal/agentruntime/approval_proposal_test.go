@@ -2,6 +2,7 @@ package agentruntime_test
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -115,11 +116,11 @@ func TestApprovalProposalDecisionRejectsMismatchAndExpiry(t *testing.T) {
 	if err := agentruntime.ValidateApprovalProposalDecision(proposal, hash, now); err != nil {
 		t.Fatalf("valid approval rejected: %v", err)
 	}
-	if err := agentruntime.ValidateApprovalProposalDecision(proposal, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", now); err == nil {
-		t.Fatal("mismatched approval hash was accepted")
+	if err := agentruntime.ValidateApprovalProposalDecision(proposal, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", now); !errors.Is(err, agentruntime.ErrApprovalProposalMismatch) {
+		t.Fatalf("mismatched approval error = %v", err)
 	}
-	if err := agentruntime.ValidateApprovalProposalDecision(proposal, hash, proposal.ExpiresAt); err == nil {
-		t.Fatal("expired approval was accepted")
+	if err := agentruntime.ValidateApprovalProposalDecision(proposal, hash, proposal.ExpiresAt); !errors.Is(err, agentruntime.ErrApprovalProposalExpired) {
+		t.Fatalf("expired approval error = %v", err)
 	}
 }
 

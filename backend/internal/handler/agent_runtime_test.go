@@ -171,8 +171,8 @@ func TestAgentRuntimeHTTPReplaysCompletedToolLifecycleFromEarlierCursor(t *testi
 	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
 		Kind: agentruntime.DecisionToolCall,
 		ToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "handler-tool-replay-call", ToolName: agentruntime.ToolCanvasProject,
-			ActionVersion: 1, Arguments: json.RawMessage(`{"expectedRevision":12}`),
+			ToolCallID: "handler-tool-replay-call", ToolName: agentruntime.ToolCanvasRead,
+			ActionVersion: 1, Arguments: json.RawMessage(`{"canvasId":"handler-agent-tool-replay-canvas","selectedNodeIds":[],"includeViewport":true}`),
 			ExpectedDelivery: agentruntime.ExpectedDelivery{
 				Kind:               agentruntime.DeliveryAnswer,
 				CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
@@ -187,7 +187,7 @@ func TestAgentRuntimeHTTPReplaysCompletedToolLifecycleFromEarlierCursor(t *testi
 	}
 	resolved, err := agentruntime.ResolveTool(requested.State, agentruntime.ToolResolution{
 		ToolCallID: "handler-tool-replay-call", ActionVersion: 1, Succeeded: true,
-		Output: json.RawMessage(`{"canvasId":"handler-agent-tool-replay-canvas","committedRevision":13}`),
+		Output: json.RawMessage(`{"canvasId":"handler-agent-tool-replay-canvas","revision":13}`),
 	})
 	if err != nil {
 		t.Fatal(err)

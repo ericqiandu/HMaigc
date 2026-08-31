@@ -8,9 +8,86 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"infinite-canvas/backend/internal/agentruntime"
 )
+
+func TestCloudAgentRuntimeToolBudgetFailsBeforeAcceptingAnExtraTool(t *testing.T) {
+	startedAt := time.Date(2026, time.September, 1, 8, 0, 0, 0, time.UTC)
+	answer := agentruntime.ExpectedDelivery{
+		Kind:               agentruntime.DeliveryAnswer,
+		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
+	}
+	current := agentruntime.RuntimeState{
+		StateVersion: 1, StepNumber: 0, MaxSteps: 6, Status: agentruntime.RunRunning,
+		UserMessage:   "读取画布后再读取资产",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic},
+		Limits: &agentruntime.RuntimeLimits{
+			MaxToolCalls: 1, ToolCallsUsed: 0, StartedAt: startedAt, DeadlineAt: startedAt.Add(30 * time.Minute),
+		},
+	}
+	first, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall,
+		ToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "read-canvas", ToolName: agentruntime.ToolCanvasRead, ActionVersion: 1,
+			Arguments: validCapabilityArgumentsForTest(agentruntime.ToolCanvasRead), ExpectedDelivery: answer,
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.State.Status != agentruntime.RunWaitingTool || first.State.Limits == nil || first.State.Limits.ToolCallsUsed != 1 {
+		t.Fatalf("first tool transition = %#v", first.State)
+	}
+	if current.Limits == nil || current.Limits.ToolCallsUsed != 0 {
+		t.Fatalf("advance mutated the previous checkpoint limits = %#v", current.Limits)
+	}
+	resolved, err := agentruntime.ResolveTool(first.State, agentruntime.ToolResolution{
+		ToolCallID: "read-canvas", ActionVersion: 1, Succeeded: true, Output: json.RawMessage(`{"canvasId":"canvas-1"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := agentruntime.Advance(resolved.State, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall,
+		ToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "read-assets", ToolName: agentruntime.ToolAssetsRead, ActionVersion: 1,
+			Arguments: validCapabilityArgumentsForTest(agentruntime.ToolAssetsRead), ExpectedDelivery: answer,
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.State.Status != agentruntime.RunFailed || second.State.FailureCode != "tool_call_budget_exhausted" || second.State.PendingToolCall != nil {
+		t.Fatalf("exhausted tool transition = %#v", second.State)
+	}
+}
+
+func TestCloudAgentRuntimeDeadlineSurvivesRecoveryAndFailsExplicitly(t *testing.T) {
+	startedAt := time.Date(2026, time.September, 1, 8, 0, 0, 0, time.UTC)
+	current := agentruntime.RuntimeState{
+		StateVersion: 4, StepNumber: 2, MaxSteps: 6, Status: agentruntime.RunRunning,
+		UserMessage:   "继续执行",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+		Limits: &agentruntime.RuntimeLimits{
+			MaxToolCalls: 4, ToolCallsUsed: 1, StartedAt: startedAt, DeadlineAt: startedAt.Add(30 * time.Minute),
+		},
+	}
+	if _, expired, err := agentruntime.ExpireRuntimeAt(current, startedAt.Add(29*time.Minute)); err != nil || expired {
+		t.Fatalf("runtime expired early: expired=%v err=%v", expired, err)
+	}
+	transition, expired, err := agentruntime.ExpireRuntimeAt(current, startedAt.Add(30*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !expired || transition.State.Status != agentruntime.RunFailed || transition.State.FailureCode != "runtime_deadline_exceeded" {
+		t.Fatalf("deadline transition = %#v expired=%v", transition.State, expired)
+	}
+	if transition.State.Limits == nil || !transition.State.Limits.DeadlineAt.Equal(startedAt.Add(30*time.Minute)) {
+		t.Fatalf("deadline facts changed during recovery = %#v", transition.State.Limits)
+	}
+}
 
 func TestAdvanceRuntimeTransitionsFromFacts(t *testing.T) {
 	answer := agentruntime.ExpectedDelivery{Kind: agentruntime.DeliveryAnswer, CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}}}
@@ -601,6 +678,71 @@ func TestBeginToolExecutionPersistsRunningInterruptionWithoutConsumingModelStep(
 	}
 }
 
+func TestCloudAgentApprovalRejectionReturnsToRunningWithFactualResult(t *testing.T) {
+	current := agentruntime.RuntimeState{
+		StateVersion: 4, StepNumber: 2, MaxSteps: 6, Status: agentruntime.RunWaitingApproval,
+		UserMessage: "更新画布", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+		PendingToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "apply-ops-1", ToolName: agentruntime.ToolCanvasApplyOps,
+			ActionVersion: 1,
+			Arguments:     json.RawMessage(`{"canvasId":"canvas-1","baseRevision":7,"clientMutationId":"mutation-1","operations":[{"operationId":"operation-1","kind":"remove_node","nodeId":"node-1"}]}`),
+		},
+	}
+
+	transition, err := agentruntime.ReviewToolApproval(current, agentruntime.ToolApproval{
+		ToolCallID: "apply-ops-1", ActionVersion: 1, Decision: agentruntime.ToolApprovalRejected,
+		ProposalHash: strings.Repeat("a", 64),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transition.State.Status != agentruntime.RunRunning || transition.State.PendingToolCall != nil || transition.State.PendingToolStarted {
+		t.Fatalf("rejected approval state = %#v", transition.State)
+	}
+	if transition.State.LastToolResult == nil || transition.State.LastToolResult.Succeeded || transition.State.LastToolResult.ErrorCode != "tool_approval_rejected" {
+		t.Fatalf("rejected approval result = %#v", transition.State.LastToolResult)
+	}
+	if transition.State.FailureCode != "" {
+		t.Fatalf("rejected approval failure code = %q", transition.State.FailureCode)
+	}
+	if len(transition.EventKinds) != 3 || transition.EventKinds[0] != agentruntime.EventApprovalDecided ||
+		transition.EventKinds[1] != agentruntime.EventToolResult || transition.EventKinds[2] != agentruntime.EventRunStatusChanged {
+		t.Fatalf("rejected approval events = %#v", transition.EventKinds)
+	}
+}
+
+func TestCloudAgentExpiredApprovalReturnsToRunningWithoutExecutingTool(t *testing.T) {
+	current := agentruntime.RuntimeState{
+		StateVersion: 7, StepNumber: 3, MaxSteps: 8, Status: agentruntime.RunWaitingApproval,
+		UserMessage: "发布资产", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+		PendingToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "publish-asset-1", ToolName: agentruntime.ToolAssetsPublish,
+			ActionVersion: 2,
+			Arguments:     json.RawMessage(`{"resourceId":"resource-1","domainProjectId":"project-1","displayName":"主角参考图","clientMutationId":"publish-1"}`),
+		},
+	}
+
+	transition, err := agentruntime.InvalidateToolApproval(current, agentruntime.ToolApprovalInvalidation{
+		ToolCallID: "publish-asset-1", ActionVersion: 2,
+		ProposalHash: strings.Repeat("b", 64), ErrorCode: agentruntime.ApprovalProposalExpired,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transition.State.Status != agentruntime.RunRunning || transition.State.PendingToolCall != nil || transition.State.PendingToolStarted {
+		t.Fatalf("expired approval state = %#v", transition.State)
+	}
+	if transition.State.LastToolResult == nil || transition.State.LastToolResult.Succeeded || transition.State.LastToolResult.ErrorCode != agentruntime.ApprovalProposalExpired {
+		t.Fatalf("expired approval result = %#v", transition.State.LastToolResult)
+	}
+	if transition.ApprovalProposalHash != strings.Repeat("b", 64) {
+		t.Fatalf("expired approval proposal hash = %q", transition.ApprovalProposalHash)
+	}
+	if len(transition.EventKinds) != 2 || transition.EventKinds[0] != agentruntime.EventToolResult || transition.EventKinds[1] != agentruntime.EventRunStatusChanged {
+		t.Fatalf("expired approval events = %#v", transition.EventKinds)
+	}
+}
+
 func TestReviewToolApprovalMatchesFrozenAction(t *testing.T) {
 	current := agentruntime.RuntimeState{
 		StateVersion: 2, StepNumber: 1, MaxSteps: 4, Status: agentruntime.RunWaitingApproval,
@@ -625,10 +767,10 @@ func TestReviewToolApprovalMatchesFrozenAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rejected.State.Status != agentruntime.RunCancelled || rejected.State.PendingToolCall != nil || rejected.State.LastToolResult == nil || rejected.State.LastToolResult.ErrorCode != "tool_approval_rejected" {
+	if rejected.State.Status != agentruntime.RunRunning || rejected.State.PendingToolCall != nil || rejected.State.LastToolResult == nil || rejected.State.LastToolResult.ErrorCode != "tool_approval_rejected" {
 		t.Fatalf("rejected transition = %#v", rejected)
 	}
-	if len(rejected.EventKinds) != 3 || rejected.EventKinds[2] != agentruntime.EventRunInterrupted {
+	if len(rejected.EventKinds) != 3 || rejected.EventKinds[2] != agentruntime.EventRunStatusChanged {
 		t.Fatalf("rejected events = %#v", rejected.EventKinds)
 	}
 	if _, err := agentruntime.ReviewToolApproval(current, agentruntime.ToolApproval{
@@ -638,7 +780,7 @@ func TestReviewToolApprovalMatchesFrozenAction(t *testing.T) {
 	}
 }
 
-func TestReviewWriteToolRejectionCancelsRun(t *testing.T) {
+func TestReviewWriteToolRejectionReturnsToRunning(t *testing.T) {
 	current := agentruntime.RuntimeState{
 		StateVersion: 4, StepNumber: 2, MaxSteps: 6, Status: agentruntime.RunWaitingApproval,
 		UserMessage: "更新生产计划", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
@@ -654,11 +796,11 @@ func TestReviewWriteToolRejectionCancelsRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if transition.State.Status != agentruntime.RunCancelled || transition.State.PendingToolCall != nil ||
+	if transition.State.Status != agentruntime.RunRunning || transition.State.PendingToolCall != nil ||
 		transition.State.LastToolResult == nil || transition.State.LastToolResult.ErrorCode != "tool_approval_rejected" {
 		t.Fatalf("write rejection = %#v", transition.State)
 	}
-	if len(transition.EventKinds) != 3 || transition.EventKinds[2] != agentruntime.EventRunInterrupted {
+	if len(transition.EventKinds) != 3 || transition.EventKinds[2] != agentruntime.EventRunStatusChanged {
 		t.Fatalf("write rejection events = %#v", transition.EventKinds)
 	}
 }
@@ -677,7 +819,7 @@ func TestRejectFinalStepApprovalTerminatesWithoutExecutingTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if transition.State.Status != agentruntime.RunCancelled || transition.State.FailureCode != "" || transition.State.LastToolResult == nil || transition.State.LastToolResult.ErrorCode != "tool_approval_rejected" {
+	if transition.State.Status != agentruntime.RunFailed || transition.State.FailureCode != "step_budget_exhausted" || transition.State.LastToolResult == nil || transition.State.LastToolResult.ErrorCode != "tool_approval_rejected" {
 		t.Fatalf("final-step rejection = %#v", transition.State)
 	}
 }

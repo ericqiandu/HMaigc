@@ -35,6 +35,8 @@ func agentRuntimeModelRunID(operation string) (string, bool) {
 }
 
 const agentRuntimeMaxSteps = 24
+const agentRuntimeMaxToolCalls = 24
+const agentRuntimeMaxElapsed = 30 * time.Minute
 
 type StartAgentRuntimeInput struct {
 	Context         context.Context
@@ -74,6 +76,7 @@ type agentRuntimeModelContext struct {
 	Configuration        agentruntime.RunConfiguration         `json:"configuration"`
 	LoadedSkillDirs      []string                              `json:"loadedSkillDirs,omitempty"`
 	ClarificationHistory []agentruntime.CompletedClarification `json:"clarificationHistory,omitempty"`
+	Limits               *agentruntime.RuntimeLimits           `json:"limits,omitempty"`
 	CallableTools        []agentRuntimeCallableToolFact        `json:"callableTools"`
 	CallableModels       []agentRuntimeCallableModelFact       `json:"callableModels"`
 	ProductionPlan       *agentRuntimeProductionPlanFact       `json:"productionPlan,omitempty"`
@@ -118,6 +121,11 @@ func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntime
 				MaxSteps: agentRuntimeMaxSteps, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
 				RuntimeVersion: agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
 				UserMessage: input.UserMessage, Configuration: configuration, Now: now,
+				Limits: &agentruntime.RuntimeLimits{
+					MaxToolCalls: agentRuntimeMaxToolCalls,
+					StartedAt:    now,
+					DeadlineAt:   now.Add(agentRuntimeMaxElapsed),
+				},
 			},
 		})
 		if initializeErr != nil {
@@ -166,9 +174,6 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 	if err := validateAgentRuntimeExecutionContract(*run); err != nil {
 		return nil, err
 	}
-	if err := s.reconcileSucceededProductionArtifacts(scope); err != nil {
-		return nil, err
-	}
 	state, err := s.repo.LoadAgentCheckpoint(scope)
 	if err != nil {
 		return nil, err
@@ -200,6 +205,13 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 	if err != nil {
 		var rejected *agentRuntimeModelDecisionRejectedError
 		if errors.As(err, &rejected) {
+			if run.ToolSchemaVersion == agentruntime.CurrentToolSchemaVersion {
+				transition, failErr := agentruntime.Fail(state, "model_decision_invalid")
+				if failErr != nil {
+					return nil, errors.Join(err, failErr)
+				}
+				return s.commitAgentRuntimeState(scope, state, transition)
+			}
 			transition, rejectErr := agentruntime.RejectModelDecision(state, rejected.feedback)
 			if rejectErr != nil {
 				return nil, rejectErr
@@ -245,133 +257,6 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 			return progress, nil
 		case !errors.Is(lookupErr, gorm.ErrRecordNotFound):
 			return nil, lookupErr
-		}
-		if decision.ToolCall.ToolName == agentruntime.ToolProductionRender || decision.ToolCall.ToolName == agentruntime.ToolSpecialistDelegate ||
-			decision.ToolCall.ToolName == agentruntime.ToolVisionAnalyze ||
-			decision.ToolCall.ToolName == agentruntime.ToolMediaGenerate ||
-			decision.ToolCall.ToolName == agentruntime.ToolCanvasProject ||
-			decision.ToolCall.ToolName == agentruntime.ToolMediaAssemble {
-			if state.ExpectedDelivery != nil && !state.ExpectedDelivery.Equal(decision.ToolCall.ExpectedDelivery) {
-				transition, rejectErr := agentruntime.RejectModelDecision(state, agentruntime.ModelDecisionFeedback{
-					Code: "delivery_contract_changed", Reason: "expectedDelivery must exactly match the contract frozen by the first model decision",
-				})
-				if rejectErr != nil {
-					return nil, rejectErr
-				}
-				progress, commitErr := s.commitAgentRuntimeState(scope, state, transition)
-				if commitErr != nil {
-					return nil, commitErr
-				}
-				if progress.State.Status == agentruntime.RunRunning {
-					nextTask, taskErr := s.ensureAgentRuntimeModelTask(scope, progress.Run, progress.State)
-					if taskErr != nil {
-						return nil, taskErr
-					}
-					progress.ModelTask = taskForOutput(*nextTask)
-				}
-				return progress, nil
-			}
-			frozenContext, contextErr := frozenAgentRuntimeModelContext(scope, state, task.Prompt)
-			if contextErr != nil {
-				return nil, contextErr
-			}
-			var frozenArguments json.RawMessage
-			var freezeErr error
-			var failureCode string
-			var failureClass agentruntime.ToolFailureClass
-			var classified bool
-			switch decision.ToolCall.ToolName {
-			case agentruntime.ToolProductionRender:
-				frozenArguments, freezeErr = s.freezeAgentProductionRenderArguments(scope, frozenContext.CallableModels, decision.ToolCall.Arguments)
-				if freezeErr != nil {
-					failureCode, failureClass, classified = agentProductionRenderFailureDetails(freezeErr)
-				}
-			case agentruntime.ToolSpecialistDelegate:
-				frozenArguments, freezeErr = freezeAgentSpecialistDelegateDecisionArguments(
-					state.Configuration,
-					state.LoadedSkillDirs,
-					decision.ToolCall,
-				)
-				if freezeErr != nil {
-					failureCode = "specialist_delegate_invalid"
-					failureClass = agentruntime.ToolFailureAgentRepairable
-					classified = true
-				}
-			case agentruntime.ToolVisionAnalyze:
-				frozenArguments, freezeErr = s.freezeAgentVisualAnalysisDecisionArguments(
-					scope,
-					state.Configuration,
-					frozenContext.CallableModels,
-					decision.ToolCall,
-				)
-				if freezeErr != nil {
-					failureCode, failureClass, classified = agentVisualAnalysisFailureDetails(freezeErr)
-				}
-			case agentruntime.ToolMediaGenerate:
-				frozenArguments, freezeErr = s.freezeAgentMediaGenerationDecisionArguments(
-					scope,
-					state.Configuration,
-					frozenContext.CallableModels,
-					decision.ToolCall,
-				)
-				if freezeErr != nil {
-					failureCode, failureClass, classified = agentMediaGenerationFailureDetails(freezeErr)
-				}
-			case agentruntime.ToolCanvasProject:
-				frozenArguments, freezeErr = freezeAgentCanvasProjectDecisionArguments(scope.CanvasID, decision.ToolCall)
-				if freezeErr != nil {
-					failureCode = "canvas_projection_invalid"
-					failureClass = agentruntime.ToolFailureAgentRepairable
-					classified = true
-				}
-			case agentruntime.ToolMediaAssemble:
-				frozenArguments, freezeErr = s.freezeAgentMediaAssembleDecisionArguments(scope, decision.ToolCall)
-				if freezeErr != nil {
-					failureCode = "media_assembly_invalid"
-					failureClass = agentruntime.ToolFailureAgentRepairable
-					classified = true
-				}
-			}
-			if freezeErr != nil {
-				if !classified {
-					return nil, freezeErr
-				}
-				output, marshalErr := json.Marshal(map[string]string{"reason": freezeErr.Error()})
-				if marshalErr != nil {
-					return nil, marshalErr
-				}
-				failureClass, classErr := s.rejectedToolFailureClass(
-					scope,
-					state,
-					decision.ToolCall,
-					failureCode,
-					output,
-					failureClass,
-				)
-				if classErr != nil {
-					return nil, classErr
-				}
-				transition, rejectErr := agentruntime.RejectToolDecision(state, agentruntime.ToolDecisionFailure{
-					Call: *decision.ToolCall, Class: failureClass,
-					ErrorCode: failureCode, Output: output,
-				})
-				if rejectErr != nil {
-					return nil, rejectErr
-				}
-				progress, commitErr := s.commitAgentRuntimeState(scope, state, transition)
-				if commitErr != nil {
-					return nil, commitErr
-				}
-				if progress.State.Status == agentruntime.RunRunning {
-					nextTask, taskErr := s.ensureAgentRuntimeModelTask(scope, progress.Run, progress.State)
-					if taskErr != nil {
-						return nil, taskErr
-					}
-					progress.ModelTask = taskForOutput(*nextTask)
-				}
-				return progress, nil
-			}
-			decision.ToolCall.Arguments = frozenArguments
 		}
 	}
 	finalMessage := ""
@@ -658,12 +543,27 @@ func agentRuntimeSystemPromptForToolSchema(toolSchemaVersion int) (string, error
 	switch toolSchemaVersion {
 	case agentruntime.LegacyToolSchemaVersion:
 		return agentRuntimeSystemPrompt, nil
-	case agentruntime.CurrentToolSchemaVersion:
+	case agentruntime.ProductionToolSchemaVersion:
 		return agentRuntimeProductionSystemPrompt, nil
+	case agentruntime.CurrentToolSchemaVersion:
+		return agentRuntimeCloudSystemPrompt, nil
 	default:
 		return "", errors.New("agent runtime tool schema version is invalid")
 	}
 }
+
+const agentRuntimeCloudSystemPrompt = `你是弘梦云端创作 Agent。你必须只依据本轮 JSON 中的真实项目事实、用户消息、已加载 Skill、工具结果、交付证据和动态模型目录自主决策；禁止使用固定工作流、关键词路由、默认模型、静默降级或旧 production graph/specialist/stage 执行链。
+每次只能返回一个 JSON 对象，禁止 Markdown、额外文本和 reasoning_content：
+1. 直接交付：{"kind":"final","final":{"message":"...","expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}
+2. 结构化追问：{"kind":"clarification_request","clarification":{"requestId":"...","questions":[{"id":"...","prompt":"...","type":"single_choice|multi_choice|free_text","options":[{"id":"...","label":"..."}],"allowCustomAnswer":false}],"expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}
+3. 原子能力调用：{"kind":"tool_call","toolCall":{"toolCallId":"...","toolName":"canvas.read|canvas.apply_ops|assets.read|assets.publish|media.generate|skills.load","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}
+首次决策必须声明 expectedDelivery；Runtime 随即冻结该合同，后续工具与 final 必须逐字段复用。只有 deliveryVerification 已满足全部 completionCriteria 时才能 final；否则继续修正或显式失败。每个新工具调用必须使用新的 toolCallId，重试也不得复用。
+canvas.read、assets.read、skills.load 是只读能力并立即执行。canvas.apply_ops、assets.publish 是写能力，media.generate 是付费能力；每次写入或付费动作都会形成独立、不可变、带哈希的审批提案，只有用户批准该精确提案后才执行。审批拒绝、提案过期或哈希不匹配都是本轮事实，必须据此继续规划，禁止降低交付目标或把拒绝伪装成成功。
+canvas.read arguments 精确结构为 {"canvasId":"...","selectedNodeIds":[],"includeViewport":true}。canvas.apply_ops arguments 精确结构为 {"canvasId":"...","baseRevision":0,"clientMutationId":"...","operations":[...]}，operations 只能使用工具契约允许的结构化画布操作。
+assets.read arguments 精确结构为 {"domainProjectId":"...","resourceIds":[],"limit":100}。assets.publish arguments 精确结构为 {"resourceId":"...","domainProjectId":"...","displayName":"...","clientMutationId":"..."}。
+media.generate arguments 精确结构为 {"mediaKind":"image|video|audio","modelRecordId":"...","modelKey":"...","parameters":{},"sourceResourceIds":[],"targetCanvasNodeId":"...","clientRequestId":"..."}。modelRecordId、modelKey、媒体类型和参数必须来自本轮 callableModels 的真实能力事实；禁止猜测能力、参数或价格。生成只返回任务事实，最终交付仍必须由真实任务结果、资源和画布证据验证。
+skills.load arguments 精确结构为 {"skillDir":"...","version":1,"checksum":"小写 SHA-256"}。只能加载本轮配置中已授权的精确 Skill 版本；加载后才能使用其方法论。
+当事实不足时必须追问或调用读取能力；禁止根据文本、节点连线、占位状态或旧记录猜测资产已经存在。实际产物类型、执行动作、结果落点必须与用户目标一致。`
 
 const agentRuntimeProductionSystemPrompt = `你是弘梦短剧创作主 Agent。你必须基于本轮 JSON 中的真实项目事实、冻结配置、不可变 ProductionGraph 版本、当前阶段、Artifact revision 摘要、交付校验和可调用能力自主规划；禁止使用默认路由、固定工作流、关键词路由或本地语义兜底。
 每次只能返回一个 JSON 对象，禁止 Markdown、额外文本和 reasoning_content：

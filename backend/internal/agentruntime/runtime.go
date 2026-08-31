@@ -9,9 +9,20 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 )
 
 const maxRuntimeSteps = 24
+const maxRuntimeToolCalls = 64
+
+const FailureRuntimeDeadlineExceeded = "runtime_deadline_exceeded"
+
+type RuntimeLimits struct {
+	MaxToolCalls  int       `json:"maxToolCalls"`
+	ToolCallsUsed int       `json:"toolCallsUsed"`
+	StartedAt     time.Time `json:"startedAt"`
+	DeadlineAt    time.Time `json:"deadlineAt"`
+}
 
 type RuntimeState struct {
 	StateVersion         int                      `json:"stateVersion"`
@@ -32,6 +43,7 @@ type RuntimeState struct {
 	Configuration        RunConfiguration         `json:"configuration"`
 	LoadedSkillDirs      []string                 `json:"loadedSkillDirs,omitempty"`
 	PendingSteers        []PendingSteer           `json:"pendingSteers,omitempty"`
+	Limits               *RuntimeLimits           `json:"limits,omitempty"`
 }
 
 type SteerRequest struct {
@@ -110,6 +122,7 @@ type RuntimeTransition struct {
 	RejectedToolCall     *ToolCallDecision
 	ApprovalProposalHash string
 	ApprovalCostQuote    *ApprovalCostQuote
+	ApprovalResolution   ApprovalResolution
 }
 
 type ToolResolution struct {
@@ -153,6 +166,23 @@ type ToolApproval struct {
 	ProposalHash  string
 }
 
+type ApprovalResolution string
+
+const (
+	ApprovalResolutionApproved    ApprovalResolution = "approved"
+	ApprovalResolutionRejected    ApprovalResolution = "rejected"
+	ApprovalResolutionInvalidated ApprovalResolution = "invalidated"
+	ApprovalProposalExpired       string             = "approval_proposal_expired"
+	ApprovalProposalMismatch      string             = "approval_proposal_mismatch"
+)
+
+type ToolApprovalInvalidation struct {
+	ToolCallID    string
+	ActionVersion int
+	ProposalHash  string
+	ErrorCode     string
+}
+
 func AppendSteer(current RuntimeState, request SteerRequest) (RuntimeTransition, bool, error) {
 	if err := validateRuntimeState(current); err != nil {
 		return RuntimeTransition{}, false, err
@@ -175,6 +205,7 @@ func AppendSteer(current RuntimeState, request SteerRequest) (RuntimeTransition,
 		return RuntimeTransition{}, false, ErrSteerConflict
 	}
 	next := current
+	next.Limits = cloneRuntimeLimits(current.Limits)
 	next.StateVersion++
 	next.PendingSteers = append(append([]PendingSteer(nil), current.PendingSteers...), PendingSteer{
 		ClientRequestID: request.ClientRequestID,
@@ -237,6 +268,23 @@ func runtimeStatusTerminal(status RunStatus) bool {
 	return status == RunSucceeded || status == RunFailed || status == RunCancelled
 }
 
+// ExpireRuntimeAt applies the immutable runtime deadline stored in the
+// checkpoint. Recovery calls this before resuming work so a restart cannot
+// extend the execution window.
+func ExpireRuntimeAt(current RuntimeState, now time.Time) (RuntimeTransition, bool, error) {
+	if err := validateRuntimeState(current); err != nil {
+		return RuntimeTransition{}, false, err
+	}
+	if now.IsZero() {
+		return RuntimeTransition{}, false, errors.New("agent runtime deadline check time is invalid")
+	}
+	if current.Limits == nil || runtimeStatusTerminal(current.Status) || now.Before(current.Limits.DeadlineAt) {
+		return RuntimeTransition{State: current}, false, nil
+	}
+	transition, err := Terminate(current, FailureRuntimeDeadlineExceeded)
+	return transition, err == nil, err
+}
+
 // BeginModelRequest 在首个供应商请求发出前持久化 queued -> running；
 // 后续模型步骤已经处于 running，不重复制造状态事件。
 func BeginModelRequest(current RuntimeState) (RuntimeTransition, error) {
@@ -247,6 +295,7 @@ func BeginModelRequest(current RuntimeState) (RuntimeTransition, error) {
 		return RuntimeTransition{}, errors.New("agent runtime is not queued for a model request")
 	}
 	next := current
+	next.Limits = cloneRuntimeLimits(current.Limits)
 	next.StateVersion++
 	next.Status = RunRunning
 	if err := validateRuntimeState(next); err != nil {
@@ -327,6 +376,7 @@ func AdvanceForToolSchema(current RuntimeState, input RuntimeInput, toolSchemaVe
 		decisionExpected = input.Decision.Final.ExpectedDelivery
 	}
 	next := current
+	next.Limits = cloneRuntimeLimits(current.Limits)
 	next.StateVersion++
 	next.StepNumber++
 	if current.ExpectedDelivery == nil {
@@ -387,6 +437,14 @@ func AdvanceForToolSchema(current RuntimeState, input RuntimeInput, toolSchemaVe
 		policy, ok := ToolPolicyForSchema(input.Decision.ToolCall.ToolName, toolSchemaVersion)
 		if !ok {
 			return RuntimeTransition{}, errors.New("agent tool policy is unavailable")
+		}
+		if next.Limits != nil {
+			if next.Limits.ToolCallsUsed >= next.Limits.MaxToolCalls {
+				next.Status = RunFailed
+				next.FailureCode = "tool_call_budget_exhausted"
+				return RuntimeTransition{State: next, EventKinds: []EventKind{EventRunFailed}}, nil
+			}
+			next.Limits.ToolCallsUsed++
 		}
 		next.Status = RunWaitingTool
 		next.PendingToolCall = input.Decision.ToolCall
@@ -595,12 +653,12 @@ func ReviewToolApproval(current RuntimeState, approval ToolApproval) (RuntimeTra
 				ToolCallID: approval.ToolCallID, ActionVersion: approval.ActionVersion,
 				Succeeded: false, Output: json.RawMessage(`{}`), ErrorCode: "step_budget_exhausted",
 			}
-			return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunFailed}, ApprovalProposalHash: approval.ProposalHash}, nil
+			return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunFailed}, ApprovalProposalHash: approval.ProposalHash, ApprovalResolution: ApprovalResolutionApproved}, nil
 		}
 		next.Status = RunWaitingTool
-		return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventRunStatusChanged}, ApprovalProposalHash: approval.ProposalHash}, nil
+		return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventRunStatusChanged}, ApprovalProposalHash: approval.ProposalHash, ApprovalResolution: ApprovalResolutionApproved}, nil
 	case ToolApprovalRejected:
-		next.Status = RunCancelled
+		next.Status = RunRunning
 		next.PendingToolCall = nil
 		next.PendingToolStarted = false
 		next.LastToolResult = &ToolResult{
@@ -608,10 +666,56 @@ func ReviewToolApproval(current RuntimeState, approval ToolApproval) (RuntimeTra
 			Succeeded: false, Output: json.RawMessage(`{}`), ErrorCode: "tool_approval_rejected",
 		}
 		next.FailureCode = ""
-		return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunInterrupted}, ApprovalProposalHash: approval.ProposalHash}, nil
+		if next.StepNumber >= next.MaxSteps {
+			next.Status = RunFailed
+			next.FailureCode = "step_budget_exhausted"
+			return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunFailed}, ApprovalProposalHash: approval.ProposalHash, ApprovalResolution: ApprovalResolutionRejected}, nil
+		}
+		return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunStatusChanged}, ApprovalProposalHash: approval.ProposalHash, ApprovalResolution: ApprovalResolutionRejected}, nil
 	default:
 		return RuntimeTransition{}, errors.New("agent tool approval decision is invalid")
 	}
+}
+
+func InvalidateToolApproval(current RuntimeState, invalidation ToolApprovalInvalidation) (RuntimeTransition, error) {
+	if err := validateRuntimeState(current); err != nil {
+		return RuntimeTransition{}, err
+	}
+	if current.Status != RunWaitingApproval || current.PendingToolCall == nil {
+		return RuntimeTransition{}, errors.New("agent runtime is not waiting for tool approval")
+	}
+	invalidation.ToolCallID = strings.TrimSpace(invalidation.ToolCallID)
+	invalidation.ProposalHash = strings.TrimSpace(invalidation.ProposalHash)
+	invalidation.ErrorCode = strings.TrimSpace(invalidation.ErrorCode)
+	if invalidation.ToolCallID != current.PendingToolCall.ToolCallID || invalidation.ActionVersion != current.PendingToolCall.ActionVersion {
+		return RuntimeTransition{}, errors.New("agent tool approval invalidation identity is invalid")
+	}
+	if !validSHA256(invalidation.ProposalHash) {
+		return RuntimeTransition{}, errors.New("agent tool approval invalidation proposal hash is invalid")
+	}
+	if invalidation.ErrorCode != ApprovalProposalExpired && invalidation.ErrorCode != ApprovalProposalMismatch {
+		return RuntimeTransition{}, errors.New("agent tool approval invalidation error code is invalid")
+	}
+	next := current
+	next.StateVersion++
+	next.Status = RunRunning
+	next.PendingToolCall = nil
+	next.PendingToolStarted = false
+	next.LastToolResult = &ToolResult{
+		ToolCallID: invalidation.ToolCallID, ActionVersion: invalidation.ActionVersion,
+		Succeeded: false, Output: json.RawMessage(`{}`), ErrorCode: invalidation.ErrorCode,
+	}
+	next.FailureCode = ""
+	events := []EventKind{EventToolResult, EventRunStatusChanged}
+	if next.StepNumber >= next.MaxSteps {
+		next.Status = RunFailed
+		next.FailureCode = "step_budget_exhausted"
+		events = []EventKind{EventToolResult, EventRunFailed}
+	}
+	return RuntimeTransition{
+		State: next, EventKinds: events, ApprovalProposalHash: invalidation.ProposalHash,
+		ApprovalResolution: ApprovalResolutionInvalidated,
+	}, nil
 }
 
 func validateAdvancingState(state RuntimeState) error {
@@ -636,6 +740,9 @@ func validateRuntimeState(state RuntimeState) error {
 	}
 	if !state.Status.Valid() {
 		return errors.New("agent runtime status is invalid")
+	}
+	if err := validateRuntimeLimits(state.Limits); err != nil {
+		return err
 	}
 	if state.PendingToolStarted && ((state.Status != RunWaitingTool && state.Status != RunCancelled) || state.PendingToolCall == nil) {
 		return errors.New("agent runtime tool execution state is invalid")
@@ -667,6 +774,26 @@ func validateRuntimeState(state RuntimeState) error {
 	}
 	if err := validateLoadedSkillDirs(state.Configuration.Skills, state.LoadedSkillDirs); err != nil {
 		return err
+	}
+	return nil
+}
+
+func cloneRuntimeLimits(limits *RuntimeLimits) *RuntimeLimits {
+	if limits == nil {
+		return nil
+	}
+	cloned := *limits
+	return &cloned
+}
+
+func validateRuntimeLimits(limits *RuntimeLimits) error {
+	if limits == nil {
+		return nil
+	}
+	if limits.MaxToolCalls < 1 || limits.MaxToolCalls > maxRuntimeToolCalls ||
+		limits.ToolCallsUsed < 0 || limits.ToolCallsUsed > limits.MaxToolCalls ||
+		limits.StartedAt.IsZero() || limits.DeadlineAt.IsZero() || !limits.DeadlineAt.After(limits.StartedAt) {
+		return errors.New("agent runtime limits are invalid")
 	}
 	return nil
 }
