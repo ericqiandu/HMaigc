@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -221,36 +222,57 @@ func (s *Service) coordinatePendingAgentTool(scope agentruntime.Scope, input Coo
 		return nil, err
 	}
 	var output []byte
-	switch call.ToolName {
-	case agentruntime.ToolSkillLoad:
-		output, err = executeAgentSkillLoad(state.Configuration, call.Arguments)
-		if err != nil {
-			return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, "skill_load_invalid", map[string]string{"reason": err.Error()})
+	run, err := s.repo.AgentRunForScope(scope)
+	if err != nil {
+		return nil, err
+	}
+	if run.ToolSchemaVersion == agentruntime.CurrentToolSchemaVersion {
+		registry, registryErr := newAgentCapabilityRegistry(s)
+		if registryErr != nil {
+			return nil, registryErr
 		}
-	case agentruntime.ToolProductionPlan:
-		output, err = s.executeAgentProductionPlan(scope, call.Arguments)
-		if errors.Is(err, errAgentRuntimeProductionPlanInput) {
-			return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, "production_plan_invalid", map[string]string{"reason": err.Error()})
+		execution, executionErr := registry.Execute(context.Background(), scope, *call)
+		if executionErr != nil {
+			failureCode := "capability_execution_failed"
+			var capabilityFailure *agentCapabilityExecutionError
+			if errors.As(executionErr, &capabilityFailure) {
+				failureCode = capabilityFailure.Code
+			}
+			return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, failureCode, map[string]string{"reason": executionErr.Error()})
 		}
-		if errors.Is(err, repository.ErrAgentProductionPlanVersionConflict) {
-			return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, "production_plan_version_conflict", map[string]string{"reason": err.Error()})
+		output = execution.Output
+	} else {
+		switch call.ToolName {
+		case agentruntime.ToolSkillLoad:
+			output, err = executeAgentSkillLoad(state.Configuration, call.Arguments)
+			if err != nil {
+				return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, "skill_load_invalid", map[string]string{"reason": err.Error()})
+			}
+		case agentruntime.ToolProductionPlan:
+			output, err = s.executeAgentProductionPlan(scope, call.Arguments)
+			if errors.Is(err, errAgentRuntimeProductionPlanInput) {
+				return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, "production_plan_invalid", map[string]string{"reason": err.Error()})
+			}
+			if errors.Is(err, repository.ErrAgentProductionPlanVersionConflict) {
+				return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, "production_plan_version_conflict", map[string]string{"reason": err.Error()})
+			}
+		case agentruntime.ToolSpecialistDelegate:
+			return s.coordinatePendingAgentSpecialistDelegate(scope, state, call)
+		case agentruntime.ToolProductionRender:
+			return s.coordinatePendingAgentProductionRender(scope, state, call, record)
+		case agentruntime.ToolVisionAnalyze:
+			return s.coordinatePendingAgentVisualAnalysis(scope, state, call, record)
+		case agentruntime.ToolMediaGenerate:
+			return s.coordinatePendingAgentMediaGeneration(scope, state, call, record)
+		case agentruntime.ToolCanvasCommit:
+			return s.coordinatePendingAgentProductionCanvasCommit(scope, state, call, record)
+		case agentruntime.ToolCanvasProject:
+			return s.coordinatePendingAgentCanvasProjection(scope, state, call, record)
+		case agentruntime.ToolMediaAssemble:
+			return s.coordinatePendingAgentMediaAssembly(scope, state, call, record)
+		default:
+			return nil, errors.New("agent tool executor is not connected")
 		}
-	case agentruntime.ToolSpecialistDelegate:
-		return s.coordinatePendingAgentSpecialistDelegate(scope, state, call)
-	case agentruntime.ToolProductionRender:
-		return s.coordinatePendingAgentProductionRender(scope, state, call, record)
-	case agentruntime.ToolVisionAnalyze:
-		return s.coordinatePendingAgentVisualAnalysis(scope, state, call, record)
-	case agentruntime.ToolMediaGenerate:
-		return s.coordinatePendingAgentMediaGeneration(scope, state, call, record)
-	case agentruntime.ToolCanvasCommit:
-		return s.coordinatePendingAgentProductionCanvasCommit(scope, state, call, record)
-	case agentruntime.ToolCanvasProject:
-		return s.coordinatePendingAgentCanvasProjection(scope, state, call, record)
-	case agentruntime.ToolMediaAssemble:
-		return s.coordinatePendingAgentMediaAssembly(scope, state, call, record)
-	default:
-		return nil, errors.New("agent tool executor is not connected")
 	}
 	if err != nil {
 		return nil, err

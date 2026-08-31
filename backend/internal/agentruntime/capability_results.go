@@ -1,6 +1,27 @@
 package agentruntime
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+)
+
+type ToolExecutionResult struct {
+	Output json.RawMessage
+}
+
+func NewToolExecutionResult(name ToolName, result CapabilityResult) (ToolExecutionResult, error) {
+	if result == nil {
+		return ToolExecutionResult{}, errors.New("agent capability result is missing")
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil || len(encoded) > agentToolResultLimit {
+		return ToolExecutionResult{}, errCapabilityResultInvalid
+	}
+	if _, err := DecodeCapabilityResult(name, encoded); err != nil {
+		return ToolExecutionResult{}, err
+	}
+	return ToolExecutionResult{Output: append(json.RawMessage(nil), encoded...)}, nil
+}
 
 type CanvasReadResult struct {
 	CanvasID        string            `json:"canvasId"`

@@ -192,7 +192,7 @@ func decodeAssetsReadArguments(payload json.RawMessage) (CapabilityArguments, er
 		ResourceIDs     []string `json:"resourceIds"`
 		Limit           *int     `json:"limit"`
 	}
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || wire.ResourceIDs == nil || wire.Limit == nil || *wire.Limit < 1 || *wire.Limit > capabilityResourceLimit {
+	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || wire.ResourceIDs == nil || wire.Limit == nil || *wire.Limit < 1 || *wire.Limit > capabilityResourceLimit || len(wire.ResourceIDs) > *wire.Limit {
 		return nil, errCapabilityArgumentsInvalid
 	}
 	projectID, err := normalizeIdentifier(wire.DomainProjectID, capabilityIdentifierLimit)

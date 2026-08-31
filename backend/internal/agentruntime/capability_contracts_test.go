@@ -147,6 +147,11 @@ func TestCapabilityArgumentsRejectUnknownFieldsAndInvalidIdentifiers(t *testing.
 			payload: `{"canvasId":"` + strings.Repeat("a", 121) + `","selectedNodeIds":[],"includeViewport":false}`,
 		},
 		{
+			name:    "assets read limit smaller than explicit resource set",
+			tool:    agentruntime.ToolAssetsRead,
+			payload: `{"domainProjectId":"project-1","resourceIds":["resource-1","resource-2"],"limit":1}`,
+		},
+		{
 			name:    "retired tool",
 			tool:    agentruntime.ToolCanvasProject,
 			payload: `{}`,

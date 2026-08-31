@@ -13,6 +13,7 @@ import (
 )
 
 const agentRuntimeModelPromptPrefix = "以下 JSON 是本轮唯一可信的运行事实。请自主决定直接交付、发起结构化追问或调用一个可用工具，并严格按系统约定返回一个 JSON 对象：\n"
+const agentRuntimeModelContextLimit = 512 * 1024
 
 type agentRuntimeCallableModelFact struct {
 	ChannelID             string                        `json:"channelId"`
@@ -32,6 +33,8 @@ type agentRuntimeCallableToolFact struct {
 	RiskLevel        agentruntime.ToolRiskLevel `json:"riskLevel"`
 	RequiredAccess   agentruntime.AccessLevel   `json:"requiredAccess"`
 	ApprovalRequired bool                       `json:"approvalRequired"`
+	ArgumentsSchema  json.RawMessage            `json:"argumentsSchema,omitempty"`
+	ResultSchema     json.RawMessage            `json:"resultSchema,omitempty"`
 }
 
 type agentRuntimeProductionStageFact struct {
@@ -388,7 +391,10 @@ func encodeAgentRuntimeModelPromptForToolSchema(
 		return "", errors.New("agent runtime tool schema version is invalid")
 	}
 	context := agentRuntimeModelContext{
-		RunID: scope.RunID, CanvasID: scope.CanvasID, ToolSchemaVersion: toolSchemaVersion, CanvasRevision: canvasRevision, StepNumber: state.StepNumber, MaxSteps: state.MaxSteps,
+		RunID: scope.RunID, CanvasID: scope.CanvasID, Scope: agentRuntimeScopeFact{
+			TenantKind: scope.TenantKind, TenantID: scope.TenantID, ActorUserID: scope.ActorUserID,
+			DomainProjectID: scope.DomainProjectID, CanvasID: scope.CanvasID, ThreadID: scope.ThreadID,
+		}, ToolSchemaVersion: toolSchemaVersion, CanvasRevision: canvasRevision, StepNumber: state.StepNumber, MaxSteps: state.MaxSteps,
 		UserMessage: state.UserMessage, ExpectedDelivery: state.ExpectedDelivery, DeliveryEvidence: deliveryEvidence,
 		Verification: deliveryVerification, LastToolResult: state.LastToolResult, DecisionFeedback: state.DecisionFeedback, PreviousMessage: state.FinalMessage,
 		Configuration: promptAgentRuntimeConfiguration(state), LoadedSkillDirs: append([]string(nil), state.LoadedSkillDirs...), CallableTools: callableTools, CallableModels: models,
@@ -399,12 +405,39 @@ func encodeAgentRuntimeModelPromptForToolSchema(
 	if err != nil {
 		return "", err
 	}
+	if len(encoded) > agentRuntimeModelContextLimit {
+		return "", errors.New("agent runtime model context exceeds limit")
+	}
 	return agentRuntimeModelPromptPrefix + string(encoded), nil
 }
 
 func agentRuntimeCallableTools(toolSchemaVersion int, mode agentruntime.ExecutionMode) ([]agentRuntimeCallableToolFact, error) {
+	if mode != agentruntime.ExecutionGuided && mode != agentruntime.ExecutionAutomatic {
+		return nil, errors.New("agent runtime callable tool facts are invalid")
+	}
+	if toolSchemaVersion == agentruntime.CurrentToolSchemaVersion {
+		registry, err := newAgentCapabilityRegistry(nil)
+		if err != nil {
+			return nil, err
+		}
+		descriptors := registry.Descriptors()
+		tools := make([]agentRuntimeCallableToolFact, 0, len(descriptors))
+		for _, descriptor := range descriptors {
+			policy, found := agentruntime.ToolPolicyForSchema(descriptor.Name, toolSchemaVersion)
+			if !found || policy.RiskLevel != descriptor.RiskLevel || policy.RequiredAccess != descriptor.RequiredAccess {
+				return nil, errors.New("agent runtime capability descriptor conflicts with policy")
+			}
+			tools = append(tools, agentRuntimeCallableToolFact{
+				Name: descriptor.Name, ActionVersion: descriptor.ActionVersion, RiskLevel: descriptor.RiskLevel,
+				RequiredAccess: descriptor.RequiredAccess, ApprovalRequired: agentruntime.ApprovalRequiredFor(policy, mode),
+				ArgumentsSchema: append(json.RawMessage(nil), descriptor.ArgumentsSchema...),
+				ResultSchema:    append(json.RawMessage(nil), descriptor.ResultSchema...),
+			})
+		}
+		return tools, nil
+	}
 	policies, ok := agentruntime.ToolPoliciesForSchema(toolSchemaVersion)
-	if !ok || (mode != agentruntime.ExecutionGuided && mode != agentruntime.ExecutionAutomatic) {
+	if !ok {
 		return nil, errors.New("agent runtime callable tool facts are invalid")
 	}
 	tools := make([]agentRuntimeCallableToolFact, 0, len(policies))

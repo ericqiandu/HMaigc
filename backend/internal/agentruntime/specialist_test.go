@@ -59,6 +59,18 @@ func TestValidateSkillCapabilityManifestAcceptsCurrentAssemblyTool(t *testing.T)
 	}
 }
 
+func TestValidateSkillCapabilityManifestAcceptsAtomicCapability(t *testing.T) {
+	manifest := SkillCapabilityManifest{
+		Specialists:     []SpecialistKey{SpecialistStoryboard},
+		Tools:           []AgentToolName{ToolAssetsRead, ToolCanvasApplyOps, ToolCanvasRead, ToolMediaGenerate},
+		ArtifactSchemas: []string{"storyboard_plan.v1"},
+	}
+
+	if err := ValidateSkillCapabilityManifest(manifest); err != nil {
+		t.Fatalf("ValidateSkillCapabilityManifest() error = %v", err)
+	}
+}
+
 func TestValidateRunConfigurationRejectsAttachmentTotalSizeLimit(t *testing.T) {
 	configuration := RunConfiguration{
 		ExecutionMode: ExecutionGuided,

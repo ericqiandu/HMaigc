@@ -16,17 +16,17 @@ func expectedViMaxDerivedSkillManifests() map[string]agentruntime.SkillCapabilit
 	return map[string]agentruntime.SkillCapabilityManifest{
 		"camera-tree-continuity": {
 			Specialists:     []agentruntime.SpecialistKey{agentruntime.SpecialistStoryboard, agentruntime.SpecialistVisual},
-			Tools:           []agentruntime.AgentToolName{agentruntime.ToolVisionAnalyze},
+			Tools:           []agentruntime.AgentToolName{agentruntime.ToolAssetsRead},
 			ArtifactSchemas: []string{"camera_tree.v1"},
 		},
 		"character-visual-bible": {
 			Specialists:     []agentruntime.SpecialistKey{agentruntime.SpecialistAsset, agentruntime.SpecialistVisual},
-			Tools:           []agentruntime.AgentToolName{agentruntime.ToolVisionAnalyze},
+			Tools:           []agentruntime.AgentToolName{agentruntime.ToolAssetsRead},
 			ArtifactSchemas: []string{"character_visual_bible.v1"},
 		},
 		"first-motion-last-frame": {
 			Specialists:     []agentruntime.SpecialistKey{agentruntime.SpecialistStoryboard, agentruntime.SpecialistVideoAssembly, agentruntime.SpecialistVisual},
-			Tools:           []agentruntime.AgentToolName{agentruntime.ToolVisionAnalyze},
+			Tools:           []agentruntime.AgentToolName{agentruntime.ToolAssetsRead},
 			ArtifactSchemas: []string{"first_motion_last_frame.v1"},
 		},
 		"storyboard-cinematic-language": {
@@ -36,12 +36,12 @@ func expectedViMaxDerivedSkillManifests() map[string]agentruntime.SkillCapabilit
 		},
 		"visual-consistency-review": {
 			Specialists:     []agentruntime.SpecialistKey{agentruntime.SpecialistVisual},
-			Tools:           []agentruntime.AgentToolName{agentruntime.ToolVisionAnalyze},
+			Tools:           []agentruntime.AgentToolName{agentruntime.ToolAssetsRead},
 			ArtifactSchemas: []string{"visual_consistency_review.v1"},
 		},
 		"visual-evidence-analysis": {
 			Specialists:     []agentruntime.SpecialistKey{agentruntime.SpecialistAsset, agentruntime.SpecialistStoryboard, agentruntime.SpecialistVideoAssembly, agentruntime.SpecialistVisual},
-			Tools:           []agentruntime.AgentToolName{agentruntime.ToolVisionAnalyze},
+			Tools:           []agentruntime.AgentToolName{agentruntime.ToolAssetsRead},
 			ArtifactSchemas: []string{"visual_evidence.v1"},
 		},
 	}
@@ -70,6 +70,25 @@ func TestBuiltinsExposeValidatedFirstPartySkills(t *testing.T) {
 			t.Fatalf("invalid adapted skill provenance: %#v", skill)
 		}
 		previousDir = skill.Dir
+	}
+}
+
+func TestBuiltinsAuthorizeOnlyAtomicCapabilities(t *testing.T) {
+	skills, err := Builtins()
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[agentruntime.AgentToolName]struct{}{
+		agentruntime.ToolCanvasRead: {}, agentruntime.ToolCanvasApplyOps: {},
+		agentruntime.ToolAssetsRead: {}, agentruntime.ToolAssetsPublish: {},
+		agentruntime.ToolMediaGenerate: {}, agentruntime.ToolSkillsLoad: {},
+	}
+	for _, skill := range skills {
+		for _, tool := range skill.CapabilityManifest.Tools {
+			if _, found := allowed[tool]; !found {
+				t.Fatalf("skill %s authorizes retired capability %q", skill.Dir, tool)
+			}
+		}
 	}
 }
 
@@ -124,7 +143,11 @@ func TestBuiltinsPublishGovernedViMaxDerivedSkills(t *testing.T) {
 			t.Errorf("missing governed ViMax-derived skill %s", dir)
 			continue
 		}
-		if skill.Version != 1 || skill.SourceKind != "adapted" || skill.SourceURL != viMaxPinnedSourceURL ||
+		expectedVersion := 2
+		if dir == "storyboard-cinematic-language" {
+			expectedVersion = 1
+		}
+		if skill.Version != expectedVersion || skill.SourceKind != "adapted" || skill.SourceURL != viMaxPinnedSourceURL ||
 			skill.SourceRevision != viMaxPinnedRevision || skill.SourceLicense != "MIT" {
 			t.Errorf("unexpected ViMax provenance for %s: %#v", dir, skill)
 		}
@@ -229,7 +252,7 @@ func TestBuiltinsPublishNarrativePipelineSkills(t *testing.T) {
 	if !exists {
 		t.Fatal("missing storyboard-continuity-director skill")
 	}
-	if storyboard.Version != 6 || storyboard.SourceRevision != "hmaigc-v6" {
+	if storyboard.Version != 7 || storyboard.SourceRevision != "hmaigc-v7" {
 		t.Fatalf("unexpected storyboard skill facts: %#v", storyboard)
 	}
 	requiredPlanSchemas := []string{"assembly_plan.v2", "audio_plan.v1", "video_plan.v1"}
@@ -283,12 +306,12 @@ func TestBuiltinsPublishDirectorOperatingContracts(t *testing.T) {
 		expectedVersion := 3
 		expectedRevision := "hmaigc-v3"
 		if test.dir == "short-drama-director" {
-			expectedVersion = 5
-			expectedRevision = "hmaigc-v5"
-		}
-		if test.dir == "storyboard-continuity-director" {
 			expectedVersion = 6
 			expectedRevision = "hmaigc-v6"
+		}
+		if test.dir == "storyboard-continuity-director" {
+			expectedVersion = 7
+			expectedRevision = "hmaigc-v7"
 		}
 		if skill.Version != expectedVersion || skill.SourceRevision != expectedRevision {
 			t.Fatalf("director skill %s version facts = v%d/%s, want v%d/%s", test.dir, skill.Version, skill.SourceRevision, expectedVersion, expectedRevision)

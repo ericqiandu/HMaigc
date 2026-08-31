@@ -52,6 +52,12 @@ func TestAgentRuntimeFreezesSeededFirstPartySkillVersion(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeCallableToolsRejectInvalidExecutionModeForCurrentSchema(t *testing.T) {
+	if _, err := agentRuntimeCallableTools(agentruntime.CurrentToolSchemaVersion, agentruntime.ExecutionMode("invalid")); err == nil {
+		t.Fatal("expected current capability context to reject an invalid execution mode")
+	}
+}
+
 func TestResolveAgentRuntimeSkillSelectionsForSpecialistRejectsCapabilityMismatch(t *testing.T) {
 	svc, _, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
 	svc.agentRuntimeSkillResolver = func(_ context.Context, _ string, dir string) (*Skill, error) {
@@ -550,9 +556,33 @@ func TestEncodeCloudAgentRuntimePromptContainsOnlyAtomicCapabilities(t *testing.
 		if context.CallableTools[index].Name != want {
 			t.Fatalf("callable tool[%d] = %q, want %q", index, context.CallableTools[index].Name, want)
 		}
+		if !validCapabilitySchema(context.CallableTools[index].ArgumentsSchema) || !validCapabilitySchema(context.CallableTools[index].ResultSchema) {
+			t.Fatalf("callable tool[%d] omitted strict schemas: %#v", index, context.CallableTools[index])
+		}
+	}
+	if context.Scope.TenantKind != agentruntime.TenantPersonal || context.Scope.TenantID != "runtime-user" ||
+		context.Scope.ActorUserID != "runtime-user" || context.Scope.DomainProjectID != "runtime-project" ||
+		context.Scope.CanvasID != "runtime-canvas" || context.Scope.ThreadID != "runtime-thread" {
+		t.Fatalf("runtime scope facts = %#v", context.Scope)
 	}
 	if _, err := frozenAgentRuntimeModelContext(agentRuntimeServiceScope(), state, prompt); err != nil {
 		t.Fatalf("frozen cloud prompt rejected: %v", err)
+	}
+}
+
+func TestEncodeCloudAgentRuntimePromptRejectsOversizedContext(t *testing.T) {
+	state := agentruntime.RuntimeState{
+		StateVersion: 1, StepNumber: 0, MaxSteps: 24, Status: agentruntime.RunRunning,
+		UserMessage: strings.Repeat("x", 600*1024),
+		Configuration: agentruntime.RunConfiguration{
+			ExecutionMode: agentruntime.ExecutionGuided,
+		},
+	}
+	if _, err := encodeAgentRuntimeModelPromptForToolSchema(
+		agentRuntimeServiceScope(), state, 7, agentruntime.CurrentToolSchemaVersion,
+		nil, nil, nil, nil, nil,
+	); err == nil {
+		t.Fatal("oversized cloud agent context was accepted")
 	}
 }
 
@@ -708,6 +738,14 @@ func TestAgentRuntimeSystemPromptRequiresCompletionFromAccumulatedEvidence(t *te
 }
 
 type agentRuntimePromptContextForTest struct {
+	Scope struct {
+		TenantKind      agentruntime.TenantKind `json:"tenantKind"`
+		TenantID        string                  `json:"tenantId"`
+		ActorUserID     string                  `json:"actorUserId"`
+		DomainProjectID string                  `json:"domainProjectId"`
+		CanvasID        string                  `json:"canvasId"`
+		ThreadID        string                  `json:"threadId"`
+	} `json:"scope"`
 	ToolSchemaVersion    int                                   `json:"toolSchemaVersion"`
 	CanvasRevision       int64                                 `json:"canvasRevision"`
 	DeliveryEvidence     *agentruntime.DeliveryEvidence        `json:"deliveryEvidence"`

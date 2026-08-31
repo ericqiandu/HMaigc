@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -115,6 +116,69 @@ func TestCoordinateCompletedCloudToolNeverExecutesAgainAfterRestart(t *testing.T
 	}
 	if toolCount != 1 {
 		t.Fatalf("completed tool replay count = %d, want 1", toolCount)
+	}
+}
+
+func TestCoordinatePendingCloudReadExecutesRegistryCapability(t *testing.T) {
+	server, _ := newAgentRuntimeDecisionServer(t, `{"kind":"final","final":{"message":"完成。","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	scope := agentRuntimeServiceScope()
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", scope.CanvasID).
+		Update("payload_json", `{"nodes":[{"id":"node-1","type":"image"}],"connections":[],"viewport":{"x":2,"y":3,"k":1.5},"privateDraft":"must-not-leak"}`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: scope, ClientRequestID: "pending-cloud-read", UserMessage: "读取画布",
+		Configuration: AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionAutomatic},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := svc.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, err := agentruntime.Advance(state, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall,
+		ToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "pending-cloud-read-call", ToolName: agentruntime.ToolCanvasRead, ActionVersion: 1,
+			Arguments:        json.RawMessage(`{"canvasId":"runtime-canvas","selectedNodeIds":["node-1"],"includeViewport":true}`),
+			ExpectedDelivery: agentRuntimeTestAnswerDelivery(),
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.repo.CommitAgentRuntimeTransition(scope, state, requested, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+
+	progress, err := svc.coordinatePendingAgentTool(scope, CoordinateAgentToolInput{
+		ToolCallID: "pending-cloud-read-call", ActionVersion: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.State.Status != agentruntime.RunRunning || progress.State.LastToolResult == nil || !progress.State.LastToolResult.Succeeded {
+		t.Fatalf("cloud read progress = %#v; last result = %#v", progress.State, progress.State.LastToolResult)
+	}
+	decoded, err := agentruntime.DecodeCapabilityResult(agentruntime.ToolCanvasRead, progress.State.LastToolResult.Output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := decoded.(agentruntime.CanvasReadResult)
+	if result.CanvasID != scope.CanvasID || len(result.Nodes) != 1 || !strings.Contains(string(result.Nodes[0]), `"id":"node-1"`) || result.Viewport.Zoom != 1.5 {
+		t.Fatalf("cloud read result = %#v", result)
+	}
+	if strings.Contains(string(progress.State.LastToolResult.Output), "must-not-leak") {
+		t.Fatalf("cloud read leaked private canvas facts: %s", progress.State.LastToolResult.Output)
+	}
+	recorded, err := svc.repo.AgentToolCallForScope(scope, "pending-cloud-read-call", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recorded.Status != agentruntime.ToolCallSucceeded {
+		t.Fatalf("cloud read tool status = %q", recorded.Status)
 	}
 }
 

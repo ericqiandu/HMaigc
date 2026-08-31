@@ -31,7 +31,8 @@ HMaigc 是面向 AI 影视与短剧生产的商业化创作平台，覆盖项目
 - 首页创作框先上传参考图片并创建真实画布项目，把提示词、账号级资源 ID、系统动态模型选择、平台第一方公开 Skill 目录与显式执行模式写入项目内的 `pendingAgentLaunch`；提示词和临时 Blob URL 均不进入 URL 或持久事实。
 - 打开新画布后，Agent 面板用该请求创建或复用服务端 thread，并以持久化 `clientRequestId` 启动 run；只有取得运行事实后才消费启动请求。启动响应丢失时刷新或重试仍复用同一请求 ID，不重复创建运行。
 - Agent 推理模型、语义规划与交付判断由服务端 Runtime 统一决定。首页与画布共用同一份草稿契约，Web 只提交用户目标、动态模型选择、已授权 Skill 版本、账号级 Resource 身份和显式执行模式；服务端重新核验并冻结这些事实。新 Run 固定使用 Runtime v5 / Policy v5 / Tool schema v6，工具调用预算固定为 24，并同时受 24 步决策上限约束；服务端还会冻结从首次启动时间计算的 30 分钟绝对截止时间。浏览器不能修改这些限制，进程重启也不会重置预算或截止时间。
-- Tool schema v6 只接受 `canvas.read`、`canvas.apply_ops`、`assets.read`、`assets.publish`、`media.generate`、`skills.load` 六个原子能力及其严格参数。旧 `skill.load`、Specialist、Production Graph、`vision.analyze`、`media.assemble`、`canvas.project` 等决策不会映射或降级，而是以 `model_decision_invalid` 显式终结。当前里程碑只完成六原子能力契约、审批状态机、幂等边界、预算和恢复机制；各能力的真实读写适配器在后续里程碑接入，期间禁止回退旧执行图。
+- Tool schema v6 只接受 `canvas.read`、`canvas.apply_ops`、`assets.read`、`assets.publish`、`media.generate`、`skills.load` 六个原子能力及其严格参数。旧 `skill.load`、Specialist、Production Graph、`vision.analyze`、`media.assemble`、`canvas.project` 等决策不会映射或降级，而是以 `model_decision_invalid` 显式终结。`canvas.read`、`assets.read` 与 `skills.load` 已接入现有画布、资产和 Skill 权威数据源，并在每次执行时重新核验租户、项目、画布、用户权限与冻结 Skill 版本；输出只保留当前能力契约允许的作用域事实。尚未接入的写入和计费能力会显式失败，期间禁止回退旧执行图。
+- 模型每轮接收精确身份与作用域、动态模型事实、按需加载的 Skill 描述，以及六原子能力的参数和结果 schema。上下文上限为 512 KiB；未加载 Skill 的 instructions 不进入上下文，`docs/`、`assets/`、`ai-metadata/`、固定工作流和固定 Specialist 顺序均不参与运行时知识装配。
 
 ### 单一 Agent Runtime
 
@@ -83,7 +84,7 @@ Run 的工具调用次数和绝对截止时间是持久化运行事实。协调�
 - 个人与团队画布统一使用同一条 WebSocket revision/CAS 增量变更通道；浏览器加载后必须先同步服务端权威快照，再提交本地差异。`PUT /api/canvas-projects/:id` 只负责首次创建远程画布，已存在项目一律拒绝整页覆盖，防止浏览器旧快照覆盖 Agent、协作者或其他设备刚提交的节点。
 - Web 在启动 Agent Run 前先将当前画布未提交变更收敛到权威 revision；首次权限预检只建立远程基线与权限事实，不覆盖 WebSocket 建连前的本地编辑。当前 SSE 仍只消费协议版本 `4` 的 `AgentUIEvent`；后续画布适配器完成后，成功的 `canvas.apply_ops` 结果将携带已提交 revision，再由已鉴权协作查询刷新事实。查询 revision 低于已确认提交或本地基线时必须显式拒绝过期响应。
 - 每个新工具动作必须使用未出现过的 `toolCallId + actionVersion`；模型误复用历史身份时，Runtime 记录显式 `tool_identity_reused` 修复事实并继续同一执行链，不会再次写入冲突记录。同一工具以语义相同的 JSON 参数连续返回相同错误码与相同结构化失败证据时，首次错误允许 Agent 根据事实修正，第二次直接以该错误终结 run；错误原因已经变化时继续留给 Agent 修正，禁止误判为死循环。最后一个模型步骤不得再开启新工具调用；历史运行若已进入该状态，拒绝或完成工具后会保存结果并以 `step_budget_exhausted` 明确终结。图片生成公共契约要求 `size` 精确取自本轮冻结模型的比例候选、`resolution` 精确取自分辨率候选、`count` 精确取自数量候选；`quality` 仅在动态 `providerCapabilities.qualities` 发布非空候选时必填且只能取其中之一，候选为空则必须省略。Runtime 在报价前把比例与分辨率冻结为供应商实际像素尺寸，禁止默认画质、默认分辨率或其他未知字段绕开正式任务和计费契约。
-- 模型每轮只接收当前用户真正可调用、已定价且凭据健康的模型事实。Skill 目录由 HMaigc 自有数据库和随版本发布的 `SKILL.md` 建立；目录、版本号与 SHA-256 在 Run 中冻结，`skills.load` 只接受本轮已授权的精确版本和校验值。完整指令的真实加载适配器属于下一里程碑，当前不会回退旧 `skill.load`。
+- 模型每轮只接收当前用户真正可调用、已定价且凭据健康的模型事实。Skill 目录由 HMaigc 自有数据库和随版本发布的 `SKILL.md` 建立；目录、版本号与 SHA-256 在 Run 中冻结，`skills.load` 只接受本轮已授权且仍为已发布状态的精确版本和校验值，核验通过后才返回完整 instructions；不会回退旧 `skill.load`。
 - 每次新 Run 固定冻结 Runtime v5、Policy v5、Tool schema v6；UI 事件暂时仍为 protocol v4。Runtime v4/v5 工具图与更早版本只读保留历史事实，非终态旧 Run 不自动接管，任何恢复或写操作均不得把旧决策映射到 v6。
 - Agent 模型调用统一声明 Chat Completions 的 `response_format=json_object`，使不同文本模型共用同一严格决策契约。结构无效时，Runtime 保存 `model_decision_invalid` 诊断并终结本 Run；不会抽取文本、伪造默认决策、自动换模型或在本地拼补语义。
 - 参考图片只接受当前账号已就绪的图片 Resource；服务端冻结资源 ID、显示名称、MIME 与尺寸，拒绝浏览器 Blob URL、跨账号资源和失效资源。执行模式是必填运行事实，幂等重放若更换模型、Skill、附件或模式会显式冲突，禁止静默采用新配置。

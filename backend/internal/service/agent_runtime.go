@@ -59,9 +59,19 @@ type agentRuntimeModelTaskInput struct {
 	Config providerConfig `json:"config"`
 }
 
+type agentRuntimeScopeFact struct {
+	TenantKind      agentruntime.TenantKind `json:"tenantKind"`
+	TenantID        string                  `json:"tenantId"`
+	ActorUserID     string                  `json:"actorUserId"`
+	DomainProjectID string                  `json:"domainProjectId"`
+	CanvasID        string                  `json:"canvasId"`
+	ThreadID        string                  `json:"threadId"`
+}
+
 type agentRuntimeModelContext struct {
 	RunID                string                                `json:"runId"`
 	CanvasID             string                                `json:"canvasId"`
+	Scope                agentRuntimeScopeFact                 `json:"scope"`
 	ToolSchemaVersion    int                                   `json:"toolSchemaVersion"`
 	CanvasRevision       int64                                 `json:"canvasRevision"`
 	StepNumber           int                                   `json:"stepNumber"`

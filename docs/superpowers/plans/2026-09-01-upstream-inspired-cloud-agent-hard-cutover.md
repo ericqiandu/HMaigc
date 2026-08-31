@@ -421,6 +421,8 @@ go test ./internal/service -run 'TestAgentCapability(Read|Registry|Context|Skill
 
 Expected: PASS.
 
+**Implementation status (2026-09-01): complete.** Tool schema v6 now exposes one typed six-capability registry; `canvas.read`, `assets.read`, and `skills.load` execute through ownership-scoped server adapters, while unconnected mutation and paid capabilities fail explicitly. Model context contains bounded scope, model, Skill descriptor, and capability schema facts without preloading Skill instructions or fixed workflow content. Built-in Skill manifests publish only atomic capability names. Focused tests, the complete backend suite, and `go vet ./...` pass.
+
 **Step 5: Commit**
 
 ```powershell

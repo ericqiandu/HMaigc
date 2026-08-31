@@ -84,6 +84,14 @@ func TestMigrateSchemaPublishesGovernedViMaxDerivedSkillVersions(t *testing.T) {
 		"visual-consistency-review",
 		"visual-evidence-analysis",
 	}
+	expectedVersions := map[string]int{
+		"camera-tree-continuity":        2,
+		"character-visual-bible":        2,
+		"first-motion-last-frame":       2,
+		"storyboard-cinematic-language": 1,
+		"visual-consistency-review":     2,
+		"visual-evidence-analysis":      2,
+	}
 	type publishedSkill struct {
 		Dir                    string
 		Status                 string
@@ -111,7 +119,7 @@ func TestMigrateSchemaPublishesGovernedViMaxDerivedSkillVersions(t *testing.T) {
 	for index, skill := range skills {
 		var manifest agentruntime.SkillCapabilityManifest
 		manifestError := json.Unmarshal([]byte(skill.CapabilityManifestJSON), &manifest)
-		if skill.Dir != expectedDirs[index] || skill.Status != string(model.SkillStatusPublished) || skill.Version != 1 ||
+		if skill.Dir != expectedDirs[index] || skill.Status != string(model.SkillStatusPublished) || skill.Version != expectedVersions[skill.Dir] ||
 			len(skill.Checksum) != 64 || skill.SourceKind != "adapted" || skill.SourceURL != pinnedSourceURL ||
 			skill.SourceRevision != pinnedRevision || skill.SourceLicense != "MIT" || skill.PublishedAt == nil ||
 			manifestError != nil || agentruntime.ValidateSkillCapabilityManifest(manifest) != nil {

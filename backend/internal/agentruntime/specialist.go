@@ -105,7 +105,7 @@ func ValidateSkillCapabilityManifest(manifest SkillCapabilityManifest) error {
 	}
 	previousTool := AgentToolName("")
 	for _, tool := range manifest.Tools {
-		if !validProductionToolName(tool) || (previousTool != "" && tool <= previousTool) {
+		if !validSkillCapabilityToolName(tool) || (previousTool != "" && tool <= previousTool) {
 			return ErrSkillCapabilityManifestInvalid
 		}
 		previousTool = tool
@@ -162,7 +162,7 @@ func ValidateSpecialistRequest(request SpecialistRequest, parentModelRecordID st
 	}
 	previousTool := AgentToolName("")
 	for _, tool := range request.ToolAllowlist {
-		if !validProductionToolName(tool) || (previousTool != "" && tool <= previousTool) {
+		if !validSkillCapabilityToolName(tool) || (previousTool != "" && tool <= previousTool) {
 			return ErrSpecialistRequestInvalid
 		}
 		if _, declared := declaredTools[tool]; !declared {
@@ -188,9 +188,13 @@ func ValidateSkillSelectionsForSpecialist(skills []SkillSelection, specialist Sp
 	return nil
 }
 
-func validProductionToolName(tool AgentToolName) bool {
+// validSkillCapabilityToolName keeps immutable historical manifests readable
+// while allowing newly published manifests to authorize only atomic v6
+// capabilities. Active runtime policy still decides which schema can execute.
+func validSkillCapabilityToolName(tool AgentToolName) bool {
 	switch tool {
-	case ToolSpecialistDelegate, ToolVisionAnalyze, ToolMediaGenerate, ToolMediaAssemble, ToolCanvasProject:
+	case ToolSpecialistDelegate, ToolVisionAnalyze, ToolMediaGenerate, ToolMediaAssemble, ToolCanvasProject,
+		ToolCanvasRead, ToolCanvasApplyOps, ToolAssetsRead, ToolAssetsPublish, ToolSkillsLoad:
 		return true
 	default:
 		return false
