@@ -10,7 +10,6 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/skillcatalog"
 
 	"gorm.io/gorm"
@@ -53,30 +52,8 @@ func TestAgentRuntimeFreezesSeededFirstPartySkillVersion(t *testing.T) {
 }
 
 func TestAgentRuntimeCallableToolsRejectInvalidExecutionModeForCurrentSchema(t *testing.T) {
-	if _, err := agentRuntimeCallableTools(agentruntime.CurrentToolSchemaVersion, agentruntime.ExecutionMode("invalid")); err == nil {
+	if _, err := agentRuntimeCallableTools(agentruntime.ExecutionMode("invalid")); err == nil {
 		t.Fatal("expected current capability context to reject an invalid execution mode")
-	}
-}
-
-func TestResolveAgentRuntimeSkillSelectionsForSpecialistRejectsCapabilityMismatch(t *testing.T) {
-	svc, _, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
-	svc.agentRuntimeSkillResolver = func(_ context.Context, _ string, dir string) (*Skill, error) {
-		instructions := "只基于真实视觉输入形成可追溯证据。"
-		return &Skill{
-			Dir: dir, Name: "视觉证据分析", Description: "分析视觉资产", DetailText: instructions,
-			Version: 1, Checksum: agentRuntimeTestSkillChecksum(instructions), SourceKind: "original",
-			SourceRevision: "test-v1", SourceLicense: "HMaigc-Proprietary", PublishedAt: "2026-08-27T00:00:00Z",
-			CapabilityManifest: agentruntime.SkillCapabilityManifest{
-				Specialists:     []agentruntime.SpecialistKey{agentruntime.SpecialistVisual},
-				Tools:           []agentruntime.AgentToolName{agentruntime.ToolVisionAnalyze},
-				ArtifactSchemas: []string{"visual_evidence.v1"},
-			},
-		}, nil
-	}
-
-	_, err := svc.resolveAgentRuntimeSkillSelectionsForSpecialist(context.Background(), "user-1", []string{"visual-evidence-analysis"}, agentruntime.SpecialistNarrative)
-	if err == nil || !strings.Contains(err.Error(), "Skill Capability Manifest") {
-		t.Fatalf("capability mismatch error = %v", err)
 	}
 }
 
@@ -418,9 +395,8 @@ func TestAgentRuntimePromptIncludesCompletedClarificationFacts(t *testing.T) {
 			CompletionQuestionID: "duration", CompletionExpectedStateVersion: 3,
 		}},
 	}
-	prompt, err := encodeAgentRuntimeModelPromptForToolSchema(
-		agentRuntimeServiceScope(), state, 11, agentruntime.LegacyToolSchemaVersion,
-		nil, nil, nil, nil, nil,
+	prompt, err := encodeAgentRuntimeModelPrompt(
+		agentRuntimeServiceScope(), state, 11, nil, nil, nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -431,81 +407,6 @@ func TestAgentRuntimePromptIncludesCompletedClarificationFacts(t *testing.T) {
 	}
 	if len(context.ClarificationHistory[0].Answers) != 1 || context.ClarificationHistory[0].Answers[0].SelectedOptionIDs[0] != "30s" {
 		t.Fatalf("clarification answers = %#v", context.ClarificationHistory[0].Answers)
-	}
-}
-
-func TestEncodeProductionAgentRuntimePromptUsesOnlyGraphAndGenericTools(t *testing.T) {
-	t.Parallel()
-
-	delivery := agentruntime.ExpectedDelivery{
-		Kind:               agentruntime.DeliveryAnswer,
-		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
-	}
-	state := agentruntime.RuntimeState{
-		StateVersion: 4, StepNumber: 2, MaxSteps: 24, Status: agentruntime.RunRunning,
-		UserMessage: "创作一部短片", ExpectedDelivery: &delivery,
-		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic},
-	}
-	stage := agentRuntimeProductionStageFact{
-		ID: "stage-script", StageKey: "script", SpecialistKey: agentruntime.SpecialistNarrative,
-		Status: agentruntime.StageAwaitingReview, Version: 3, ReviewRevisionID: "revision-script-1",
-		ExpectedDelivery: delivery, ReviewPolicy: agentruntime.ReviewRequired, CostPolicy: agentruntime.CostNone,
-	}
-	production := &agentRuntimeProductionContextFact{
-		Graph: &agentRuntimeProductionGraphFact{
-			ID: "graph-version-1", GraphKey: "short-film", Version: 1,
-			SchemaVersion: agentruntime.CurrentProductionSchemaVersion, Stages: []agentRuntimeProductionStageFact{stage},
-		},
-		CurrentStage: &stage,
-		Artifacts: []agentRuntimeArtifactSummaryFact{{
-			ArtifactID: "artifact-script", ArtifactKey: "script", Kind: "script_bundle.v1", HeadRevision: 1,
-			RevisionID: "revision-script-1", SchemaVersion: 1, LifecycleStatus: "awaiting_review",
-		}},
-	}
-	prompt, err := encodeAgentRuntimeModelPromptForToolSchema(
-		agentRuntimeServiceScope(), state, 11, agentruntime.ProductionToolSchemaVersion,
-		nil, nil, production, nil, nil,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(strings.TrimPrefix(prompt, agentRuntimeModelPromptPrefix)), &raw); err != nil {
-		t.Fatal(err)
-	}
-	if _, found := raw["productionPlan"]; found {
-		t.Fatal("production prompt exposed historical productionPlan")
-	}
-	if _, found := raw["productionGraph"]; !found {
-		t.Fatal("production prompt omitted immutable productionGraph")
-	}
-	context := decodeAgentRuntimePromptContextForTest(t, prompt)
-	if context.ToolSchemaVersion != agentruntime.ProductionToolSchemaVersion {
-		t.Fatalf("tool schema version = %d", context.ToolSchemaVersion)
-	}
-	wantTools := []agentruntime.ToolName{
-		agentruntime.ToolSkillLoad,
-		agentruntime.ToolSpecialistDelegate,
-		agentruntime.ToolVisionAnalyze,
-		agentruntime.ToolMediaGenerate,
-		agentruntime.ToolCanvasProject,
-		agentruntime.ToolMediaAssemble,
-	}
-	if len(context.CallableTools) != len(wantTools) {
-		t.Fatalf("callable tools = %#v", context.CallableTools)
-	}
-	for index, want := range wantTools {
-		if context.CallableTools[index].Name != want {
-			t.Fatalf("callable tool[%d] = %q, want %q", index, context.CallableTools[index].Name, want)
-		}
-	}
-	if context.ProductionGraph == nil || context.ProductionGraph.ID != "graph-version-1" ||
-		context.CurrentStage == nil || context.CurrentStage.ReviewRevisionID != "revision-script-1" ||
-		len(context.Artifacts) != 1 || context.Artifacts[0].RevisionID != "revision-script-1" {
-		t.Fatalf("production context = graph %#v, stage %#v, artifacts %#v", context.ProductionGraph, context.CurrentStage, context.Artifacts)
-	}
-	if _, err := frozenAgentRuntimeModelContext(agentRuntimeServiceScope(), state, prompt); err != nil {
-		t.Fatalf("frozen production prompt rejected: %v", err)
 	}
 }
 
@@ -521,9 +422,8 @@ func TestEncodeCloudAgentRuntimePromptContainsOnlyAtomicCapabilities(t *testing.
 			MaxToolCalls: 24, StartedAt: startedAt, DeadlineAt: startedAt.Add(30 * time.Minute),
 		},
 	}
-	prompt, err := encodeAgentRuntimeModelPromptForToolSchema(
-		agentRuntimeServiceScope(), state, 11, agentruntime.CurrentToolSchemaVersion,
-		nil, nil, nil, nil, nil,
+	prompt, err := encodeAgentRuntimeModelPrompt(
+		agentRuntimeServiceScope(), state, 11, nil, nil, nil,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -578,120 +478,10 @@ func TestEncodeCloudAgentRuntimePromptRejectsOversizedContext(t *testing.T) {
 			ExecutionMode: agentruntime.ExecutionGuided,
 		},
 	}
-	if _, err := encodeAgentRuntimeModelPromptForToolSchema(
-		agentRuntimeServiceScope(), state, 7, agentruntime.CurrentToolSchemaVersion,
-		nil, nil, nil, nil, nil,
+	if _, err := encodeAgentRuntimeModelPrompt(
+		agentRuntimeServiceScope(), state, 7, nil, nil, nil,
 	); err == nil {
 		t.Fatal("oversized cloud agent context was accepted")
-	}
-}
-
-func TestLoadAgentRuntimeProductionContextFactUsesExactHeadFactsWithoutPayload(t *testing.T) {
-	svc, _, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
-	scope := agentRuntimeServiceScope()
-	scope.DomainProjectID = "runtime-project"
-	delivery := agentruntime.ExpectedDelivery{
-		Kind:               agentruntime.DeliveryAnswer,
-		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
-	}
-	graph, err := svc.repo.AppendProductionGraphVersion(scope, 0, agentruntime.ProductionGraphDraft{
-		GraphKey: "short-film",
-		Stages: []agentruntime.ProductionStageDraft{{
-			StageKey: "script", SpecialistKey: agentruntime.SpecialistNarrative,
-			DependsOnStageKeys: []string{}, InputRevisions: []agentruntime.ArtifactRevisionRef{},
-			ExpectedDelivery: delivery, ReviewPolicy: agentruntime.ReviewRequired, CostPolicy: agentruntime.CostNone,
-		}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.repo.AdvanceProductionStageCAS(scope, graph.Stages[0].ID, 1, agentruntime.StageRunning); err != nil {
-		t.Fatal(err)
-	}
-	revision, err := svc.repo.AppendArtifactRevision(scope, "script-artifact", 0, agentruntime.ArtifactDraft{
-		ArtifactKey: "script", Kind: "script_bundle.v1", SchemaVersion: 1,
-		Payload: json.RawMessage(`{"secretScript":"不得进入模型上下文"}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	fact, err := svc.loadAgentRuntimeProductionContextFact(scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fact.Graph == nil || fact.Graph.ID != graph.Graph.ID || fact.CurrentStage == nil ||
-		fact.CurrentStage.ID != graph.Stages[0].ID || fact.CurrentStage.Status != agentruntime.StageRunning {
-		t.Fatalf("production graph fact = %#v, current stage = %#v", fact.Graph, fact.CurrentStage)
-	}
-	if len(fact.Artifacts) != 1 || fact.Artifacts[0].RevisionID != revision.ID || fact.Artifacts[0].HeadRevision != 1 {
-		t.Fatalf("artifact facts = %#v", fact.Artifacts)
-	}
-	encoded, err := json.Marshal(fact)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(encoded), "不得进入模型上下文") {
-		t.Fatalf("production context exposed artifact payload: %s", encoded)
-	}
-}
-
-func TestAgentRuntimeModelPromptUsesStoredProductionToolSchema(t *testing.T) {
-	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
-	createAgentRuntimeCanvas(t, db)
-	scope := agentRuntimeServiceScope()
-	scope.DomainProjectID = "runtime-project"
-	if _, err := svc.repo.CreateAgentRun(repository.CreateAgentRunInput{
-		Scope: scope, ClientRequestID: "production-context-request", Now: time.Now().UTC(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Model(&model.AgentRun{}).Where("id = ?", scope.RunID).
-		Update("tool_schema_version", agentruntime.ProductionToolSchemaVersion).Error; err != nil {
-		t.Fatal(err)
-	}
-	delivery := agentruntime.ExpectedDelivery{
-		Kind:               agentruntime.DeliveryAnswer,
-		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
-	}
-	if _, err := svc.repo.AppendProductionGraphVersion(scope, 0, agentruntime.ProductionGraphDraft{
-		GraphKey: "short-film",
-		Stages: []agentruntime.ProductionStageDraft{{
-			StageKey: "script", SpecialistKey: agentruntime.SpecialistNarrative,
-			DependsOnStageKeys: []string{}, InputRevisions: []agentruntime.ArtifactRevisionRef{},
-			ExpectedDelivery: delivery, ReviewPolicy: agentruntime.ReviewRequired, CostPolicy: agentruntime.CostNone,
-		}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	state := agentruntime.RuntimeState{
-		StateVersion: 1, StepNumber: 0, MaxSteps: 24, Status: agentruntime.RunRunning,
-		UserMessage: "创作短片", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic},
-	}
-	prompt, err := svc.agentRuntimeModelPrompt(scope, state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	context := decodeAgentRuntimePromptContextForTest(t, prompt)
-	if context.ToolSchemaVersion != agentruntime.ProductionToolSchemaVersion || context.ProductionGraph == nil || context.ProductionPlan != nil {
-		t.Fatalf("production model context = %#v", context)
-	}
-}
-
-func TestProductionAgentRuntimeSystemPromptExposesOnlyGenericTools(t *testing.T) {
-	prompt, err := agentRuntimeSystemPromptForToolSchema(agentruntime.ProductionToolSchemaVersion)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, required := range []string{"skill.load", "specialist.delegate", "vision.analyze", "media.generate", "canvas.project"} {
-		if !strings.Contains(prompt, required) {
-			t.Fatalf("production system prompt is missing %q", required)
-		}
-	}
-	for _, legacy := range []string{"production.plan", "production.render", "canvas.commit"} {
-		if strings.Contains(prompt, legacy) {
-			t.Fatalf("production system prompt exposed legacy tool %q", legacy)
-		}
 	}
 }
 
@@ -712,6 +502,19 @@ func TestCloudAgentRuntimeSystemPromptExposesOnlyAtomicCapabilities(t *testing.T
 	}
 }
 
+func TestAgentRuntimeSystemPromptRejectsRetiredToolSchemas(t *testing.T) {
+	t.Parallel()
+
+	for _, toolSchemaVersion := range []int{
+		agentruntime.LegacyToolSchemaVersion,
+		agentruntime.ProductionToolSchemaVersion,
+	} {
+		if _, err := agentRuntimeSystemPromptForToolSchema(toolSchemaVersion); err == nil {
+			t.Fatalf("retired tool schema %d still has an executable system prompt", toolSchemaVersion)
+		}
+	}
+}
+
 func TestAgentRuntimeSystemPromptDeclaresStructuredClarificationDecision(t *testing.T) {
 	for _, required := range []string{
 		`"kind":"clarification_request"`,
@@ -719,7 +522,7 @@ func TestAgentRuntimeSystemPromptDeclaresStructuredClarificationDecision(t *test
 		`"type":"single_choice|multi_choice|free_text"`,
 		"仅当完成用户目标所需事实确实缺失时才允许追问",
 	} {
-		if !strings.Contains(agentRuntimeSystemPrompt, required) {
+		if !strings.Contains(agentRuntimeCloudSystemPrompt, required) {
 			t.Fatalf("agent runtime system prompt is missing %q", required)
 		}
 	}
@@ -731,7 +534,7 @@ func TestAgentRuntimeSystemPromptRequiresCompletionFromAccumulatedEvidence(t *te
 		"已经满足的 criterion 禁止重复执行",
 		"missingCriteria 只剩 final_message 时必须直接返回 final",
 	} {
-		if !strings.Contains(agentRuntimeSystemPrompt, required) {
+		if !strings.Contains(agentRuntimeCloudSystemPrompt, required) {
 			t.Fatalf("agent runtime system prompt is missing %q", required)
 		}
 	}
@@ -753,10 +556,6 @@ type agentRuntimePromptContextForTest struct {
 	Configuration        agentruntime.RunConfiguration         `json:"configuration"`
 	LoadedSkillDirs      []string                              `json:"loadedSkillDirs"`
 	ClarificationHistory []agentruntime.CompletedClarification `json:"clarificationHistory"`
-	ProductionPlan       *agentRuntimeProductionPlanFact       `json:"productionPlan"`
-	ProductionGraph      *agentRuntimeProductionGraphFact      `json:"productionGraph"`
-	CurrentStage         *agentRuntimeProductionStageFact      `json:"currentStage"`
-	Artifacts            []agentRuntimeArtifactSummaryFact     `json:"artifacts"`
 	CallableTools        []agentRuntimeCallableToolFact        `json:"callableTools"`
 	CallableModels       []struct {
 		ChannelID             string                      `json:"channelId"`

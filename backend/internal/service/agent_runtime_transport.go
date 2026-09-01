@@ -98,30 +98,6 @@ type AgentUIEvent struct {
 	CreatedAt       time.Time                   `json:"createdAt"`
 }
 
-type agentArtifactTimelinePayload struct {
-	ArtifactID     string                              `json:"artifactId"`
-	Kind           model.AgentProductionArtifactKind   `json:"kind"`
-	PlanKey        string                              `json:"planKey"`
-	PlanVersion    int                                 `json:"planVersion"`
-	ReferenceKey   string                              `json:"referenceKey,omitempty"`
-	ShotKey        string                              `json:"shotKey,omitempty"`
-	TaskID         string                              `json:"taskId,omitempty"`
-	BillingOrderID string                              `json:"billingOrderId,omitempty"`
-	ResourceID     string                              `json:"resourceId,omitempty"`
-	Status         model.AgentProductionArtifactStatus `json:"status"`
-}
-
-type agentArtifactUIEventPayload struct {
-	ArtifactID   string                              `json:"artifactId"`
-	Kind         model.AgentProductionArtifactKind   `json:"kind"`
-	PlanKey      string                              `json:"planKey"`
-	PlanVersion  int                                 `json:"planVersion"`
-	ReferenceKey string                              `json:"referenceKey,omitempty"`
-	ShotKey      string                              `json:"shotKey,omitempty"`
-	ResourceID   string                              `json:"resourceId"`
-	Status       model.AgentProductionArtifactStatus `json:"status"`
-}
-
 func ProjectAgentEvent(threadID string, event model.AgentRunEvent, item *model.AgentTimelineItem, protocolVersion int) (AgentUIEvent, error) {
 	threadID = strings.TrimSpace(threadID)
 	if protocolVersion != CurrentAgentUIProtocolVersion || threadID == "" || strings.TrimSpace(event.RunID) == "" ||
@@ -234,48 +210,23 @@ func projectAgentItemEvent(projected AgentUIEvent, event model.AgentRunEvent, it
 	}
 	projected.ItemID = item.ID
 	projected.ItemKind = item.Kind
-	if item.Kind == model.AgentTimelineItemApproval {
-		var envelope struct {
-			ContentType string `json:"contentType"`
-		}
-		if err := json.Unmarshal([]byte(item.ContentJSON), &envelope); err != nil {
-			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent approval timeline facts are invalid"))
-		}
-		if envelope.ContentType == agentruntime.StageReviewContentType {
-			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("retired stage review resolution is not part of Agent UI v5"))
-		}
-	}
-	if item.Kind == model.AgentTimelineItemToolCall {
-		var envelope struct {
-			ContentType string `json:"contentType"`
-		}
-		if err := json.Unmarshal([]byte(item.ContentJSON), &envelope); err != nil {
-			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent tool timeline facts are invalid"))
-		}
-		if envelope.ContentType == agentruntime.MediaAssemblyContentType {
-			content, err := agentruntime.DecodeMediaAssemblyTimelineContent([]byte(item.ContentJSON))
-			if err != nil || !mediaAssemblyTimelineStatusMatchesItem(content.TaskStatus, item.Status) {
-				return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent media assembly timeline facts are invalid"))
-			}
-			projected.Payload, err = json.Marshal(content)
-			if err != nil {
-				return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, err)
-			}
-			return projected, nil
-		}
-	}
-	if item.Kind != model.AgentTimelineItemArtifact {
-		projected.Payload = append(json.RawMessage(nil), item.ContentJSON...)
-		return projected, nil
-	}
 	var envelope struct {
 		ContentType string `json:"contentType"`
 	}
 	if err := json.Unmarshal([]byte(item.ContentJSON), &envelope); err != nil {
-		return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent artifact timeline facts are invalid"))
+		return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent timeline facts are invalid"))
 	}
-	if envelope.ContentType == agentruntime.ArtifactReviewContentType {
-		return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("retired artifact review is not part of Agent UI v5"))
+	if item.Kind == model.AgentTimelineItemApproval {
+		if envelope.ContentType == agentruntime.StageReviewContentType {
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("retired stage review resolution is not part of Agent UI v5"))
+		}
+	}
+	if item.Kind == model.AgentTimelineItemToolCall && envelope.ContentType == agentruntime.MediaAssemblyContentType {
+		return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("retired media assembly timeline content is not part of Agent UI v5"))
+	}
+	if item.Kind != model.AgentTimelineItemArtifact {
+		projected.Payload = append(json.RawMessage(nil), item.ContentJSON...)
+		return projected, nil
 	}
 	if envelope.ContentType == agentruntime.AssetPublicationContentType {
 		content, err := agentruntime.DecodeAssetPublicationContent([]byte(item.ContentJSON))
@@ -299,39 +250,7 @@ func projectAgentItemEvent(projected AgentUIEvent, event model.AgentRunEvent, it
 		}
 		return projected, nil
 	}
-	if envelope.ContentType != "" {
-		return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent artifact timeline content type is invalid"))
-	}
-	internal, err := decodeAgentArtifactTimelinePayload(item.ContentJSON)
-	if err != nil || internal.ArtifactID == "" ||
-		internal.PlanKey == "" || internal.PlanVersion < 1 || internal.ResourceID == "" || !internal.Status.Valid() {
-		return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent artifact timeline facts are invalid"))
-	}
-	safePayload, err := json.Marshal(agentArtifactUIEventPayload{
-		ArtifactID: internal.ArtifactID, Kind: internal.Kind, PlanKey: internal.PlanKey,
-		PlanVersion: internal.PlanVersion, ReferenceKey: internal.ReferenceKey, ShotKey: internal.ShotKey,
-		ResourceID: internal.ResourceID, Status: internal.Status,
-	})
-	if err != nil {
-		return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, err)
-	}
-	projected.Payload = safePayload
-	return projected, nil
-}
-
-func mediaAssemblyTimelineStatusMatchesItem(taskStatus agentruntime.MediaAssemblyTaskStatus, itemStatus model.AgentTimelineItemStatus) bool {
-	switch taskStatus {
-	case agentruntime.MediaAssemblyTaskQueued, agentruntime.MediaAssemblyTaskRunning:
-		return itemStatus == model.AgentTimelineItemInProgress
-	case agentruntime.MediaAssemblyTaskSucceeded:
-		return itemStatus == model.AgentTimelineItemCompleted
-	case agentruntime.MediaAssemblyTaskFailed:
-		return itemStatus == model.AgentTimelineItemFailed
-	case agentruntime.MediaAssemblyTaskCancelled:
-		return itemStatus == model.AgentTimelineItemInterrupted
-	default:
-		return false
-	}
+	return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("retired artifact timeline content is not part of the current Agent UI protocol"))
 }
 
 func validateAgentProjectedItem(projected AgentUIEvent, event model.AgentRunEvent, item *model.AgentTimelineItem) error {
@@ -358,20 +277,6 @@ func projectAgentVisibleModelDelta(projected AgentUIEvent, event model.AgentRunE
 	projected.ItemKind = item.Kind
 	projected.Payload = json.RawMessage(event.PayloadJSON)
 	return projected, nil
-}
-
-func decodeAgentArtifactTimelinePayload(raw string) (agentArtifactTimelinePayload, error) {
-	decoder := json.NewDecoder(strings.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	var payload agentArtifactTimelinePayload
-	if err := decoder.Decode(&payload); err != nil {
-		return agentArtifactTimelinePayload{}, err
-	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return agentArtifactTimelinePayload{}, errors.New("agent event payload has trailing data")
-	}
-	return payload, nil
 }
 
 type agentVisibleModelDeltaPayload struct {
@@ -407,41 +312,6 @@ type AgentControlError struct {
 	ErrorCode          string `json:"errorCode"`
 	Message            string `json:"-"`
 	LatestStateVersion int    `json:"latestStateVersion,omitempty"`
-}
-
-type AgentProductionStageView struct {
-	ID               string                             `json:"id"`
-	StageKey         string                             `json:"stageKey"`
-	SpecialistKey    agentruntime.SpecialistKey         `json:"specialistKey"`
-	ReviewPolicy     agentruntime.ReviewPolicy          `json:"reviewPolicy"`
-	CostPolicy       agentruntime.CostPolicy            `json:"costPolicy"`
-	Status           agentruntime.ProductionStageStatus `json:"status"`
-	Version          int64                              `json:"version"`
-	ReviewRevisionID string                             `json:"reviewRevisionId,omitempty"`
-	LastErrorCode    string                             `json:"lastErrorCode,omitempty"`
-	UpdatedAt        time.Time                          `json:"updatedAt"`
-}
-
-type AgentStageReviewView struct {
-	Stage                       AgentProductionStageView `json:"stage"`
-	ArtifactRevisionIDs         []string                 `json:"artifactRevisionIds"`
-	SelectedCandidateRevisionID string                   `json:"selectedCandidateRevisionId,omitempty"`
-	Publication                 *AssetPublicationResult  `json:"publication,omitempty"`
-}
-
-type AgentArtifactRevisionView struct {
-	ArtifactID        string                             `json:"artifactId"`
-	RevisionID        string                             `json:"revisionId"`
-	ArtifactKey       string                             `json:"artifactKey"`
-	Revision          int64                              `json:"revision"`
-	Kind              string                             `json:"kind"`
-	SchemaVersion     int                                `json:"schemaVersion"`
-	Payload           json.RawMessage                    `json:"payload"`
-	ResourceID        string                             `json:"resourceId,omitempty"`
-	UpstreamRevisions []agentruntime.ArtifactRevisionRef `json:"upstreamRevisions"`
-	SkillVersions     []agentruntime.SkillSelection      `json:"skillVersions"`
-	LifecycleStatus   string                             `json:"lifecycleStatus"`
-	CreatedAt         time.Time                          `json:"createdAt"`
 }
 
 func (err *AgentControlError) Error() string {
@@ -495,175 +365,6 @@ func (s *Service) ReadScopedAgentRun(actor *model.User, runID string) (*AgentRun
 		return nil, err
 	}
 	return s.readAgentRuntimeView(scope)
-}
-
-func (s *Service) ReviewScopedProductionStage(
-	ctx context.Context,
-	actor *model.User,
-	runID string,
-	stageID string,
-	command agentruntime.StageReviewCommand,
-) (*AgentStageReviewView, error) {
-	scope, err := s.scopeForAgentRun(actor, runID)
-	if err != nil {
-		return nil, err
-	}
-	if !scope.CanMutateCanvas() {
-		return nil, Forbidden("当前用户没有审核 Agent 阶段的画布权限")
-	}
-	parentRun, err := s.repo.AgentRunForScope(scope)
-	if err != nil {
-		return nil, err
-	}
-	result, err := s.ReviewProductionStage(ctx, scope, *parentRun, strings.TrimSpace(stageID), command)
-	if err != nil {
-		return nil, s.mapStageReviewError(err)
-	}
-	return agentStageReviewView(result), nil
-}
-
-func (s *Service) ApproveScopedProductionStageCandidate(
-	ctx context.Context,
-	actor *model.User,
-	runID string,
-	stageID string,
-	command StageCandidateApprovalCommand,
-) (*AgentStageReviewView, error) {
-	scope, err := s.scopeForAgentRun(actor, runID)
-	if err != nil {
-		return nil, err
-	}
-	if !scope.CanMutateCanvas() {
-		return nil, Forbidden("当前用户没有审核 Agent 阶段的画布权限")
-	}
-	parentRun, err := s.repo.AgentRunForScope(scope)
-	if err != nil {
-		return nil, err
-	}
-	result, err := s.ApproveStageCandidate(ctx, scope, *parentRun, strings.TrimSpace(stageID), command)
-	if err != nil {
-		return nil, s.mapStageReviewError(err)
-	}
-	return agentStageReviewView(result), nil
-}
-
-func (s *Service) ReadScopedAgentArtifactRevision(
-	actor *model.User,
-	runID string,
-	artifactID string,
-	revisionID string,
-) (*AgentArtifactRevisionView, error) {
-	scope, err := s.scopeForAgentRun(actor, runID)
-	if err != nil {
-		return nil, err
-	}
-	revision, err := s.repo.ArtifactRevisionForArtifactInScope(scope, strings.TrimSpace(artifactID), strings.TrimSpace(revisionID))
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, NotFound("Agent 产物版本不存在")
-	}
-	if err != nil {
-		return nil, err
-	}
-	var upstream []agentruntime.ArtifactRevisionRef
-	if err := decodeStrictStoredJSONDocument(revision.UpstreamRevisionsJSON, func(decoder *json.Decoder) error {
-		return decoder.Decode(&upstream)
-	}); err != nil {
-		return nil, errors.Join(errors.New("Agent 产物上游版本事实损坏"), err)
-	}
-	var skills []agentruntime.SkillSelection
-	if err := decodeStrictStoredJSONDocument(revision.SkillVersionsJSON, func(decoder *json.Decoder) error {
-		return decoder.Decode(&skills)
-	}); err != nil {
-		return nil, errors.Join(errors.New("Agent 产物技能版本事实损坏"), err)
-	}
-	payload := json.RawMessage(revision.PayloadJSON)
-	if !json.Valid(payload) {
-		return nil, errors.New("Agent 产物正文事实损坏")
-	}
-	return &AgentArtifactRevisionView{
-		ArtifactID: revision.ArtifactID, RevisionID: revision.ID, ArtifactKey: revision.ArtifactKey,
-		Revision: revision.Revision, Kind: revision.Kind, SchemaVersion: revision.SchemaVersion,
-		Payload: payload, ResourceID: revision.ResourceID, UpstreamRevisions: upstream,
-		SkillVersions: skills, LifecycleStatus: revision.LifecycleStatus, CreatedAt: revision.CreatedAt,
-	}, nil
-}
-
-func productionStageView(stage model.AgentProductionStage) AgentProductionStageView {
-	return AgentProductionStageView{
-		ID: stage.ID, StageKey: stage.StageKey, SpecialistKey: stage.SpecialistKey,
-		ReviewPolicy: stage.ReviewPolicy, CostPolicy: stage.CostPolicy, Status: stage.Status,
-		Version: stage.Version, ReviewRevisionID: stage.ReviewRevisionID,
-		LastErrorCode: stage.LastErrorCode, UpdatedAt: stage.UpdatedAt,
-	}
-}
-
-func agentStageReviewView(result StageReviewResult) *AgentStageReviewView {
-	view := &AgentStageReviewView{
-		Stage: productionStageView(result.Stage), ArtifactRevisionIDs: []string{}, Publication: result.Publication,
-	}
-	if result.Completion != nil {
-		for _, revision := range result.Completion.Revisions {
-			view.ArtifactRevisionIDs = append(view.ArtifactRevisionIDs, revision.ID)
-		}
-	}
-	if result.SelectedCandidate != nil {
-		view.SelectedCandidateRevisionID = result.SelectedCandidate.ID
-	}
-	return view
-}
-
-func (s *Service) mapStageReviewError(err error) error {
-	switch {
-	case errors.Is(err, ErrVisualCandidateSelectionInvalid):
-		return &AgentControlError{
-			Status: http.StatusBadRequest, ErrorCode: "visual_candidate_selection_invalid", Message: "候选产物选择事实无效",
-		}
-	case errors.Is(err, ErrVisualCandidateSelectionRequired):
-		return &AgentControlError{
-			Status: http.StatusConflict, ErrorCode: "visual_candidate_selection_required", Message: "当前阶段必须选择一个经过审核的候选产物",
-		}
-	case errors.Is(err, ErrAssetPublicationInvalid):
-		return &AgentControlError{
-			Status: http.StatusBadRequest, ErrorCode: "asset_publication_invalid", Message: "资产入库参数无效",
-		}
-	case errors.Is(err, ErrAssetPublicationApprovalRequired):
-		return &AgentControlError{
-			Status: http.StatusConflict, ErrorCode: "asset_publication_approval_required", Message: "资产入库缺少与当前产物完全一致的用户批准",
-		}
-	case errors.Is(err, ErrAssetPublicationResourceMissing):
-		return &AgentControlError{
-			Status: http.StatusConflict, ErrorCode: "asset_publication_resource_missing", Message: "已批准产物缺少可入库的真实媒体资源",
-		}
-	case errors.Is(err, ErrAssetPublicationBillingMissing):
-		return &AgentControlError{
-			Status: http.StatusConflict, ErrorCode: "asset_publication_billing_missing", Message: "已批准产物缺少完整的模型调用或计费事实",
-		}
-	case errors.Is(err, ErrAssetPublicationConflict):
-		return &AgentControlError{
-			Status: http.StatusConflict, ErrorCode: "asset_publication_conflict", Message: "资产入库事实已经变化，请刷新后重试",
-		}
-	case errors.Is(err, ErrAssetPublicationFailed):
-		return &AgentControlError{
-			Status: http.StatusInternalServerError, ErrorCode: "asset_publication_failed", Message: "资产入库失败，原始产物已保留，可使用同一批准重试",
-		}
-	case errors.Is(err, agentruntime.ErrProductionStageVersionConflict), errors.Is(err, agentruntime.ErrStageApprovalRevisionMismatch):
-		return &AgentControlError{
-			Status: http.StatusConflict, ErrorCode: "stage_approval_revision_mismatch",
-			Message: "Agent 阶段审核版本已经变化，请按最新产物重试",
-		}
-	case errors.Is(err, agentruntime.ErrProductionStageTransitionInvalid):
-		return &AgentControlError{
-			Status: http.StatusBadRequest, ErrorCode: "stage_review_invalid", Message: "Agent 阶段审核请求格式无效",
-		}
-	case errors.Is(err, repository.ErrProductionStageReviewConflict), errors.Is(err, repository.ErrProductionStageConflict),
-		errors.Is(err, repository.ErrAgentSpecialistRunConflict), errors.Is(err, agentruntime.ErrSpecialistModelInheritance),
-		errors.Is(err, agentruntime.ErrInterruptConflict), errors.Is(err, repository.ErrAgentRuntimeStepConflict):
-		return &AgentControlError{
-			Status: http.StatusConflict, ErrorCode: "stage_review_conflict", Message: "Agent 阶段审核状态已经变化，请按最新状态重试",
-		}
-	default:
-		return err
-	}
 }
 
 func (s *Service) readAgentRuntimeView(scope agentruntime.Scope) (*AgentRuntimeView, error) {

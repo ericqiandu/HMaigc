@@ -8,10 +8,9 @@ import (
 )
 
 const (
-	taskCapabilityImage  = "image"
-	taskCapabilityVideo  = "video"
-	taskCapabilityVision = "vision"
-	taskCapabilityOther  = "other"
+	taskCapabilityImage = "image"
+	taskCapabilityVideo = "video"
+	taskCapabilityOther = "other"
 )
 
 func taskConcurrencyCapability(taskType string) (string, error) {
@@ -20,13 +19,10 @@ func taskConcurrencyCapability(taskType string) (string, error) {
 		return taskCapabilityImage, nil
 	case taskType == "canvas_video" || strings.HasPrefix(taskType, "video_"):
 		return taskCapabilityVideo, nil
-	case taskType == agentVisualAnalysisTaskType:
-		return taskCapabilityVision, nil
 	case taskType == "canvas_audio",
 		taskType == "canvas_text",
 		taskType == "agent_session",
 		taskType == agentRuntimeModelTaskType,
-		taskType == agentSpecialistModelTaskType,
 		taskType == "agent_storyboard",
 		taskType == "agent_storyboard_rows":
 		return taskCapabilityOther, nil
@@ -72,8 +68,6 @@ func concurrencyClassCapabilities(concurrencyClass string) []string {
 		return []string{"image"}
 	case taskCapabilityVideo:
 		return []string{"video"}
-	case taskCapabilityVision:
-		return []string{"vision"}
 	case taskCapabilityOther:
 		return []string{"audio", "text"}
 	default:
@@ -88,8 +82,6 @@ func capabilityLimitMessage(capability string, limit int) string {
 		label = "图片"
 	case taskCapabilityVideo:
 		label = "视频"
-	case taskCapabilityVision:
-		label = "视觉分析"
 	}
 	return fmt.Sprintf("当前会员套餐的%s任务并发上限为 %d，请等待已有任务完成或升级套餐", label, limit)
 }

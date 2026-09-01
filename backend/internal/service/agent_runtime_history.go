@@ -66,6 +66,28 @@ type AgentThreadHistoryView struct {
 	Items []AgentThreadHistoryItem `json:"items"`
 }
 
+type agentHistoricalArtifactTimelinePayload struct {
+	ArtifactID   string                              `json:"artifactId"`
+	Kind         model.AgentProductionArtifactKind   `json:"kind"`
+	PlanKey      string                              `json:"planKey"`
+	PlanVersion  int                                 `json:"planVersion"`
+	ReferenceKey string                              `json:"referenceKey,omitempty"`
+	ShotKey      string                              `json:"shotKey,omitempty"`
+	ResourceID   string                              `json:"resourceId,omitempty"`
+	Status       model.AgentProductionArtifactStatus `json:"status"`
+}
+
+type agentHistoricalArtifactView struct {
+	ArtifactID   string                              `json:"artifactId"`
+	Kind         model.AgentProductionArtifactKind   `json:"kind"`
+	PlanKey      string                              `json:"planKey"`
+	PlanVersion  int                                 `json:"planVersion"`
+	ReferenceKey string                              `json:"referenceKey,omitempty"`
+	ShotKey      string                              `json:"shotKey,omitempty"`
+	ResourceID   string                              `json:"resourceId"`
+	Status       model.AgentProductionArtifactStatus `json:"status"`
+}
+
 func (s *Service) ListAgentThreads(actor *model.User, canvasID string, limit int) (*AgentThreadHistoryView, error) {
 	if actor == nil {
 		return nil, Unauthorized("请先登录")
@@ -143,16 +165,52 @@ func agentTimelineHistoryContent(item model.AgentTimelineItem) (json.RawMessage,
 	if item.Kind != model.AgentTimelineItemArtifact {
 		return append(json.RawMessage(nil), item.ContentJSON...), nil
 	}
-	internal, err := decodeAgentArtifactTimelinePayload(item.ContentJSON)
+	var envelope struct {
+		ContentType string `json:"contentType"`
+	}
+	if err := json.Unmarshal([]byte(item.ContentJSON), &envelope); err != nil {
+		return nil, errors.New("agent artifact timeline facts are invalid")
+	}
+	switch envelope.ContentType {
+	case agentruntime.AssetPublicationContentType:
+		if _, err := agentruntime.DecodeAssetPublicationContent([]byte(item.ContentJSON)); err != nil {
+			return nil, errors.New("agent asset publication timeline facts are invalid")
+		}
+		return append(json.RawMessage(nil), item.ContentJSON...), nil
+	case agentruntime.AssetPublicationFailedType:
+		if _, err := agentruntime.DecodeAssetPublicationFailureContent([]byte(item.ContentJSON)); err != nil {
+			return nil, errors.New("agent asset publication failure timeline facts are invalid")
+		}
+		return append(json.RawMessage(nil), item.ContentJSON...), nil
+	case "":
+		// Historical production artifacts remain readable for audit, but are never executable.
+	default:
+		return nil, errors.New("retired agent artifact timeline content is not readable by the current history contract")
+	}
+	internal, err := decodeHistoricalAgentArtifactTimelinePayload(item.ContentJSON)
 	if err != nil || internal.ArtifactID == "" || internal.PlanKey == "" || internal.PlanVersion < 1 ||
 		internal.ResourceID == "" || !internal.Status.Valid() {
 		return nil, errors.New("agent artifact timeline facts are invalid")
 	}
-	return json.Marshal(agentArtifactUIEventPayload{
+	return json.Marshal(agentHistoricalArtifactView{
 		ArtifactID: internal.ArtifactID, Kind: internal.Kind, PlanKey: internal.PlanKey,
 		PlanVersion: internal.PlanVersion, ReferenceKey: internal.ReferenceKey, ShotKey: internal.ShotKey,
 		ResourceID: internal.ResourceID, Status: internal.Status,
 	})
+}
+
+func decodeHistoricalAgentArtifactTimelinePayload(raw string) (agentHistoricalArtifactTimelinePayload, error) {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var payload agentHistoricalArtifactTimelinePayload
+	if err := decoder.Decode(&payload); err != nil {
+		return agentHistoricalArtifactTimelinePayload{}, err
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return agentHistoricalArtifactTimelinePayload{}, errors.New("agent event payload has trailing data")
+	}
+	return payload, nil
 }
 
 func decodeAgentRuntimeState(stateJSON string) (agentruntime.RuntimeState, error) {

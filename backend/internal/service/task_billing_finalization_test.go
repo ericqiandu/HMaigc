@@ -269,63 +269,6 @@ func TestTaskOutboxCrashRecoveryAndDuplicateDelivery(t *testing.T) {
 	}
 }
 
-func TestAtomicCompletionProductionPathSettlesBeforeTaskBecomesVisible(t *testing.T) {
-	_, db := newMembershipTestService(t)
-	if err := db.AutoMigrate(&model.Session{}, &model.Message{}, &model.Result{}, &model.TaskOutbox{}); err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now().UTC()
-	account := model.CreditAccount{
-		UserID: "production-completion-user", AvailableMicrocredits: 8_000_000,
-		ReservedMicrocredits: 2_000_000, CreatedAt: now, UpdatedAt: now,
-	}
-	order := model.BillingOrder{
-		ID: "production-completion-order", UserID: account.UserID, TaskID: "production-completion-task",
-		IdempotencyKey: "production-completion-order", ChannelID: "production-channel", Model: "production-model",
-		Capability: "video", Scene: "canvas", BillingMode: "per_second", AmountMicrocredits: 2_000_000,
-		Status: model.BillingStatusRunning, ProviderRequestID: "production-provider-request", CreatedAt: now, UpdatedAt: now,
-	}
-	leaseExpiry := now.Add(time.Minute)
-	task := model.Task{
-		ID: order.TaskID, UserID: account.UserID, Type: "canvas_video", Status: model.TaskStatusRunning,
-		Operation:      "production_render:production-completion-run",
-		BillingOrderID: order.ID, ProviderRequestID: order.ProviderRequestID, LeaseOwner: "production-worker",
-		LeaseExpiresAt: &leaseExpiry, LeaseGeneration: 1,
-		LeaseToken: "3123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-		CreatedAt:  now, UpdatedAt: now,
-	}
-	if err := db.Create(&account).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&order).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&task).Error; err != nil {
-		t.Fatal(err)
-	}
-
-	svc := New(repository.New(db), t.TempDir())
-	if err := svc.saveTaskCompletion(&task, []byte(`{"videos":[{"resourceId":"production-resource"}]}`), nil, false); err != nil {
-		t.Fatal(err)
-	}
-	storedTask, err := svc.repo.Task(task.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	storedOrder, err := svc.repo.BillingOrder(order.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var storedOutbox model.TaskOutbox
-	if err := db.First(&storedOutbox, "task_id = ?", task.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if storedTask.Status != model.TaskStatusSucceeded || storedOrder.Status != model.BillingStatusSettled ||
-		storedOutbox.Status != model.TaskOutboxPending || storedOutbox.EventType != model.TaskOutboxAgentRunWakeup {
-		t.Fatalf("production completion was not atomic: task=%s billing=%s outbox=%#v", storedTask.Status, storedOrder.Status, storedOutbox)
-	}
-}
-
 func TestTaskOutboxCrashRecoveryRetriesAgentTimelineDelivery(t *testing.T) {
 	_, db := newMembershipTestService(t)
 	if err := db.AutoMigrate(&model.TaskOutbox{}); err != nil {
@@ -336,7 +279,7 @@ func TestTaskOutboxCrashRecoveryRetriesAgentTimelineDelivery(t *testing.T) {
 	now := time.Now().UTC()
 	if err := db.Create(&model.Task{
 		ID: "timeline-recovery-task", UserID: "timeline-user", Type: "canvas_video",
-		Status: model.TaskStatusSucceeded, Operation: "production_render:timeline-run", CreatedAt: now, UpdatedAt: now,
+		Status: model.TaskStatusSucceeded, Operation: agentMediaGenerationOperationForRun("timeline-run"), CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +333,7 @@ func TestTaskOutboxRejectsRunScopeThatConflictsWithTerminalTask(t *testing.T) {
 	now := time.Now().UTC()
 	if err := db.Create(&model.Task{
 		ID: "scope-conflict-task", UserID: "scope-user", Type: "canvas_video",
-		Status: model.TaskStatusSucceeded, Operation: "production_render:task-run", CreatedAt: now, UpdatedAt: now,
+		Status: model.TaskStatusSucceeded, Operation: agentMediaGenerationOperationForRun("task-run"), CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -495,16 +438,16 @@ func TestExpectedAgentTaskIDReadsFrozenGenerationTaskIdentity(t *testing.T) {
 		wantErr   bool
 	}{
 		{
-			name: "legacy production render", toolName: agentruntime.ToolProductionRender,
-			arguments: []byte(`{"taskId":"production-task"}`), want: "production-task",
+			name: "retired production render", toolName: agentruntime.ToolProductionRender,
+			arguments: []byte(`{"taskId":"production-task"}`), want: "",
 		},
 		{
 			name: "retired media envelope", toolName: agentruntime.ToolMediaGenerate,
 			arguments: []byte(`{"commercial":{"taskId":"media-task"}}`), wantErr: true,
 		},
 		{
-			name: "current visual analysis", toolName: agentruntime.ToolVisionAnalyze,
-			arguments: []byte(`{"commercial":{"taskId":"vision-task"}}`), want: "vision-task",
+			name: "retired visual analysis", toolName: agentruntime.ToolVisionAnalyze,
+			arguments: []byte(`{"commercial":{"taskId":"vision-task"}}`), want: "",
 		},
 		{
 			name: "atomic media capability", toolName: agentruntime.ToolMediaGenerate,

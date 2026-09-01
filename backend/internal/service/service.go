@@ -64,7 +64,6 @@ type Service struct {
 	operationsClient          opsprotocol.Client
 	mediaDurationProbe        mediaDurationProbe
 	mediaFileProbe            mediaFileProbe
-	mediaAssembler            MediaAssembler
 	agentRuntimeSkillResolver func(context.Context, string, string) (*Skill, error)
 }
 
@@ -202,7 +201,7 @@ type agentStoryboardShot struct {
 
 func New(repo *repository.Repository, dataDir string) *Service {
 	coordinator, err := newRuntimeCoordinator(repo.Dialect())
-	return &Service{repo: repo, dataDir: dataDir, activeCancels: make(map[string]context.CancelFunc), coordinator: coordinator, runtimeErr: err, workerID: newID(), mediaAssembler: execMediaAssembler{}}
+	return &Service{repo: repo, dataDir: dataDir, activeCancels: make(map[string]context.CancelFunc), coordinator: coordinator, runtimeErr: err, workerID: newID()}
 }
 
 func (s *Service) taskExecutionSigningMaterial() (string, []byte, error) {
@@ -230,29 +229,6 @@ func (s *Service) taskExecutionBinding(task *model.Task, order *model.BillingOrd
 		binding.TenantKind = string(agentruntime.TenantTeam)
 		binding.TenantID = order.TeamID
 	}
-	if task.ExecutionKind == model.TaskExecutionLocalMediaAssembly {
-		input, err := decodeMediaAssemblyTaskInput(task.InputJSON)
-		if err != nil {
-			return taskruntime.Binding{}, err
-		}
-		if err := input.Scope.Validate(); err != nil {
-			return taskruntime.Binding{}, err
-		}
-		if err := input.PlanRevision.Validate(); err != nil {
-			return taskruntime.Binding{}, err
-		}
-		binding.TenantKind = string(input.Scope.TenantKind)
-		binding.TenantID = input.Scope.TenantID
-		binding.ProjectID = input.Scope.DomainProjectID
-		binding.CanvasID = input.Scope.CanvasID
-		binding.RunID = input.Scope.RunID
-		binding.ArtifactRevisionID = input.PlanRevision.RevisionID
-		if task.UserID != input.Scope.ActorUserID || task.ProjectID != input.Scope.CanvasID {
-			return taskruntime.Binding{}, errors.New("本地媒体组装任务作用域与任务事实冲突")
-		}
-		return binding, validateTaskEnvelopeBillingTenant(binding, order)
-	}
-
 	if runID, ok := agentTaskParentRunID(task.Operation); ok {
 		identity, err := s.repo.AgentRunIdentityForActor(runID, task.UserID)
 		if err != nil {
@@ -268,25 +244,6 @@ func (s *Service) taskExecutionBinding(task *model.Task, order *model.BillingOrd
 		binding.RunID = identity.Run.ID
 		return binding, validateTaskEnvelopeBillingTenant(binding, order)
 	}
-	if strings.HasPrefix(task.Operation, "agent-specialist:") {
-		specialistRunID, err := decodeSpecialistRunIDFromTask(task)
-		if err != nil {
-			return taskruntime.Binding{}, err
-		}
-		run, err := s.repo.AgentSpecialistRunForActor(specialistRunID, task.UserID)
-		if err != nil {
-			return taskruntime.Binding{}, fmt.Errorf("Specialist 运行身份不可用：%w", err)
-		}
-		if run.CanvasID != task.ProjectID || task.Operation != agentSpecialistOperation(run.ID) {
-			return taskruntime.Binding{}, errors.New("Specialist 运行作用域与任务事实冲突")
-		}
-		binding.TenantKind = string(run.TenantKind)
-		binding.TenantID = run.TenantID
-		binding.ProjectID = run.DomainProjectID
-		binding.CanvasID = run.CanvasID
-		binding.RunID = run.ID
-		return binding, validateTaskEnvelopeBillingTenant(binding, order)
-	}
 	return binding, validateTaskEnvelopeBillingTenant(binding, order)
 }
 
@@ -294,37 +251,7 @@ func agentTaskParentRunID(operation string) (string, bool) {
 	if runID, ok := agentRuntimeModelRunID(operation); ok {
 		return runID, true
 	}
-	if runID, ok := agentProductionRenderRunID(operation); ok {
-		return runID, true
-	}
-	if runID, ok := agentVisualAnalysisRunID(operation); ok {
-		return runID, true
-	}
 	return agentMediaGenerationRunID(operation)
-}
-
-func decodeSpecialistRunIDFromTask(task *model.Task) (string, error) {
-	var input agentSpecialistTaskInput
-	decoder := json.NewDecoder(strings.NewReader(task.InputJSON))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		return "", errors.New("Specialist 任务输入事实无效")
-	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return "", errors.New("Specialist 任务输入事实无效")
-	}
-	var prompt agentSpecialistPrompt
-	promptDecoder := json.NewDecoder(strings.NewReader(input.Prompt))
-	promptDecoder.DisallowUnknownFields()
-	if err := promptDecoder.Decode(&prompt); err != nil {
-		return "", errors.New("Specialist 请求事实无效")
-	}
-	if err := promptDecoder.Decode(&trailing); !errors.Is(err, io.EOF) || strings.TrimSpace(prompt.SpecialistRunID) == "" ||
-		task.ID != agentSpecialistTaskID(prompt.SpecialistRunID) {
-		return "", errors.New("Specialist 请求身份与任务事实冲突")
-	}
-	return prompt.SpecialistRunID, nil
 }
 
 func validateTaskEnvelopeBillingTenant(binding taskruntime.Binding, order *model.BillingOrder) error {
@@ -1282,16 +1209,8 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	if task.Type == agentRuntimeModelTaskType {
 		runID, _ = agentRuntimeModelRunID(task.Operation)
 		wakeup = agentWakeModelTaskFinished
-	} else if productionRunID, productionTask := agentProductionRenderRunID(task.Operation); productionTask {
-		runID = productionRunID
-	} else if visualRunID, visualTask := agentVisualAnalysisRunID(task.Operation); visualTask {
-		runID = visualRunID
 	} else if mediaRunID, mediaTask := agentMediaGenerationRunID(task.Operation); mediaTask {
 		runID = mediaRunID
-	} else if task.ExecutionKind == model.TaskExecutionLocalMediaAssembly && task.Type == agentruntime.MediaAssemblyTaskType {
-		if input, decodeErr := decodeMediaAssemblyTaskInput(task.InputJSON); decodeErr == nil && input.ToolCallID != "" {
-			runID = input.Scope.RunID
-		}
 	}
 	terminalOutbox, outboxErr := taskAgentRunOutboxDraft(*task, time.Now().UTC())
 	if outboxErr != nil {
@@ -1340,30 +1259,6 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	defer close(leaseDone)
 	s.registerActiveTask(task.ID, cancel)
 	defer s.unregisterActiveTask(task.ID)
-	if task.ExecutionKind == model.TaskExecutionLocalMediaAssembly {
-		if task.Audience != model.TaskAudienceInternal || task.Type != agentruntime.MediaAssemblyTaskType || task.BillingOrderID != "" {
-			failure := repository.ErrInternalTaskFactConflict
-			if failErr := s.repo.FailClaimedTaskFacts(task.ID, task.UserID, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken, failure, time.Now().UTC()); failErr != nil {
-				return errors.Join(failure, failErr)
-			}
-			return failure
-		}
-		if progressErr := s.repo.UpdateTaskProgress(task.ID, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken, "本地媒体装配中", 35); progressErr != nil {
-			return progressErr
-		}
-		if latest, loadErr := s.repo.Task(task.ID); loadErr != nil {
-			return loadErr
-		} else {
-			input, decodeErr := decodeMediaAssemblyTaskInput(latest.InputJSON)
-			if decodeErr != nil {
-				return decodeErr
-			}
-			if timelineErr := s.appendPersistedMediaAssemblyTaskTimeline(input.Scope, *latest); timelineErr != nil {
-				return timelineErr
-			}
-		}
-		return s.processClaimedMediaAssembly(ctx, task)
-	}
 	if task.ExecutionKind != model.TaskExecutionProvider || strings.TrimSpace(task.BillingOrderID) == "" {
 		failure := errors.New("供应商任务执行事实无效或缺少计费订单")
 		if failErr := s.repo.FailClaimedTaskFacts(task.ID, task.UserID, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken, failure, time.Now().UTC()); failErr != nil {
@@ -1560,7 +1455,7 @@ func taskExecutionTimeoutWithPolicy(taskType string, policy RuntimeTaskPolicy) t
 	switch {
 	case taskType == "agent_storyboard" || taskType == "agent_storyboard_rows":
 		return time.Duration(policy.StoryboardTimeoutMinutes) * time.Minute
-	case taskType == agentruntime.MediaAssemblyTaskType || strings.HasPrefix(taskType, "canvas_video") || strings.HasPrefix(taskType, "video_"):
+	case strings.HasPrefix(taskType, "canvas_video") || strings.HasPrefix(taskType, "video_"):
 		return time.Duration(policy.VideoTimeoutMinutes) * time.Minute
 	case strings.HasPrefix(taskType, "canvas_image"):
 		return time.Duration(policy.ImageTimeoutMinutes) * time.Minute
@@ -1592,10 +1487,6 @@ func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]
 	ctx = withProviderAnalytics(ctx, s, task)
 	if task.Type == "agent_storyboard_rows" {
 		return s.processStoryboardRowsTask(ctx, task)
-	}
-	if task.Type == agentVisualAnalysisTaskType {
-		result, err := s.processAgentVisualAnalysisTask(ctx, task)
-		return result, nil, err
 	}
 	if task.Type == agentRuntimeModelTaskType {
 		result, err := s.processAgentRuntimeModelText(ctx, task)

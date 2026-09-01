@@ -231,7 +231,7 @@ func TestAgentRuntimeSkillLoadIsRequiredBeforeFinal(t *testing.T) {
 	}
 	loaded, err := agentruntime.ResolveTool(waiting.State, agentruntime.ToolResolution{
 		ToolCallID: "load-storyboard", ActionVersion: 1, Succeeded: true,
-		Output: json.RawMessage(`{"dir":"storyboard-director","name":"分镜导演","version":7,"instructions":"先建立可执行镜头计划。"}`),
+		Output: json.RawMessage(`{"skillDir":"storyboard-director","version":7,"checksum":"` + testSkillChecksum("先建立可执行镜头计划。") + `","instructions":"先建立可执行镜头计划。"}`),
 	})
 	if err != nil {
 		t.Fatal(err)

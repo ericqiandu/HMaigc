@@ -93,26 +93,6 @@ func (s *Service) resolveAgentRuntimeSkillSelections(ctx context.Context, actorU
 	return skills, nil
 }
 
-func (s *Service) resolveAgentRuntimeSkillSelectionsForSpecialist(
-	ctx context.Context,
-	actorUserID string,
-	dirs []string,
-	specialist agentruntime.SpecialistKey,
-) ([]agentruntime.SkillSelection, error) {
-	normalized, err := normalizeAgentRuntimeConfigurationInput(AgentRuntimeConfigurationInput{SkillDirs: dirs, ExecutionMode: agentruntime.ExecutionGuided})
-	if err != nil {
-		return nil, err
-	}
-	skills, err := s.resolveAgentRuntimeSkillSelections(ctx, actorUserID, normalized.SkillDirs)
-	if err != nil {
-		return nil, err
-	}
-	if err := agentruntime.ValidateSkillSelectionsForSpecialist(skills, specialist); err != nil {
-		return nil, BadAuthRequest("Skill Capability Manifest 与 Specialist 不匹配")
-	}
-	return skills, nil
-}
-
 func normalizeAgentRuntimeConfigurationInput(input AgentRuntimeConfigurationInput) (AgentRuntimeConfigurationInput, error) {
 	result := AgentRuntimeConfigurationInput{GenerationModels: cloneGenerationModelSelections(input.GenerationModels), ExecutionMode: input.ExecutionMode}
 	if result.ExecutionMode != agentruntime.ExecutionGuided && result.ExecutionMode != agentruntime.ExecutionAutomatic {

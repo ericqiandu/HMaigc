@@ -63,7 +63,7 @@ type interruptAgentRunRequest struct {
 
 type agentRuntimeRequest interface {
 	createAgentThreadRequest | startAgentRunRequest | submitAgentApprovalRequest | submitAgentClarificationResponseRequest |
-		steerAgentRunRequest | interruptAgentRunRequest | stageReviewRequest
+		steerAgentRunRequest | interruptAgentRunRequest
 }
 
 func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {

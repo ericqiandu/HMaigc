@@ -1,15 +1,17 @@
 package service
 
 import (
-	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"infinite-canvas/backend/internal/agentruntime"
+	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/skillcatalog"
 )
 
 func TestAdvanceAgentRunExpiresPersistedDeadlineBeforeResumingWork(t *testing.T) {
@@ -182,6 +184,48 @@ func TestCoordinatePendingCloudReadExecutesRegistryCapability(t *testing.T) {
 	}
 }
 
+func TestCoordinatePendingAgentToolRejectsRetiredRunContractBeforeExecution(t *testing.T) {
+	server, _ := newAgentRuntimeDecisionServer(t, `{"kind":"final","final":{"message":"完成。","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	scope := agentRuntimeServiceScope()
+	if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: scope, ClientRequestID: "retired-tool-contract", UserMessage: "读取画布",
+		Configuration: AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionAutomatic},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := svc.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, err := agentruntime.Advance(state, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall,
+		ToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "retired-contract-read", ToolName: agentruntime.ToolCanvasRead, ActionVersion: 1,
+			Arguments:        json.RawMessage(`{"canvasId":"runtime-canvas","selectedNodeIds":[],"includeViewport":true}`),
+			ExpectedDelivery: agentRuntimeTestAnswerDelivery(),
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.repo.CommitAgentRuntimeTransition(scope, state, requested, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentRun{}).Where("id = ?", scope.RunID).
+		Update("tool_schema_version", agentruntime.ProductionToolSchemaVersion).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = svc.coordinatePendingAgentTool(scope, CoordinateAgentToolInput{
+		ToolCallID: "retired-contract-read", ActionVersion: 1,
+	})
+	if err == nil || !strings.Contains(err.Error(), agentruntime.FailureRuntimeSchemaRetired) {
+		t.Fatalf("error = %v, want retired runtime contract failure", err)
+	}
+}
+
 func TestAdvanceAgentRunReusesOneDeterministicModelTask(t *testing.T) {
 	server, calls := newAgentRuntimeDecisionServer(t, `{"kind":"final","final":{"message":"完成。","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
 	defer server.Close()
@@ -256,19 +300,31 @@ func TestRecoverStaleAgentRunsSerializesConcurrentRecovery(t *testing.T) {
 }
 
 func TestAdvanceAgentRunExecutesFreeSkillOnceAndCreatesOneNextModelTask(t *testing.T) {
-	skipPendingAtomicSkillAdapter(t)
-	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"coordinator-skill","toolName":"skill.load","actionVersion":1,"arguments":{"dir":"storyboard-director"}}}`
+	builtins, err := skillcatalog.Builtins()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selected skillcatalog.BuiltinSkill
+	for _, builtin := range builtins {
+		if builtin.Dir == "short-drama-director" {
+			selected = builtin
+			break
+		}
+	}
+	if selected.Dir == "" {
+		t.Fatal("short-drama-director is not published")
+	}
+	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"coordinator-skill","toolName":"skills.load","actionVersion":1,"arguments":{"skillDir":"` + selected.Dir + `","version":` + strconv.Itoa(selected.Version) + `,"checksum":"` + selected.Checksum + `"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`
 	server, calls := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestAnswerDelivery())
 	defer server.Close()
 	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
-	svc.agentRuntimeSkillResolver = func(_ context.Context, _ string, dir string) (*Skill, error) {
-		instructions := "冻结说明"
-		return &Skill{Dir: dir, Name: "分镜导演", Description: "拆解镜头", DetailText: instructions, Version: 1, Checksum: agentRuntimeTestSkillChecksum(instructions)}, nil
+	if err := database.MigrateSchema(db); err != nil {
+		t.Fatal(err)
 	}
 	scope := agentRuntimeServiceScope()
 	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
 		Scope: scope, ClientRequestID: "coordinator-skill-run", UserMessage: "加载分镜技能",
-		Configuration: AgentRuntimeConfigurationInput{SkillDirs: []string{"storyboard-director"}, ExecutionMode: agentruntime.ExecutionAutomatic},
+		Configuration: AgentRuntimeConfigurationInput{SkillDirs: []string{selected.Dir}, ExecutionMode: agentruntime.ExecutionAutomatic},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -281,7 +337,7 @@ func TestAdvanceAgentRunExecutesFreeSkillOnceAndCreatesOneNextModelTask(t *testi
 		t.Fatal(err)
 	}
 	if progress.State.Status != agentruntime.RunRunning || progress.ModelTask == nil || progress.ModelTask.ID == started.ModelTask.ID ||
-		len(progress.State.LoadedSkillDirs) != 1 || progress.State.LoadedSkillDirs[0] != "storyboard-director" {
+		len(progress.State.LoadedSkillDirs) != 1 || progress.State.LoadedSkillDirs[0] != selected.Dir {
 		t.Fatalf("coordinator skill progress = %#v", progress)
 	}
 	replayed, err := svc.advanceAgentRun(scope, agentWakeStaleRecovery)

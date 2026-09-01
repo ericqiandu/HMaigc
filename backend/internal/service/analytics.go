@@ -915,9 +915,6 @@ func mergeCurrency(current string, next string) string {
 
 func capabilityFromTaskType(taskType string) string {
 	value := strings.ToLower(taskType)
-	if value == agentVisualAnalysisTaskType {
-		return "vision"
-	}
 	for _, capability := range []string{"video", "image", "audio", "text"} {
 		if strings.Contains(value, capability) {
 			return capability

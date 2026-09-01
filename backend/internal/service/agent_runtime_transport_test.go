@@ -3,7 +3,6 @@ package service
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -103,44 +102,31 @@ func TestProjectAgentEventProducesVersionedRunAndItemEvents(t *testing.T) {
 	}
 }
 
-func TestProjectAgentEventMapsStrictMediaAssemblyLifecycle(t *testing.T) {
+func TestProjectAgentEventRejectsRetiredMediaAssemblyLifecycle(t *testing.T) {
 	now := time.Now().UTC()
-	content := `{"contentType":"media_assembly","toolCallId":"assemble-final","actionVersion":1,"taskId":"assembly-task","taskStatus":"%s","stage":"%s","clipCount":1,"audioMode":"none","output":{"artifactKey":"final-video","container":"mp4","videoCodec":"h264","audioCodec":"none","width":1920,"height":1080,"frameRate":24},"planRevision":{"artifactId":"artifact-assembly","revisionId":"revision-assembly-2"}%s}`
-	tests := []struct {
-		name       string
-		status     model.AgentTimelineItemStatus
-		taskStatus string
-		stage      string
-		terminal   string
-		wantKind   AgentUIEventKind
-	}{
-		{name: "running", status: model.AgentTimelineItemInProgress, taskStatus: "running", stage: "拼接视频片段", wantKind: AgentUIEventItemDelta},
-		{name: "succeeded", status: model.AgentTimelineItemCompleted, taskStatus: "succeeded", stage: "装配完成", terminal: `,"final":{"artifactRevision":{"artifactId":"artifact-final","revisionId":"revision-final-1"},"resourceId":"resource-final","adopted":true}`, wantKind: AgentUIEventItemCompleted},
-		{name: "failed", status: model.AgentTimelineItemFailed, taskStatus: "failed", stage: "装配失败", terminal: `,"errorCode":"media_assembly_failed"`, wantKind: AgentUIEventItemFailed},
-		{name: "cancelled", status: model.AgentTimelineItemInterrupted, taskStatus: "cancelled", stage: "Agent 任务已终止", terminal: `,"errorCode":"media_assembly_cancelled"`, wantKind: AgentUIEventItemFailed},
+	content := `{"contentType":"media_assembly","toolCallId":"assemble-final","actionVersion":1,"taskId":"assembly-task","taskStatus":"running","stage":"拼接视频片段"}`
+	tests := []model.AgentTimelineItemStatus{
+		model.AgentTimelineItemInProgress,
+		model.AgentTimelineItemCompleted,
+		model.AgentTimelineItemFailed,
+		model.AgentTimelineItemInterrupted,
 	}
-	for index, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
+	for index, status := range tests {
+		t.Run(string(status), func(t *testing.T) {
 			sequence := int64(index + 1)
-			payload := fmt.Sprintf(content, test.taskStatus, test.stage, test.terminal)
 			item := model.AgentTimelineItem{
-				ID: "assembly-item-" + test.name, ThreadID: "thread-assembly", RunID: "run-assembly",
-				Kind: model.AgentTimelineItemToolCall, Status: test.status, Ordinal: 1,
-				SourceEventSequence: sequence, ContentJSON: payload, StartedAt: now, CreatedAt: now, UpdatedAt: now,
+				ID: "assembly-item-" + string(status), ThreadID: "thread-assembly", RunID: "run-assembly",
+				Kind: model.AgentTimelineItemToolCall, Status: status, Ordinal: 1,
+				SourceEventSequence: sequence, ContentJSON: content, StartedAt: now, CreatedAt: now, UpdatedAt: now,
 			}
-			if test.status != model.AgentTimelineItemInProgress {
+			if status != model.AgentTimelineItemInProgress {
 				item.CompletedAt = &now
 			}
-			projected, err := ProjectAgentEvent(item.ThreadID, model.AgentRunEvent{
+			if _, err := ProjectAgentEvent(item.ThreadID, model.AgentRunEvent{
 				RunID: item.RunID, Sequence: sequence, Kind: agentruntime.EventArtifactAvailable,
-				PayloadJSON: payload, CreatedAt: now,
-			}, &item, CurrentAgentUIProtocolVersion)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if projected.Kind != test.wantKind || projected.ItemID != item.ID ||
-				projected.ItemKind != model.AgentTimelineItemToolCall || string(projected.Payload) != payload {
-				t.Fatalf("projected assembly event = %#v", projected)
+				PayloadJSON: content, CreatedAt: now,
+			}, &item, CurrentAgentUIProtocolVersion); err == nil {
+				t.Fatal("retired media assembly lifecycle was projected")
 			}
 		})
 	}
@@ -393,7 +379,7 @@ func TestProjectAgentEventRejectsUnknownProtocolInvalidFactsAndUnboundItems(t *t
 	}
 }
 
-func TestProjectAgentEventSanitizesArtifactPayload(t *testing.T) {
+func TestProjectAgentEventRejectsRetiredProductionArtifactPayload(t *testing.T) {
 	now := time.Now().UTC()
 	event := model.AgentRunEvent{
 		RunID: "run-artifact", Sequence: 8, Kind: agentruntime.EventArtifactAvailable,
@@ -406,20 +392,8 @@ func TestProjectAgentEventSanitizesArtifactPayload(t *testing.T) {
 		ContentJSON: `{"artifactId":"artifact-1","kind":"video_clip","planKey":"plan-1","planVersion":1,"shotKey":"shot-1","taskId":"task-private","billingOrderId":"bill-private","resourceId":"resource-1","status":"succeeded"}`,
 		StartedAt:   now, CompletedAt: &now, CreatedAt: now, UpdatedAt: now,
 	}
-	projected, err := ProjectAgentEvent(item.ThreadID, event, &item, CurrentAgentUIProtocolVersion)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if projected.Kind != AgentUIEventItemCompleted || projected.ItemID != item.ID ||
-		!strings.Contains(string(projected.Payload), `"resourceId":"resource-1"`) ||
-		strings.Contains(string(projected.Payload), "task-private") || strings.Contains(string(projected.Payload), "bill-private") ||
-		strings.Contains(strings.ToLower(string(projected.Payload)), "url") {
-		t.Fatalf("projected artifact payload = %s", projected.Payload)
-	}
-
-	item.ContentJSON = `{"artifactId":"artifact-1","kind":"video_clip","planKey":"plan-1","planVersion":1,"resourceId":"resource-1","status":"succeeded","signedUrl":"https://oss.example/signed"}`
 	if _, err := ProjectAgentEvent(item.ThreadID, event, &item, CurrentAgentUIProtocolVersion); err == nil {
-		t.Fatal("artifact timeline containing a signed URL was accepted")
+		t.Fatal("retired production artifact was projected into the current Agent UI protocol")
 	}
 }
 
@@ -500,14 +474,13 @@ func (value assetPublicationFailureJSON) MarshalJSON() ([]byte, error) {
 func TestAgentTimelineHistoryContentSanitizesArtifactPayload(t *testing.T) {
 	item := model.AgentTimelineItem{
 		Kind:        model.AgentTimelineItemArtifact,
-		ContentJSON: `{"artifactId":"artifact-1","kind":"video_clip","planKey":"plan-1","planVersion":1,"shotKey":"shot-1","taskId":"task-private","billingOrderId":"bill-private","resourceId":"resource-1","status":"succeeded"}`,
+		ContentJSON: `{"artifactId":"artifact-1","kind":"video_clip","planKey":"plan-1","planVersion":1,"shotKey":"shot-1","resourceId":"resource-1","status":"succeeded"}`,
 	}
 	content, err := agentTimelineHistoryContent(item)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(content), `"resourceId":"resource-1"`) || strings.Contains(string(content), "task-private") ||
-		strings.Contains(string(content), "bill-private") || strings.Contains(strings.ToLower(string(content)), "url") {
+	if !strings.Contains(string(content), `"resourceId":"resource-1"`) || strings.Contains(strings.ToLower(string(content)), "url") {
 		t.Fatalf("history artifact payload = %s", content)
 	}
 	item.ContentJSON = `{"artifactId":"artifact-1","kind":"video_clip","planKey":"plan-1","planVersion":1,"resourceId":"resource-1","status":"succeeded","signedUrl":"https://oss.example/signed"}`

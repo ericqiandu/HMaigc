@@ -15,7 +15,6 @@ import (
 
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 )
 
 type CoordinateAgentToolInput struct {
@@ -205,17 +204,24 @@ func (s *Service) coordinatePendingAgentTool(scope agentruntime.Scope, input Coo
 		}
 		return s.agentRuntimeProgressForCurrentState(scope, state)
 	}
+	run, err := s.repo.AgentRunForScope(scope)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateAgentRuntimeExecutionContract(*run); err != nil {
+		return nil, err
+	}
 	call := state.PendingToolCall
 	expectedStatus := agentruntime.ToolCallPending
 	if state.PendingToolStarted {
 		expectedStatus = agentruntime.ToolCallRunning
 	}
-	record, policy, err := s.frozenAgentToolCall(scope, call, expectedStatus, state.Configuration.ExecutionMode)
+	_, policy, err := s.frozenAgentToolCall(scope, call, expectedStatus, state.Configuration.ExecutionMode)
 	if err != nil && expectedStatus == agentruntime.ToolCallRunning {
 		// A capability with an authoritative external effect may persist its
 		// success receipt atomically with that effect before the runtime
 		// checkpoint advances. Resume from that exact frozen receipt.
-		record, policy, err = s.frozenAgentToolCall(scope, call, agentruntime.ToolCallSucceeded, state.Configuration.ExecutionMode)
+		_, policy, err = s.frozenAgentToolCall(scope, call, agentruntime.ToolCallSucceeded, state.Configuration.ExecutionMode)
 	}
 	if err != nil {
 		return nil, err
@@ -227,78 +233,39 @@ func (s *Service) coordinatePendingAgentTool(scope agentruntime.Scope, input Coo
 	if err := authorizeAgentToolScope(scope, project, access, policy.RequiredAccess); err != nil {
 		return nil, err
 	}
-	var output []byte
-	run, err := s.repo.AgentRunForScope(scope)
-	if err != nil {
-		return nil, err
+	registry, registryErr := newAgentCapabilityRegistry(s)
+	if registryErr != nil {
+		return nil, registryErr
 	}
-	if run.ToolSchemaVersion == agentruntime.CurrentToolSchemaVersion {
-		registry, registryErr := newAgentCapabilityRegistry(s)
-		if registryErr != nil {
-			return nil, registryErr
+	execution, executionErr := registry.Execute(context.Background(), scope, *call)
+	if executionErr != nil {
+		failureCode := "capability_execution_failed"
+		var capabilityFailure *agentCapabilityExecutionError
+		if errors.As(executionErr, &capabilityFailure) {
+			failureCode = capabilityFailure.Code
 		}
-		execution, executionErr := registry.Execute(context.Background(), scope, *call)
-		if executionErr != nil {
-			failureCode := "capability_execution_failed"
-			var capabilityFailure *agentCapabilityExecutionError
-			if errors.As(executionErr, &capabilityFailure) {
-				failureCode = capabilityFailure.Code
-			}
-			return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, failureCode, map[string]string{"reason": executionErr.Error()})
-		}
-		if execution.Pending {
-			if len(execution.Output) != 0 {
-				return nil, errors.New("pending agent capability returned terminal output")
-			}
-			if state.PendingToolStarted {
-				return s.agentRuntimeProgressForCurrentState(scope, state)
-			}
-			started, beginErr := agentruntime.BeginToolExecution(state, agentruntime.ToolExecution{
-				ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
-			})
-			if beginErr != nil {
-				return nil, beginErr
-			}
-			progress, commitErr := s.commitAgentRuntimeState(scope, state, started)
-			if commitErr != nil {
-				return nil, commitErr
-			}
-			return s.agentRuntimeProgressForCurrentState(scope, progress.State)
-		}
-		output = execution.Output
-	} else {
-		switch call.ToolName {
-		case agentruntime.ToolSkillLoad:
-			output, err = executeAgentSkillLoad(state.Configuration, call.Arguments)
-			if err != nil {
-				return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, "skill_load_invalid", map[string]string{"reason": err.Error()})
-			}
-		case agentruntime.ToolProductionPlan:
-			output, err = s.executeAgentProductionPlan(scope, call.Arguments)
-			if errors.Is(err, errAgentRuntimeProductionPlanInput) {
-				return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, "production_plan_invalid", map[string]string{"reason": err.Error()})
-			}
-			if errors.Is(err, repository.ErrAgentProductionPlanVersionConflict) {
-				return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, "production_plan_version_conflict", map[string]string{"reason": err.Error()})
-			}
-		case agentruntime.ToolSpecialistDelegate:
-			return s.coordinatePendingAgentSpecialistDelegate(scope, state, call)
-		case agentruntime.ToolProductionRender:
-			return s.coordinatePendingAgentProductionRender(scope, state, call, record)
-		case agentruntime.ToolVisionAnalyze:
-			return s.coordinatePendingAgentVisualAnalysis(scope, state, call, record)
-		case agentruntime.ToolMediaGenerate:
-			return s.coordinatePendingAgentMediaGeneration(scope, state, call, record)
-		case agentruntime.ToolCanvasCommit:
-			return s.coordinatePendingAgentProductionCanvasCommit(scope, state, call, record)
-		case agentruntime.ToolCanvasProject:
-			return s.coordinatePendingAgentCanvasProjection(scope, state, call, record)
-		case agentruntime.ToolMediaAssemble:
-			return s.coordinatePendingAgentMediaAssembly(scope, state, call, record)
-		default:
-			return nil, errors.New("agent tool executor is not connected")
-		}
+		return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, failureCode, map[string]string{"reason": executionErr.Error()})
 	}
+	if execution.Pending {
+		if len(execution.Output) != 0 {
+			return nil, errors.New("pending agent capability returned terminal output")
+		}
+		if state.PendingToolStarted {
+			return s.agentRuntimeProgressForCurrentState(scope, state)
+		}
+		started, beginErr := agentruntime.BeginToolExecution(state, agentruntime.ToolExecution{
+			ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
+		})
+		if beginErr != nil {
+			return nil, beginErr
+		}
+		progress, commitErr := s.commitAgentRuntimeState(scope, state, started)
+		if commitErr != nil {
+			return nil, commitErr
+		}
+		return s.agentRuntimeProgressForCurrentState(scope, progress.State)
+	}
+	output := execution.Output
 	if err != nil {
 		return nil, err
 	}

@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"sort"
 	"strings"
 	"time"
@@ -859,30 +858,18 @@ func validateClarificationState(state RuntimeState) error {
 	return nil
 }
 
-type resolvedSkillLoad struct {
-	Dir          string `json:"dir"`
-	Name         string `json:"name"`
-	Version      int    `json:"version"`
-	Instructions string `json:"instructions"`
-}
-
 func resolvedSkillDir(selected []SkillSelection, output json.RawMessage) (string, error) {
-	decoder := json.NewDecoder(bytes.NewReader(output))
-	decoder.DisallowUnknownFields()
-	var result resolvedSkillLoad
-	if err := decoder.Decode(&result); err != nil {
+	decoded, err := DecodeCapabilityResult(ToolSkillsLoad, output)
+	if err != nil {
 		return "", errors.New("agent skill load result is invalid")
 	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+	result, ok := decoded.(SkillsLoadResult)
+	if !ok {
 		return "", errors.New("agent skill load result is invalid")
 	}
-	result.Dir = strings.TrimSpace(result.Dir)
-	result.Name = strings.TrimSpace(result.Name)
-	result.Instructions = strings.TrimSpace(result.Instructions)
 	for _, skill := range selected {
-		if skill.Dir == result.Dir && skill.Name == result.Name && skill.Version == result.Version && skill.Instructions == result.Instructions {
-			return result.Dir, nil
+		if skill.Dir == result.SkillDir && skill.Version == result.Version && skill.Checksum == result.Checksum && skill.Instructions == result.Instructions {
+			return result.SkillDir, nil
 		}
 	}
 	return "", errors.New("agent skill load result conflicts with frozen selection")

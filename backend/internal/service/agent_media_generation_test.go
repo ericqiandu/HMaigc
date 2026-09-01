@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 )
 
 func TestMediaApprovalRejectsChangedParametersQuantityAndExpiredQuote(t *testing.T) {
@@ -165,7 +167,7 @@ func TestRepeatedMediaApprovalCreatesOneInternalTaskAndReservation(t *testing.T)
 	createAgentRuntimeImageModel(t, db, fixture)
 	scope := agentRuntimeServiceScope()
 	now := time.Date(2026, time.August, 28, 8, 0, 0, 0, time.UTC)
-	createAgentRuntimeScopedRunFacts(t, db, scope, now)
+	createAgentRuntimeScopedRunFacts(t, svc, scope, now)
 	command := mediaGenerationTestCommand(t)
 
 	frozen, err := svc.FreezeMediaQuote(scope, command, now)
@@ -241,7 +243,7 @@ func TestSimultaneousMediaAttemptCreatesOneInternalTaskAndReservation(t *testing
 	createAgentRuntimeImageModel(t, db, fixture)
 	scope := agentRuntimeServiceScope()
 	now := time.Date(2026, time.August, 28, 8, 0, 0, 0, time.UTC)
-	createAgentRuntimeScopedRunFacts(t, db, scope, now)
+	createAgentRuntimeScopedRunFacts(t, svc, scope, now)
 	command := mediaGenerationTestCommand(t)
 
 	frozen, err := svc.FreezeMediaQuote(scope, command, now)
@@ -326,7 +328,7 @@ func mediaGenerationTestCommand(t *testing.T) MediaGenerationCommand {
 		ArtifactRevisionID: "artifact-revision-image-1",
 		Attempt:            1,
 		TaskType:           "canvas_image",
-		Operation:          "production_render:runtime-run",
+		Operation:          agentMediaGenerationOperationForRun("runtime-run"),
 		Prompt:             "鲜橙产品特写",
 		Capability:         "image",
 		ChannelID:          "runtime-image-channel",
@@ -338,6 +340,15 @@ func mediaGenerationTestCommand(t *testing.T) MediaGenerationCommand {
 			Resolutions: []string{"1K", "2K", "4K"}, Ratios: []string{"1:1"},
 			Qualities: []string{"low", "medium", "high"}, OutputCounts: []int{1},
 		},
+	}
+}
+
+func createAgentRuntimeScopedRunFacts(t *testing.T, svc *Service, scope agentruntime.Scope, now time.Time) {
+	t.Helper()
+	if _, err := svc.repo.CreateAgentRun(repository.CreateAgentRunInput{
+		Scope: scope, ClientRequestID: "media-generation-test", Now: now,
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 

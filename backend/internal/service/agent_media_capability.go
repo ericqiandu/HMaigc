@@ -125,7 +125,7 @@ func (s *Service) agentMediaCapabilityResources(scope agentruntime.Scope, task *
 		if kind != mediaKind {
 			return nil, errors.New("media.generate result kind conflicts with the approved capability")
 		}
-		resource, loadErr := s.productionResourceForScope(scope, candidate.ResourceID)
+		resource, loadErr := s.agentResourceForScope(scope, candidate.ResourceID)
 		if loadErr != nil || resource.Status != model.ResourceStatusReady || resource.Kind != string(kind) {
 			return nil, errors.Join(errors.New("media.generate result resource is not ready in the approved tenant scope"), loadErr)
 		}
@@ -134,6 +134,13 @@ func (s *Service) agentMediaCapabilityResources(scope agentruntime.Scope, task *
 		})
 	}
 	return resources, nil
+}
+
+func (s *Service) agentResourceForScope(scope agentruntime.Scope, resourceID string) (*model.Resource, error) {
+	if scope.TenantKind == agentruntime.TenantTeam {
+		return s.repo.ResourceForTeam(scope.TenantID, resourceID)
+	}
+	return s.repo.ResourceForUser(scope.ActorUserID, resourceID)
 }
 
 func (s *Service) freezeAgentMediaCapabilityQuote(scope agentruntime.Scope, call agentruntime.ToolCallDecision, now time.Time) (*agentruntime.ApprovalCostQuote, error) {
@@ -200,7 +207,6 @@ func (s *Service) agentMediaCapabilityCommand(scope agentruntime.Scope, argument
 			return MediaGenerationCommand{}, errAgentMediaInputChanged
 		}
 		resources = append(resources, agentMediaInputResource{
-			Revision:   agentruntime.ArtifactRevisionRef{ArtifactID: resourceID, RevisionID: resourceID},
 			ResourceID: resourceID, Kind: fact.Kind, URL: "/api/resources/" + resourceID + "/file",
 			MimeType: fact.MimeType, DurationMS: fact.DurationMS,
 		})
