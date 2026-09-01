@@ -500,7 +500,7 @@ func TestCommitAgentRuntimeTransitionRequiresFrozenMediaQuote(t *testing.T) {
 }
 
 func TestCommitAgentRuntimeTransitionPersistsToolExecutionStartAtomically(t *testing.T) {
-	repo, _ := openAgentRuntimeRepositorySQLite(t)
+	repo, db := openAgentRuntimeRepositorySQLite(t)
 	scope := repositoryAgentScope()
 	createAgentRunForTest(t, repo, scope)
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
@@ -566,6 +566,32 @@ func TestCommitAgentRuntimeTransitionPersistsToolExecutionStartAtomically(t *tes
 	}
 	if !loaded.PendingToolStarted || loaded.StateVersion != started.State.StateVersion || loaded.StepNumber != requested.State.StepNumber {
 		t.Fatalf("started checkpoint = %#v", loaded)
+	}
+
+	// canvas.apply_ops persists its successful receipt atomically with the
+	// canvas revision. A worker crash before checkpoint advancement must resume
+	// from that exact receipt instead of treating the terminal tool row as a
+	// transition conflict.
+	receipt := []byte(`{"canvasId":"agent-canvas-1","baseRevision":7,"committedRevision":8,"clientMutationId":"call-apply","proposalHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","appliedOperationIds":["delete-obsolete"],"evidence":{"addedNodeIds":[],"updatedNodeIds":[],"deletedNodeIds":["obsolete"],"upsertedConnectionIds":[],"deletedConnectionIds":[],"selectedNodeIds":[],"viewportApplied":false}}`)
+	if err := db.Model(&model.AgentToolCall{}).Where("id = ?", record.ID).
+		Updates(agentToolCompletionUpdates{Status: agentruntime.ToolCallSucceeded, OutputJSON: string(receipt), UpdatedAt: time.Now().UTC()}).Error; err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := agentruntime.ResolveTool(started.State, agentruntime.ToolResolution{
+		ToolCallID: "call-apply", ActionVersion: 1, Succeeded: true, Output: receipt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, started.State, resolved, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.LastToolResult == nil || !loaded.LastToolResult.Succeeded || string(loaded.LastToolResult.Output) != string(receipt) {
+		t.Fatalf("resumed completed tool checkpoint = %#v", loaded)
 	}
 }
 

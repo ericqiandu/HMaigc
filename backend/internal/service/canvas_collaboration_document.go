@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -47,6 +48,9 @@ func validateCanvasMutationPatch(patch CanvasMutationPatch) error {
 		}
 		if patch.Document.DirectorScenes != nil && !json.Valid(*patch.Document.DirectorScenes) {
 			return BadAuthRequest("导演台数据格式无效")
+		}
+		if patch.Document.Viewport != nil && !validCanvasViewportPatch(*patch.Document.Viewport) {
+			return BadAuthRequest("画布视口数据无效")
 		}
 	}
 	return nil
@@ -128,6 +132,9 @@ func applyCanvasMutationPatch(
 		if patch.Document.DirectorScenes != nil {
 			document["directorScenes"] = append(json.RawMessage(nil), (*patch.Document.DirectorScenes)...)
 		}
+		if patch.Document.Viewport != nil {
+			document["viewport"], _ = json.Marshal(*patch.Document.Viewport)
+		}
 	}
 	encoded, err := json.Marshal(document)
 	if err != nil {
@@ -137,6 +144,14 @@ func applyCanvasMutationPatch(
 		return "", "", BadAuthRequest("画布数据不能超过 5MB")
 	}
 	return string(encoded), title, nil
+}
+
+func validCanvasViewportPatch(viewport CanvasViewportPatch) bool {
+	finite := func(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }
+	return finite(viewport.X) && finite(viewport.Y) && finite(viewport.K) &&
+		viewport.X >= -1_000_000 && viewport.X <= 1_000_000 &&
+		viewport.Y >= -1_000_000 && viewport.Y <= 1_000_000 &&
+		viewport.K >= 0.01 && viewport.K <= 16
 }
 
 func validateConnectionTypes(nodes []json.RawMessage, connections []json.RawMessage) error {

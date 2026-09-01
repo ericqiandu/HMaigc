@@ -5,12 +5,20 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import type { CanvasAgentOperationImpact } from "@/lib/canvas/canvas-agent-ops";
 import { staticAssetURL } from "@/lib/static-assets";
 import type { LocalUser } from "@/stores/use-user-store";
 import { CanvasAgentTooltip } from "./canvas-agent-tooltip";
 import { CanvasSubmitButton } from "./canvas-submit-button";
 import "./canvas-agent-panel.css";
+
+type CanvasAgentOperationImpact = {
+    operationCount: number;
+    affectedNodeCount: number;
+    destructiveCount: number;
+    generationCount: number;
+    items: string[];
+    warning: string;
+};
 
 export type CanvasAgentChatAttachment = { id: string; name: string; url: string };
 export type CanvasAgentChatMessage = {

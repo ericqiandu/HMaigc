@@ -211,6 +211,12 @@ func (s *Service) coordinatePendingAgentTool(scope agentruntime.Scope, input Coo
 		expectedStatus = agentruntime.ToolCallRunning
 	}
 	record, policy, err := s.frozenAgentToolCall(scope, call, expectedStatus, state.Configuration.ExecutionMode)
+	if err != nil && expectedStatus == agentruntime.ToolCallRunning {
+		// A capability with an authoritative external effect may persist its
+		// success receipt atomically with that effect before the runtime
+		// checkpoint advances. Resume from that exact frozen receipt.
+		record, policy, err = s.frozenAgentToolCall(scope, call, agentruntime.ToolCallSucceeded, state.Configuration.ExecutionMode)
+	}
 	if err != nil {
 		return nil, err
 	}

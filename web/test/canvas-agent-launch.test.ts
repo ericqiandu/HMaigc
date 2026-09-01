@@ -2,8 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { canvasAgentProjectTitle, cinematicAgentProgress, createCanvasAgentLaunchRequest, handoffCanvasAgentLaunch, hasCanvasAgentLaunchRecord, hasPendingCinematicAgentWork } from "../src/lib/canvas/canvas-agent-launch";
 import type { AgentSessionDetail } from "../src/services/api/task-center";
-import { CanvasNodeType, type CanvasAssistantSession } from "../src/types/canvas";
-import { previewCanvasAgentOps } from "../src/lib/canvas/canvas-agent-ops";
+import type { CanvasAssistantSession } from "../src/types/canvas";
 
 describe("canvas agent launch", () => {
     test("首页先完成画布路由交接，不等待远端创建 Promise", async () => {
@@ -192,16 +191,6 @@ describe("canvas agent launch", () => {
         });
     });
 
-    test("uses planned node titles instead of internal ids in approval copy", () => {
-        const impact = previewCanvasAgentOps([
-            { type: "add_node", id: "agent-internal-script", nodeType: CanvasNodeType.Text, title: "短片剧本" },
-            { type: "add_node", id: "agent-internal-shot", nodeType: CanvasNodeType.Config, title: "镜头 1" },
-            { type: "connect_nodes", fromNodeId: "agent-internal-script", toNodeId: "agent-internal-shot" },
-        ]);
-
-        expect(impact.items).toContain("连接「短片剧本」到「镜头 1」");
-        expect(impact.items.join(" ")).not.toContain("agent-internal");
-    });
 });
 
 function requestToDraft(request: ReturnType<typeof createCanvasAgentLaunchRequest>) {

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { agentRuntimeClient, parseAgentRuntimeEvent, parseAgentRuntimeView, parseAgentThreadHistory } from "../src/services/api/agent-runtime";
+import { agentRuntimeClient, parseAgentRuntimeEvent, parseAgentRuntimeView, parseAgentThreadHistory, type AgentToolName } from "../src/services/api/agent-runtime";
 
 const state = {
     stateVersion: 2,
@@ -10,9 +10,14 @@ const state = {
     clarificationHistory: [],
     pendingToolCall: {
         toolCallId: "tool-1",
-        toolName: "media.generate",
+        toolName: "canvas.apply_ops",
         actionVersion: 3,
-        arguments: { baseRevision: 7, patch: { upsertNodes: [] } },
+        arguments: {
+            canvasId: "canvas-1",
+            baseRevision: 7,
+            clientMutationId: "mutation-1",
+            operations: [{ operationId: "operation-1", type: "select_nodes", nodeIds: ["node-1"] }],
+        },
         expectedDelivery: { kind: "canvas_change", targetCanvasId: "canvas-1", completionCriteria: [{ fact: "canvas_revision", artifact: "canvas_revision" }] },
     },
     userMessage: "整理当前画布",
@@ -37,20 +42,29 @@ const view = {
         maxSteps: 8,
         modelRecordId: "model-1",
         modelKey: "agent-model",
-        toolSchemaVersion: 5,
-        runtimeVersion: 4,
-        policyVersion: 4,
+        toolSchemaVersion: 6,
+        runtimeVersion: 5,
+        policyVersion: 5,
         createdAt: "2026-08-15T00:00:00Z",
         updatedAt: "2026-08-15T00:00:01Z",
     },
     state,
+    pendingApproval: {
+        toolCallId: "tool-1",
+        toolName: "canvas.apply_ops",
+        actionVersion: 3,
+        proposalHash: "b".repeat(64),
+        expiresAt: "2026-08-15T00:05:00Z",
+        effect: { kind: "canvas_mutation", summary: "执行 1 项画布操作", targetIds: ["canvas-1"] },
+    },
 };
+const { pendingApproval: _pendingApproval, ...viewWithoutPendingApproval } = view;
 
 test("Agent Runtime DTO 严格保留审批身份与结构化参数", () => {
     expect(parseAgentRuntimeView(view)).toEqual(view);
     expect(
         parseAgentRuntimeEvent({
-            protocolVersion: 4,
+            protocolVersion: 5,
             threadId: "thread-1",
             runId: "run-1",
             sequence: 4,
@@ -60,12 +74,50 @@ test("Agent Runtime DTO 严格保留审批身份与结构化参数", () => {
             payload: { toolCallId: "tool-1", actionVersion: 3 },
             createdAt: "2026-08-15T00:00:01Z",
         }),
-    ).toEqual({ protocolVersion: 4, threadId: "thread-1", runId: "run-1", sequence: 4, kind: "approval.requested", itemId: "approval-1", itemKind: "approval", payload: { toolCallId: "tool-1", actionVersion: 3 }, createdAt: "2026-08-15T00:00:01Z" });
+    ).toEqual({ protocolVersion: 5, threadId: "thread-1", runId: "run-1", sequence: 4, kind: "approval.requested", itemId: "approval-1", itemKind: "approval", payload: { toolCallId: "tool-1", actionVersion: 3 }, createdAt: "2026-08-15T00:00:01Z" });
 });
 
-test("Agent UI v4 硬切并严格保留可恢复的产物审核事件", () => {
+test("付费媒体审批严格保留服务端冻结报价", () => {
+    const mediaState = {
+        ...state,
+        pendingToolCall: {
+            ...state.pendingToolCall,
+            toolName: "media.generate",
+            arguments: {
+                mediaKind: "video",
+                modelRecordId: "video-model-record",
+                modelKey: "seedance-2.0",
+                parameters: { prompt: "雨夜追逐", durationSeconds: 5 },
+                sourceResourceIds: [],
+                targetCanvasNodeId: "video-node",
+                clientRequestId: "generate-video-1",
+            },
+        },
+    };
+    const mediaView = {
+        ...view,
+        state: mediaState,
+        pendingApproval: {
+            ...view.pendingApproval,
+            toolName: "media.generate",
+            effect: { kind: "media_generation", summary: "生成 video 媒体", targetIds: ["video-node"] },
+            quote: {
+                modelRecordId: "video-model-record",
+                modelKey: "seedance-2.0",
+                priceVersion: 7,
+                amountMicrocredits: 1_250_000,
+            },
+        },
+    };
+
+    expect(parseAgentRuntimeView(mediaView).pendingApproval?.quote).toEqual(mediaView.pendingApproval.quote);
+    const { quote: _quote, ...missingQuote } = mediaView.pendingApproval;
+    expect(() => parseAgentRuntimeView({ ...mediaView, pendingApproval: missingQuote })).toThrow("冻结报价");
+});
+
+test("Agent UI v5 硬切并严格保留可恢复的产物审核事件", () => {
     const event = {
-        protocolVersion: 4,
+        protocolVersion: 5,
         threadId: "thread-1",
         runId: "run-1",
         sequence: 9,
@@ -89,19 +141,30 @@ test("Agent UI v4 硬切并严格保留可恢复的产物审核事件", () => {
     expect(() => parseAgentRuntimeEvent({ ...event, payload: { ...event.payload, signedUrl: "https://example.test/transient" } })).toThrow("短期媒体地址");
 });
 
-test.each(["skill.load", "specialist.delegate", "vision.analyze", "media.generate", "canvas.project", "media.assemble"])("Agent Runtime DTO 接受当前生产工具 %s", (toolName) => {
+const productionToolCases: Array<[AgentToolName, Record<string, unknown>]> = [
+    ["canvas.read", { canvasId: "canvas-1", selectedNodeIds: ["node-1"], includeViewport: true }],
+    ["canvas.apply_ops", state.pendingToolCall.arguments],
+    ["assets.read", { domainProjectId: "project-1", resourceIds: ["resource-1"], limit: 20 }],
+    ["assets.publish", { resourceId: "resource-1", domainProjectId: "project-1", displayName: "角色图", clientMutationId: "publish-1" }],
+    ["media.generate", { mediaKind: "image", modelRecordId: "model-1", modelKey: "gpt-image-2", parameters: { prompt: "生成角色图" }, sourceResourceIds: [], targetCanvasNodeId: "node-1", clientRequestId: "generate-1" }],
+    ["skills.load", { skillDir: "storyboard", version: 1, checksum: "a".repeat(64) }],
+];
+
+test.each(productionToolCases)("Agent Runtime DTO 接受当前生产工具 %s", (toolName, toolArguments) => {
     const productionState = {
         ...state,
         status: "waiting_tool",
         pendingToolCall: {
             ...state.pendingToolCall,
             toolName,
+            arguments: toolArguments,
         },
     };
     const productionView = {
         ...view,
         run: { ...view.run, status: "waiting_tool" },
         state: productionState,
+        pendingApproval: undefined,
     };
 
     expect(parseAgentRuntimeView(productionView).state.pendingToolCall?.toolName).toBe(toolName);
@@ -114,13 +177,13 @@ test("模型决策拒绝状态保留结构化自修事实", () => {
         status: "running",
         decisionFeedback: { code: "model_decision_invalid", reason: "answer delivery facts are inconsistent" },
     };
-    expect(parseAgentRuntimeView({ ...view, run: { ...view.run, status: "running" }, state: repairState }).state.decisionFeedback).toEqual(repairState.decisionFeedback);
+    expect(parseAgentRuntimeView({ ...viewWithoutPendingApproval, run: { ...view.run, status: "running" }, state: repairState }).state.decisionFeedback).toEqual(repairState.decisionFeedback);
 });
 
 test.each(["required_skill_not_loaded", "clarification_identity_reused"])("Agent Runtime DTO 接受后端自修反馈 %s", (code) => {
     const { pendingToolCall: _pendingToolCall, ...stateWithoutPendingTool } = state;
     const parsed = parseAgentRuntimeView({
-        ...view,
+        ...viewWithoutPendingApproval,
         run: { ...view.run, status: "running" },
         state: { ...stateWithoutPendingTool, status: "running", decisionFeedback: { code, reason: "repair required" } },
     });
@@ -140,7 +203,7 @@ test("交付合同漂移状态保留冻结合同修复事实", () => {
         },
         decisionFeedback: { code: "delivery_contract_changed", reason: "expectedDelivery must remain frozen" },
     };
-    expect(parseAgentRuntimeView({ ...view, run: { ...view.run, status: "running" }, state: repairState }).state.expectedDelivery).toEqual(repairState.expectedDelivery);
+    expect(parseAgentRuntimeView({ ...viewWithoutPendingApproval, run: { ...view.run, status: "running" }, state: repairState }).state.expectedDelivery).toEqual(repairState.expectedDelivery);
 });
 
 test("运行配置缺少附件或执行模式时显式拒绝而不是插入默认值", () => {
@@ -153,7 +216,7 @@ test("运行配置缺少附件或执行模式时显式拒绝而不是插入默�
 test("旧终态运行只读投影显式保留 historical 配置而不伪造用户选择", () => {
     const { pendingToolCall: _pendingToolCall, ...terminalState } = state;
     const parsed = parseAgentRuntimeView({
-        ...view,
+        ...viewWithoutPendingApproval,
         run: {
             ...view.run,
             status: "failed",
@@ -183,7 +246,7 @@ test("旧终态运行只读投影显式保留 historical 配置而不伪造用�
 test("终态 v3 运行保留原始执行模式并允许只读查看", () => {
     const { pendingToolCall: _pendingToolCall, ...terminalState } = state;
     const parsed = parseAgentRuntimeView({
-        ...view,
+        ...viewWithoutPendingApproval,
         run: {
             ...view.run,
             status: "failed",
@@ -203,7 +266,7 @@ test("终态 v3 运行保留原始执行模式并允许只读查看", () => {
     expect(parsed.run.runtimeVersion).toBe(3);
 });
 
-test("活动运行只接受 4/4/5 合同，旧 v3 不可继续执行", () => {
+test("活动运行只接受 5/5/6 合同，旧 v3 不可继续执行", () => {
     expect(() =>
         parseAgentRuntimeView({
             ...view,
@@ -236,7 +299,7 @@ test("未知运行状态与事件类型显式失败", () => {
     expect(() => parseAgentRuntimeView({ ...view, state: { ...state, status: "thinking" } })).toThrow("不受支持");
     expect(() =>
         parseAgentRuntimeEvent({
-            protocolVersion: 4,
+            protocolVersion: 5,
             threadId: "thread-1",
             runId: "run-1",
             sequence: 5,
@@ -425,7 +488,7 @@ const waitingInputState = {
 
 test("结构化追问 DTO 保留 pending、历史与 UI 时间线事件", () => {
     const parsed = parseAgentRuntimeView({
-        ...view,
+        ...viewWithoutPendingApproval,
         run: { ...view.run, status: "waiting_input" },
         state: waitingInputState,
     });
@@ -433,12 +496,12 @@ test("结构化追问 DTO 保留 pending、历史与 UI 时间线事件", () => 
     expect(parsed.state.pendingClarification?.answers[0]?.customText).toBe("都市夜景");
     expect(parsed.state.clarificationHistory[0]?.answers[0]?.customText).toBe("BMW X5");
     for (const kind of ["item.started", "item.delta", "item.completed"] as const) {
-        expect(parseAgentRuntimeEvent({ protocolVersion: 4, threadId: "thread-1", runId: "run-1", sequence: 7, kind, itemId: "clarification-1", itemKind: "clarification", payload: { request: clarificationRequest }, createdAt: "2026-08-15T00:00:04Z" }).kind).toBe(kind);
+        expect(parseAgentRuntimeEvent({ protocolVersion: 5, threadId: "thread-1", runId: "run-1", sequence: 7, kind, itemId: "clarification-1", itemKind: "clarification", payload: { request: clarificationRequest }, createdAt: "2026-08-15T00:00:04Z" }).kind).toBe(kind);
     }
 });
 
 test("UI 事件拒绝未知协议、缺失 itemId 与非法运行载荷", () => {
-    const base = { protocolVersion: 4, threadId: "thread-1", runId: "run-1", sequence: 8, createdAt: "2026-08-15T00:00:05Z" };
+    const base = { protocolVersion: 5, threadId: "thread-1", runId: "run-1", sequence: 8, createdAt: "2026-08-15T00:00:05Z" };
     expect(() => parseAgentRuntimeEvent({ ...base, protocolVersion: 1, kind: "item.delta", itemId: "message-1", payload: { delta: "a" } })).toThrow("协议版本");
     expect(() => parseAgentRuntimeEvent({ ...base, kind: "item.delta", payload: { delta: "a" } })).toThrow("itemId");
     expect(() => parseAgentRuntimeEvent({ ...base, kind: "item.delta", itemId: "message-1", payload: { delta: "a" } })).toThrow("itemKind");

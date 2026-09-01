@@ -432,7 +432,12 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
     const decideApproval = useCallback(
         async (decision: "approved" | "rejected") => {
             const call = view?.state.status === "waiting_approval" ? view.state.pendingToolCall : undefined;
-            if (!call || !view || busy) return;
+            const approval = view?.state.status === "waiting_approval" ? view.pendingApproval : undefined;
+            if (!call || !approval || !view || busy) return;
+            if (approval.toolCallId !== call.toolCallId || approval.toolName !== call.toolName || approval.actionVersion !== call.actionVersion) {
+                setError("审批提案与当前工具调用不一致，请刷新后重试");
+                return;
+            }
             const rejectedRunID = decision === "rejected" ? view.run.id : "";
             if (rejectedRunID) {
                 stoppingRunIDRef.current = rejectedRunID;
@@ -445,7 +450,12 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             setBusy(true);
             setError("");
             try {
-                adoptView(await client.submitApproval(view.run.id, { toolCallId: call.toolCallId, actionVersion: call.actionVersion, decision }));
+                adoptView(await client.submitApproval(view.run.id, {
+                    toolCallId: call.toolCallId,
+                    actionVersion: call.actionVersion,
+                    decision,
+                    proposalHash: approval.proposalHash,
+                }));
             } catch (cause) {
                 if (rejectedRunID && stoppingRunIDRef.current === rejectedRunID) stoppingRunIDRef.current = "";
                 setError(errorMessage(cause, "审批提交失败"));

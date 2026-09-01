@@ -10,7 +10,7 @@ import { deriveCanvasAgentSelectionDefaults } from "@/lib/canvas/canvas-agent-co
 import { createEmptyCanvasAgentDraft, removeLastCanvasAgentDraftSelection } from "@/lib/canvas/canvas-agent-draft";
 import { uploadImage } from "@/services/image-storage";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
-import type { AgentRuntimeClient, AgentRuntimeEvent, AgentRuntimeHandleStorage, AgentRuntimeStartConfiguration, AgentRuntimeState, AgentThreadHistoryTurn } from "@/services/api/agent-runtime";
+import type { AgentPendingApproval, AgentRuntimeClient, AgentRuntimeEvent, AgentRuntimeHandleStorage, AgentRuntimeStartConfiguration, AgentRuntimeState, AgentThreadHistoryTurn } from "@/services/api/agent-runtime";
 import type { AgentProductionClient } from "@/services/api/agent-production";
 import type { PlatformSkill } from "@/services/api/skills";
 import { decodeChannelModel, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -293,7 +293,7 @@ export function CanvasAssistantPanel({
                         </div>
                     ) : null}
                     {runtime.view?.state.status === "waiting_approval" && runtime.view.state.pendingToolCall ? (
-                        <AgentApprovalCard state={runtime.view.state} busy={runtime.busy} muted={theme.node.muted} config={effectiveConfig} onDecision={(decision) => void runtime.decideApproval(decision)} />
+                        <AgentApprovalCard state={runtime.view.state} approval={runtime.view.pendingApproval} busy={runtime.busy} muted={theme.node.muted} onDecision={(decision) => void runtime.decideApproval(decision)} />
                     ) : null}
                 </section>
 
@@ -494,9 +494,9 @@ function knownAgentErrorMessage(errorCode: string): string | undefined {
     return undefined;
 }
 
-function AgentApprovalCard({ state, busy, muted, config, onDecision }: { state: AgentRuntimeState; busy: boolean; muted: string; config: AiConfig; onDecision: (decision: "approved" | "rejected") => void }) {
+function AgentApprovalCard({ state, approval, busy, muted, onDecision }: { state: AgentRuntimeState; approval?: AgentPendingApproval; busy: boolean; muted: string; onDecision: (decision: "approved" | "rejected") => void }) {
     const call = state.pendingToolCall;
-    if (!call) return null;
+    if (!call || !approval) return null;
     return (
         <div className="canvas-agent-runtime-approval">
             <div className="canvas-agent-runtime-approval-heading">
@@ -508,7 +508,13 @@ function AgentApprovalCard({ state, busy, muted, config, onDecision }: { state: 
                     </span>
                 </div>
             </div>
-            <AgentApprovalSummary call={call} config={config} />
+            <AgentApprovalSummary approval={approval} />
+            <section className="canvas-agent-runtime-approval-effect" aria-label="审批影响">
+                <strong className="canvas-agent-runtime-approval-effect-summary">{approval.effect.summary}</strong>
+                <span className="canvas-agent-runtime-approval-effect-targets" style={{ color: muted }}>
+                    {approval.effect.targetIds.join(" · ")}
+                </span>
+            </section>
             <details className="canvas-agent-runtime-arguments">
                 <summary className="canvas-agent-runtime-arguments-summary">查看确定性参数</summary>
                 <pre className="canvas-agent-runtime-arguments-code">{JSON.stringify(call.arguments, null, 2)}</pre>

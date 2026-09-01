@@ -152,11 +152,6 @@ func ensureAgentMessageStreamWritable(db *gorm.DB, scope agentruntime.Scope) err
 	return nil
 }
 
-type agentCanvasCommitTimelineOutput struct {
-	CanvasID          string `json:"canvasId"`
-	CommittedRevision int64  `json:"committedRevision"`
-}
-
 func nextAgentTimelineOrdinal(db *gorm.DB, runID string) (int64, error) {
 	var latest model.AgentTimelineItem
 	err := db.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -591,24 +586,25 @@ func agentTimelineMutationForEvent(
 			}, nil
 		}
 		var toolName agentruntime.ToolName
-		var safeOutput *agentCanvasCommitTimelineOutput
+		var safeOutput *agentruntime.CanvasApplyOpsResult
 		if previous.PendingToolCall != nil {
 			toolName = previous.PendingToolCall.ToolName
-			if toolName == agentruntime.ToolCanvasCommit && state.LastToolResult.Succeeded {
-				var output agentCanvasCommitTimelineOutput
-				if err := json.Unmarshal(state.LastToolResult.Output, &output); err != nil || output.CanvasID == "" || output.CommittedRevision < 1 {
-					return nil, errors.New("agent canvas commit timeline output is invalid")
+			if toolName == agentruntime.ToolCanvasApplyOps && state.LastToolResult.Succeeded {
+				decoded, err := agentruntime.DecodeCapabilityResult(toolName, state.LastToolResult.Output)
+				output, ok := decoded.(agentruntime.CanvasApplyOpsResult)
+				if err != nil || !ok {
+					return nil, errors.New("agent canvas apply ops timeline output is invalid")
 				}
 				safeOutput = &output
 			}
 		}
 		content, err := marshalAgentTimelineContent(struct {
-			ToolCallID    string                           `json:"toolCallId"`
-			ToolName      agentruntime.ToolName            `json:"toolName,omitempty"`
-			ActionVersion int                              `json:"actionVersion"`
-			Succeeded     bool                             `json:"succeeded"`
-			ErrorCode     string                           `json:"errorCode,omitempty"`
-			Output        *agentCanvasCommitTimelineOutput `json:"output,omitempty"`
+			ToolCallID    string                             `json:"toolCallId"`
+			ToolName      agentruntime.ToolName              `json:"toolName,omitempty"`
+			ActionVersion int                                `json:"actionVersion"`
+			Succeeded     bool                               `json:"succeeded"`
+			ErrorCode     string                             `json:"errorCode,omitempty"`
+			Output        *agentruntime.CanvasApplyOpsResult `json:"output,omitempty"`
 		}{
 			ToolCallID: state.LastToolResult.ToolCallID, ToolName: toolName, ActionVersion: state.LastToolResult.ActionVersion,
 			Succeeded: state.LastToolResult.Succeeded, ErrorCode: state.LastToolResult.ErrorCode, Output: safeOutput,

@@ -650,6 +650,23 @@ func persistAgentToolTransition(
 	if next.LastToolResult.Succeeded {
 		status = agentruntime.ToolCallSucceeded
 	}
+	if previous.Status == agentruntime.RunWaitingTool {
+		var completed []model.AgentToolCall
+		if err := db.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("run_id = ? AND tool_call_id = ? AND action_version = ? AND status IN ?", runID,
+				previous.PendingToolCall.ToolCallID, previous.PendingToolCall.ActionVersion,
+				[]agentruntime.ToolCallStatus{agentruntime.ToolCallSucceeded, agentruntime.ToolCallFailed}).
+			Limit(1).Find(&completed).Error; err != nil {
+			return err
+		}
+		if len(completed) == 1 {
+			if completed[0].Status != status || completed[0].OutputJSON != string(next.LastToolResult.Output) ||
+				completed[0].ErrorCode != next.LastToolResult.ErrorCode {
+				return ErrAgentRuntimeStepConflict
+			}
+			return nil
+		}
+	}
 	query := db.Model(&model.AgentToolCall{}).
 		Where("run_id = ? AND tool_call_id = ? AND action_version = ? AND status IN (?, ?, ?)", runID,
 			previous.PendingToolCall.ToolCallID, previous.PendingToolCall.ActionVersion,

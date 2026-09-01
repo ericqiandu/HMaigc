@@ -254,4 +254,13 @@ func TestCapabilityResultsUseStrictVersionedSchemas(t *testing.T) {
 	if _, err := agentruntime.DecodeCapabilityResult(agentruntime.ToolMediaGenerate, unknown); err == nil {
 		t.Fatal("unknown result field was accepted")
 	}
+
+	canvasResult := json.RawMessage(`{"canvasId":"canvas-1","baseRevision":7,"committedRevision":8,"clientMutationId":"mutation-1","proposalHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","appliedOperationIds":["operation-1"],"evidence":{"addedNodeIds":["node-1"],"updatedNodeIds":[],"deletedNodeIds":[],"upsertedConnectionIds":[],"deletedConnectionIds":[],"selectedNodeIds":["node-1"],"viewportApplied":false}}`)
+	if _, err := agentruntime.DecodeCapabilityResult(agentruntime.ToolCanvasApplyOps, canvasResult); err != nil {
+		t.Fatalf("exact canvas commit receipt rejected: %v", err)
+	}
+	jumpedRevision := json.RawMessage(`{"canvasId":"canvas-1","baseRevision":7,"committedRevision":9,"clientMutationId":"mutation-1","proposalHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","appliedOperationIds":["operation-1"],"evidence":{"addedNodeIds":["node-1"],"updatedNodeIds":[],"deletedNodeIds":[],"upsertedConnectionIds":[],"deletedConnectionIds":[],"selectedNodeIds":["node-1"],"viewportApplied":false}}`)
+	if _, err := agentruntime.DecodeCapabilityResult(agentruntime.ToolCanvasApplyOps, jumpedRevision); err == nil {
+		t.Fatal("canvas receipt that skipped revisions was accepted")
+	}
 }

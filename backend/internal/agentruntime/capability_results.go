@@ -35,14 +35,26 @@ type CanvasReadResult struct {
 func (CanvasReadResult) capabilityResult() {}
 
 type CanvasApplyOpsResult struct {
-	CanvasID            string   `json:"canvasId"`
-	BaseRevision        int64    `json:"baseRevision"`
-	CommittedRevision   int64    `json:"committedRevision"`
-	ClientMutationID    string   `json:"clientMutationId"`
-	AppliedOperationIDs []string `json:"appliedOperationIds"`
+	CanvasID            string                 `json:"canvasId"`
+	BaseRevision        int64                  `json:"baseRevision"`
+	CommittedRevision   int64                  `json:"committedRevision"`
+	ClientMutationID    string                 `json:"clientMutationId"`
+	ProposalHash        string                 `json:"proposalHash"`
+	AppliedOperationIDs []string               `json:"appliedOperationIds"`
+	Evidence            CanvasApplyOpsEvidence `json:"evidence"`
 }
 
 func (CanvasApplyOpsResult) capabilityResult() {}
+
+type CanvasApplyOpsEvidence struct {
+	AddedNodeIDs          []string `json:"addedNodeIds"`
+	UpdatedNodeIDs        []string `json:"updatedNodeIds"`
+	DeletedNodeIDs        []string `json:"deletedNodeIds"`
+	UpsertedConnectionIDs []string `json:"upsertedConnectionIds"`
+	DeletedConnectionIDs  []string `json:"deletedConnectionIds"`
+	SelectedNodeIDs       []string `json:"selectedNodeIds"`
+	ViewportApplied       bool     `json:"viewportApplied"`
+}
 
 type AssetResourceResult struct {
 	ResourceID string    `json:"resourceId"`
@@ -134,13 +146,15 @@ func decodeCanvasReadResult(payload json.RawMessage) (CapabilityResult, error) {
 
 func decodeCanvasApplyOpsResult(payload json.RawMessage) (CapabilityResult, error) {
 	var wire struct {
-		CanvasID            string   `json:"canvasId"`
-		BaseRevision        *int64   `json:"baseRevision"`
-		CommittedRevision   *int64   `json:"committedRevision"`
-		ClientMutationID    string   `json:"clientMutationId"`
-		AppliedOperationIDs []string `json:"appliedOperationIds"`
+		CanvasID            string                  `json:"canvasId"`
+		BaseRevision        *int64                  `json:"baseRevision"`
+		CommittedRevision   *int64                  `json:"committedRevision"`
+		ClientMutationID    string                  `json:"clientMutationId"`
+		ProposalHash        string                  `json:"proposalHash"`
+		AppliedOperationIDs []string                `json:"appliedOperationIds"`
+		Evidence            *CanvasApplyOpsEvidence `json:"evidence"`
 	}
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || wire.BaseRevision == nil || wire.CommittedRevision == nil || *wire.BaseRevision < 0 || *wire.CommittedRevision <= *wire.BaseRevision || len(wire.AppliedOperationIDs) < 1 {
+	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || wire.BaseRevision == nil || wire.CommittedRevision == nil || *wire.BaseRevision < 0 || *wire.CommittedRevision != *wire.BaseRevision+1 || len(wire.AppliedOperationIDs) < 1 || wire.Evidence == nil || !validSHA256(wire.ProposalHash) {
 		return nil, errCapabilityResultInvalid
 	}
 	canvasID, err := normalizeIdentifier(wire.CanvasID, capabilityIdentifierLimit)
@@ -155,7 +169,52 @@ func decodeCanvasApplyOpsResult(payload json.RawMessage) (CapabilityResult, erro
 	if err != nil {
 		return nil, errCapabilityResultInvalid
 	}
-	return CanvasApplyOpsResult{CanvasID: canvasID, BaseRevision: *wire.BaseRevision, CommittedRevision: *wire.CommittedRevision, ClientMutationID: mutationID, AppliedOperationIDs: operationIDs}, nil
+	evidence, err := normalizeCanvasApplyOpsEvidence(*wire.Evidence)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	return CanvasApplyOpsResult{
+		CanvasID: canvasID, BaseRevision: *wire.BaseRevision, CommittedRevision: *wire.CommittedRevision,
+		ClientMutationID: mutationID, ProposalHash: wire.ProposalHash, AppliedOperationIDs: operationIDs, Evidence: evidence,
+	}, nil
+}
+
+func normalizeCanvasApplyOpsEvidence(evidence CanvasApplyOpsEvidence) (CanvasApplyOpsEvidence, error) {
+	normalize := func(values []string) ([]string, error) {
+		if values == nil {
+			return nil, errCapabilityResultInvalid
+		}
+		return normalizeIdentifiers(values, capabilityOperationLimit, true)
+	}
+	addedNodeIDs, err := normalize(evidence.AddedNodeIDs)
+	if err != nil {
+		return CanvasApplyOpsEvidence{}, err
+	}
+	updatedNodeIDs, err := normalize(evidence.UpdatedNodeIDs)
+	if err != nil {
+		return CanvasApplyOpsEvidence{}, err
+	}
+	deletedNodeIDs, err := normalize(evidence.DeletedNodeIDs)
+	if err != nil {
+		return CanvasApplyOpsEvidence{}, err
+	}
+	upsertedConnectionIDs, err := normalize(evidence.UpsertedConnectionIDs)
+	if err != nil {
+		return CanvasApplyOpsEvidence{}, err
+	}
+	deletedConnectionIDs, err := normalize(evidence.DeletedConnectionIDs)
+	if err != nil {
+		return CanvasApplyOpsEvidence{}, err
+	}
+	selectedNodeIDs, err := normalizeIdentifiers(evidence.SelectedNodeIDs, capabilityResourceLimit, true)
+	if err != nil || evidence.SelectedNodeIDs == nil {
+		return CanvasApplyOpsEvidence{}, errCapabilityResultInvalid
+	}
+	return CanvasApplyOpsEvidence{
+		AddedNodeIDs: addedNodeIDs, UpdatedNodeIDs: updatedNodeIDs, DeletedNodeIDs: deletedNodeIDs,
+		UpsertedConnectionIDs: upsertedConnectionIDs, DeletedConnectionIDs: deletedConnectionIDs,
+		SelectedNodeIDs: selectedNodeIDs, ViewportApplied: evidence.ViewportApplied,
+	}, nil
 }
 
 func decodeAssetsReadResult(payload json.RawMessage) (CapabilityResult, error) {

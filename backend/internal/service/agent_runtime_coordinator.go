@@ -37,7 +37,7 @@ func (s *Service) advanceAgentRun(scope agentruntime.Scope, wakeup agentRunWakeu
 		return nil, Forbidden("当前用户没有继续执行 Agent 的画布权限")
 	}
 	for transitionCount := 0; transitionCount < agentRuntimeAdvanceTransitionLimit; transitionCount++ {
-		view, err := s.readAgentRuntimeView(scope)
+		view, err := s.readAgentRuntimeStateView(scope)
 		if err != nil {
 			return nil, err
 		}

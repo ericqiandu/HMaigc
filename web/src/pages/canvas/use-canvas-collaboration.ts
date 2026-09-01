@@ -375,8 +375,9 @@ export function useCanvasCollaboration({
     const refreshRemoteState = useCallback(async (expectedRevision?: number) => {
         const loadedState = await getCanvasCollaboration(projectId);
         const state = expectedRevision === undefined ? loadedState : requireCanvasCollaborationRevision(loadedState, expectedRevision);
-        if ((state.project.revision || 0) < revisionRef.current) return;
+        if ((state.project.revision || 0) < revisionRef.current) return state;
         applySnapshot(state);
+        return state;
     }, [applySnapshot, projectId]);
 
     const adoptAuthoritativeBaseline = useCallback((state: CanvasCollaborationState) => {

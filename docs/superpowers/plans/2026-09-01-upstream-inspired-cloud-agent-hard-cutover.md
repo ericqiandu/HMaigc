@@ -489,6 +489,8 @@ git add backend/internal/service/agent_canvas_capability.go backend/internal/ser
 git commit -m "feat(agent): govern canvas operations by proposal"
 ```
 
+**Implementation status (2026-09-01): complete.** `canvas.apply_ops` now freezes and projects the exact approval proposal, revalidates scope, access, base revision and final graph facts, then commits the canvas revision and successful tool receipt atomically. Duplicate execution returns the same receipt; stale revisions, invalid endpoints/handles, contradictory final selections and unauthorized writes fail without partial mutation. Web no longer performs a parallel canvas write or undo path: it accepts only the strict server receipt, waits for the authenticated collaboration snapshot to reach the committed revision, and applies only selection/focus evidence. Paid generation remains exclusively `media.generate`, including its authoritative frozen quote. Focused RED/GREEN coverage, the full backend and Web suites, static checks, production build and bundle budgets pass.
+
 ### Task 7: Adapt paid media generation and asset publication
 
 **Files:**

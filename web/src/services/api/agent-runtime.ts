@@ -41,6 +41,17 @@ export type AgentExpectedDelivery = {
     completionCriteria: Array<{ fact: AgentDeliveryFact; artifact?: AgentArtifactKind }>;
 };
 export type AgentToolCall = { toolCallId: string; toolName: AgentToolName; actionVersion: number; arguments: AgentCapabilityArguments; expectedDelivery: AgentExpectedDelivery };
+export type AgentApprovalEffect = { kind: "canvas_mutation" | "asset_publish" | "media_generation"; summary: string; targetIds: string[] };
+export type AgentApprovalCostQuote = { modelRecordId: string; modelKey: string; priceVersion: number; amountMicrocredits: number };
+export type AgentPendingApproval = {
+    toolCallId: string;
+    toolName: AgentToolName;
+    actionVersion: number;
+    proposalHash: string;
+    expiresAt: string;
+    effect: AgentApprovalEffect;
+    quote?: AgentApprovalCostQuote;
+};
 export type AgentDeliveryVerification = { status: "satisfied" | "repairable" | "failed"; rationale: string; missingCriteria?: Array<{ fact: string; artifact?: string }> };
 export type AgentRuntimeGenerationModelSelection = { channelId: string; model: string };
 export type AgentRuntimeGenerationModelSelections = { image?: AgentRuntimeGenerationModelSelection; video?: AgentRuntimeGenerationModelSelection };
@@ -89,6 +100,7 @@ export type AgentRuntimeView = {
         completedAt?: string;
     };
     state: AgentRuntimeState;
+    pendingApproval?: AgentPendingApproval;
 };
 export type AgentTimelineItemKind = "user_message" | "agent_message" | "status" | "clarification" | "tool_call" | "tool_result" | "approval" | "artifact" | "error";
 export type AgentTimelineItemStatus = "in_progress" | "completed" | "failed" | "declined" | "interrupted";
@@ -159,7 +171,7 @@ export type AgentRuntimeClient = {
     getRun: (runId: string) => Promise<AgentRuntimeView>;
     steer: (runId: string, input: { clientRequestId: string; message: string; expectedStateVersion: number }) => Promise<AgentRuntimeView>;
     interrupt: (runId: string, input: { expectedStateVersion: number }) => Promise<AgentRuntimeView>;
-    submitApproval: (runId: string, input: { toolCallId: string; actionVersion: number; decision: "approved" | "rejected" }) => Promise<AgentRuntimeView>;
+    submitApproval: (runId: string, input: { toolCallId: string; actionVersion: number; decision: "approved" | "rejected"; proposalHash: string }) => Promise<AgentRuntimeView>;
     submitClarificationResponse: (runId: string, requestId: string, input: { expectedStateVersion: number; questionId: string; answer: AgentClarificationAnswerInput; complete: boolean }) => Promise<AgentRuntimeView>;
     subscribe: (runId: string, afterSequence: number, handlers: { onOpen?: () => void; onEvent: (event: AgentRuntimeEvent) => void; onError: (error?: Error) => void }) => () => void;
 };
@@ -209,7 +221,7 @@ export class AgentRuntimeRequestError extends Error {
 }
 
 export function parseAgentRuntimeView(value: unknown): AgentRuntimeView {
-    const root = object(value, "Agent Runtime");
+    const root = exactObject(value, "Agent Runtime", ["run", "state", "pendingApproval"]);
     const run = object(root.run, "Agent run");
     const state = parseState(root.state);
     const parsedRun: AgentRuntimeView["run"] = {
@@ -254,7 +266,52 @@ export function parseAgentRuntimeView(value: unknown): AgentRuntimeView {
             `不受支持的 Agent Runtime 合同: ${parsedRun.runtimeVersion}/${parsedRun.policyVersion}/${parsedRun.toolSchemaVersion}`,
         );
     }
-    return { run: parsedRun, state };
+    const pendingApproval = root.pendingApproval === undefined ? undefined : parsePendingApproval(root.pendingApproval);
+    if (state.status === "waiting_approval") {
+        if (!pendingApproval || !state.pendingToolCall || pendingApproval.toolCallId !== state.pendingToolCall.toolCallId ||
+            pendingApproval.toolName !== state.pendingToolCall.toolName || pendingApproval.actionVersion !== state.pendingToolCall.actionVersion) {
+            throw new Error("Agent 等待审批状态缺少完全一致的冻结提案");
+        }
+    } else if (pendingApproval) {
+        throw new Error("Agent 非等待审批状态携带了冻结提案");
+    }
+    return { run: parsedRun, state, ...(pendingApproval ? { pendingApproval } : {}) };
+}
+
+function parsePendingApproval(value: unknown): AgentPendingApproval {
+    const source = exactObject(value, "pendingApproval", ["toolCallId", "toolName", "actionVersion", "proposalHash", "expiresAt", "effect", "quote"]);
+    if (!isAgentToolName(source.toolName)) throw new Error(`不受支持的审批工具: ${String(source.toolName)}`);
+    const proposalHash = text(source.proposalHash, "pendingApproval.proposalHash");
+    if (!/^[0-9a-f]{64}$/.test(proposalHash)) throw new Error("pendingApproval.proposalHash 必须是 SHA-256");
+    const effectSource = exactObject(source.effect, "pendingApproval.effect", ["kind", "summary", "targetIds"]);
+    const kind = effectSource.kind;
+    if (kind !== "canvas_mutation" && kind !== "asset_publish" && kind !== "media_generation") {
+        throw new Error(`不受支持的审批影响类型: ${String(kind)}`);
+    }
+    const targetIds = array(effectSource.targetIds, "pendingApproval.effect.targetIds").map((target, index) => text(target, `pendingApproval.effect.targetIds[${index}]`));
+    if (!targetIds.length || new Set(targetIds).size !== targetIds.length) throw new Error("pendingApproval.effect.targetIds 必须非空且唯一");
+    const quote = source.quote === undefined ? undefined : parseApprovalCostQuote(source.quote);
+    if (source.toolName === "media.generate" && !quote) throw new Error("media.generate 审批缺少服务端冻结报价");
+    if (source.toolName !== "media.generate" && quote) throw new Error("非付费媒体审批不得携带冻结报价");
+    return {
+        toolCallId: text(source.toolCallId, "pendingApproval.toolCallId"),
+        toolName: source.toolName,
+        actionVersion: integer(source.actionVersion, "pendingApproval.actionVersion"),
+        proposalHash,
+        expiresAt: isoInstant(source.expiresAt, "pendingApproval.expiresAt"),
+        effect: { kind, summary: text(effectSource.summary, "pendingApproval.effect.summary"), targetIds },
+        ...(quote ? { quote } : {}),
+    };
+}
+
+function parseApprovalCostQuote(value: unknown): AgentApprovalCostQuote {
+    const source = exactObject(value, "pendingApproval.quote", ["modelRecordId", "modelKey", "priceVersion", "amountMicrocredits"]);
+    return {
+        modelRecordId: text(source.modelRecordId, "pendingApproval.quote.modelRecordId"),
+        modelKey: text(source.modelKey, "pendingApproval.quote.modelKey"),
+        priceVersion: integer(source.priceVersion, "pendingApproval.quote.priceVersion"),
+        amountMicrocredits: integer(source.amountMicrocredits, "pendingApproval.quote.amountMicrocredits"),
+    };
 }
 
 export function parseAgentRuntimeEvent(value: unknown): AgentRuntimeEvent {

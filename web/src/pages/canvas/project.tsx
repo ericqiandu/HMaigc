@@ -10,7 +10,7 @@ import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resour
 import copyToClipboard from "copy-to-clipboard";
 import { nanoid } from "nanoid";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
-import { agentCanvasCommittedRevision } from "@/lib/canvas/canvas-agent-runtime-event";
+import { agentCanvasCommittedReceipt } from "@/lib/canvas/canvas-agent-runtime-event";
 import { prepareAgentCanvasRun } from "@/lib/canvas/canvas-collaboration-preflight";
 import { normalizeRestoredCanvasViewport } from "@/lib/canvas/canvas-viewport";
 import { resizeViewportAroundCenter } from "@/lib/canvas/canvas-agent-dock";
@@ -53,7 +53,7 @@ import { CanvasLinkedProjectEmptyState, CanvasShortDramaEmptyState, CanvasShortD
 import { createCanvasNode, getInputSummary, isHiddenBatchChild, persistCanvasWorkspaceMode, readCanvasWorkspaceMode } from "@/lib/canvas/canvas-project-domain";
 import { deriveStoryboardPipelineProgress } from "@/lib/canvas/canvas-storyboard-progress";
 import { getCompositionSourceVideos, isVideoCompositionNode } from "@/lib/canvas/canvas-video-composition";
-import { CanvasAgentChangeToast, CanvasMergeStatusToast, CanvasUploadStatusToast } from "./canvas-project-feedback";
+import { CanvasMergeStatusToast, CanvasUploadStatusToast } from "./canvas-project-feedback";
 import { backendProviderConfig, getGenerationCount } from "@/lib/canvas/canvas-project-generation";
 import { CanvasTopBar } from "./canvas-project-top-bar";
 import { CanvasProjectSelectionToolbar } from "./canvas-project-selection-toolbar";
@@ -61,7 +61,6 @@ import { CanvasProjectWorldLayers } from "./canvas-project-world-layers";
 import type { CanvasImageEmotionPayload } from "@/components/canvas/canvas-node-emotion-panel";
 import { useCanvasConnectionController } from "./use-canvas-connection-controller";
 import { useCanvasCollaboration } from "./use-canvas-collaboration";
-import { useCanvasAgentOperations } from "./use-canvas-agent-operations";
 import { useCanvasAssistantVisibility } from "./use-canvas-assistant-visibility";
 import { useCanvasAgentDock } from "@/components/canvas/use-canvas-agent-dock";
 import { useCanvasActiveTasks } from "./use-canvas-active-tasks";
@@ -466,13 +465,25 @@ function InfiniteCanvasPage() {
     }, [collaboration.flushPendingChanges, projectId]);
     const handleAgentToolResult = useCallback(
         (event: AgentRuntimeEvent) => {
-            const revision = agentCanvasCommittedRevision(event, projectId);
-            if (revision === undefined) return;
-            void collaboration.refreshRemoteState(revision).catch((cause: unknown) => {
-                message.error(cause instanceof Error ? `Agent 画布结果刷新失败：${cause.message}` : "Agent 画布结果刷新失败");
-            });
+            const receipt = agentCanvasCommittedReceipt(event, projectId);
+            if (!receipt) return;
+            void collaboration.refreshRemoteState(receipt.committedRevision)
+                .then((state) => {
+                    const existingNodeIds = new Set((state.project.nodes || []).map((node) => node.id));
+                    const requestedSelection = receipt.evidence.selectedNodeIds.length ? receipt.evidence.selectedNodeIds : receipt.evidence.addedNodeIds;
+                    const selected = requestedSelection.filter((nodeId) => existingNodeIds.has(nodeId));
+                    if (!selected.length) return;
+                    const selection = new Set(selected);
+                    selectedNodeIdsRef.current = selection;
+                    setSelectedNodeIds(selection);
+                    setSelectedConnectionId(null);
+                    window.requestAnimationFrame(() => fitCanvasSelection());
+                })
+                .catch((cause: unknown) => {
+                    message.error(cause instanceof Error ? `Agent 画布结果刷新失败：${cause.message}` : "Agent 画布结果刷新失败");
+                });
         },
-        [collaboration.refreshRemoteState, message, projectId],
+        [collaboration.refreshRemoteState, fitCanvasSelection, message, projectId],
     );
     const handleCollaborationPointerMove = useCallback(
         (event: React.PointerEvent<HTMLElement>) => {
@@ -865,28 +876,6 @@ function InfiniteCanvasPage() {
         }
         setTextEditorNodeId(node.id);
     }, []);
-
-    const { dismissLastAgentChange, lastAgentChange, undoAgentOps, viewLastAgentChange } = useCanvasAgentOperations({
-        projectId,
-        domainProjectId: linkedProjectId,
-        projectTitle: currentProject?.title || "未命名画布",
-        nodes,
-        connections,
-        selectedNodeIds,
-        viewport,
-        nodesRef,
-        connectionsRef,
-        selectedNodeIdsRef,
-        viewportRef,
-        generateNodeRef,
-        setNodes,
-        setConnections,
-        setSelectedNodeIds,
-        setSelectedConnectionId,
-        setViewport,
-        setContextMenu,
-        focusSelection: fitCanvasSelection,
-    });
 
     const { selectCanvasStyle } = useCanvasStyleWorkflow({
         nodesRef,
@@ -1680,18 +1669,6 @@ function InfiniteCanvasPage() {
 
                 {uploadStatus ? <CanvasUploadStatusToast status={uploadStatus} theme={theme} /> : null}
                 {mergeVideoProgress ? <CanvasMergeStatusToast progress={mergeVideoProgress} theme={theme} /> : null}
-                {lastAgentChange ? (
-                    <CanvasAgentChangeToast
-                        change={lastAgentChange}
-                        theme={theme}
-                        onView={viewLastAgentChange}
-                        onUndo={() => {
-                            undoAgentOps();
-                        }}
-                        onClose={dismissLastAgentChange}
-                    />
-                ) : null}
-
                 {canEditCanvas ? (
                     <CanvasNodeHoverToolbar
                         node={isNodeDragging || nodeImageSettingsOpen || emotionNodeId ? null : toolbarNode}

@@ -25,8 +25,19 @@ type StartScopedAgentRunInput struct {
 }
 
 type AgentRuntimeView struct {
-	Run   model.AgentRun            `json:"run"`
-	State agentruntime.RuntimeState `json:"state"`
+	Run             model.AgentRun            `json:"run"`
+	State           agentruntime.RuntimeState `json:"state"`
+	PendingApproval *AgentPendingApprovalView `json:"pendingApproval,omitempty"`
+}
+
+type AgentPendingApprovalView struct {
+	ToolCallID    string                          `json:"toolCallId"`
+	ToolName      agentruntime.ToolName           `json:"toolName"`
+	ActionVersion int                             `json:"actionVersion"`
+	ProposalHash  string                          `json:"proposalHash"`
+	ExpiresAt     time.Time                       `json:"expiresAt"`
+	Effect        agentruntime.ApprovalEffect     `json:"effect"`
+	Quote         *agentruntime.ApprovalCostQuote `json:"quote,omitempty"`
 }
 
 func (view AgentRuntimeView) MarshalJSON() ([]byte, error) {
@@ -491,7 +502,7 @@ func (s *Service) StartScopedAgentRun(actor *model.User, threadID string, input 
 	if err != nil {
 		return nil, s.mapAgentItemStateConflict(scope, err)
 	}
-	return agentRuntimeView(progress), nil
+	return s.agentRuntimeViewForProgress(scope, progress)
 }
 
 func (s *Service) ReadScopedAgentRun(actor *model.User, runID string) (*AgentRuntimeView, error) {
@@ -672,6 +683,14 @@ func (s *Service) mapStageReviewError(err error) error {
 }
 
 func (s *Service) readAgentRuntimeView(scope agentruntime.Scope) (*AgentRuntimeView, error) {
+	view, err := s.readAgentRuntimeStateView(scope)
+	if err != nil {
+		return nil, err
+	}
+	return s.enrichAgentRuntimeView(scope, view)
+}
+
+func (s *Service) readAgentRuntimeStateView(scope agentruntime.Scope) (*AgentRuntimeView, error) {
 	run, err := s.repo.AgentRunForScope(scope)
 	if err != nil {
 		return nil, err
@@ -733,7 +752,7 @@ func (s *Service) SubmitScopedAgentApproval(actor *model.User, runID string, inp
 	if err != nil {
 		return nil, s.mapAgentItemStateConflict(scope, err)
 	}
-	return agentRuntimeView(progress), nil
+	return s.agentRuntimeViewForProgress(scope, progress)
 }
 
 func (s *Service) SubmitScopedAgentClarificationResponse(actor *model.User, runID string, requestID string, submission agentruntime.ClarificationResponseSubmission) (*AgentRuntimeView, error) {
@@ -746,7 +765,7 @@ func (s *Service) SubmitScopedAgentClarificationResponse(actor *model.User, runI
 	if err != nil {
 		return nil, s.mapAgentItemStateConflict(scope, err)
 	}
-	return agentRuntimeView(progress), nil
+	return s.agentRuntimeViewForProgress(scope, progress)
 }
 
 func (s *Service) SubmitScopedAgentSteer(actor *model.User, runID string, request agentruntime.SteerRequest) (*AgentRuntimeView, error) {
@@ -811,7 +830,11 @@ func (s *Service) agentRuntimeViewForState(scope agentruntime.Scope, state agent
 	if err != nil {
 		return nil, err
 	}
-	return agentRuntimeViewFromFacts(*run, state)
+	view, err := agentRuntimeViewFromFacts(*run, state)
+	if err != nil {
+		return nil, err
+	}
+	return s.enrichAgentRuntimeView(scope, view)
 }
 
 func (s *Service) mapAgentControlError(scope agentruntime.Scope, err error, errorCode string, message string) error {
@@ -965,4 +988,44 @@ func agentRuntimeView(progress *AgentRuntimeProgress) *AgentRuntimeView {
 		return nil
 	}
 	return &AgentRuntimeView{Run: progress.Run, State: progress.State}
+}
+
+func (s *Service) agentRuntimeViewForProgress(scope agentruntime.Scope, progress *AgentRuntimeProgress) (*AgentRuntimeView, error) {
+	return s.enrichAgentRuntimeView(scope, agentRuntimeView(progress))
+}
+
+func (s *Service) enrichAgentRuntimeView(scope agentruntime.Scope, view *AgentRuntimeView) (*AgentRuntimeView, error) {
+	if view == nil || view.State.Status != agentruntime.RunWaitingApproval {
+		return view, nil
+	}
+	call := view.State.PendingToolCall
+	if call == nil {
+		return nil, errors.New("agent approval projection is missing the frozen tool call")
+	}
+	record, err := s.repo.AgentToolCallForScope(scope, call.ToolCallID, call.ActionVersion)
+	if err != nil {
+		return nil, err
+	}
+	if record.Status != agentruntime.ToolCallPending || !record.ApprovalRequired || record.ApprovalDecision != "" ||
+		record.ToolName != string(call.ToolName) || !equalAgentToolArguments(record.InputJSON, call.Arguments) || record.ApprovalProposalHash == "" || record.ApprovalExpiresAt == nil {
+		return nil, errors.New("agent approval projection conflicts with the frozen tool call")
+	}
+	proposal, err := agentruntime.DecodeApprovalProposal(json.RawMessage(record.ApprovalProposalJSON))
+	if err != nil {
+		return nil, err
+	}
+	proposalHash, err := proposal.Hash()
+	if err != nil || proposalHash != record.ApprovalProposalHash || proposal.ToolCallID != call.ToolCallID || proposal.ActionVersion != call.ActionVersion || proposal.ToolName != call.ToolName {
+		return nil, errors.New("agent approval projection conflicts with the frozen proposal")
+	}
+	var quote *agentruntime.ApprovalCostQuote
+	if proposal.Quote != nil {
+		frozenQuote := *proposal.Quote
+		quote = &frozenQuote
+	}
+	view.PendingApproval = &AgentPendingApprovalView{
+		ToolCallID: proposal.ToolCallID, ToolName: proposal.ToolName, ActionVersion: proposal.ActionVersion,
+		ProposalHash: proposalHash, ExpiresAt: proposal.ExpiresAt, Effect: proposal.Effect, Quote: quote,
+	}
+	return view, nil
 }

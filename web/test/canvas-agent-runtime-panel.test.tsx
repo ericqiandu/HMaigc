@@ -105,7 +105,7 @@ test("运行事件逐条交给当前画布刷新链路", async () => {
     });
     await mount(client, storage, { onRuntimeEvent: (event: AgentRuntimeEvent) => received.push(event) });
     const event: AgentRuntimeEvent = {
-        protocolVersion: 4,
+        protocolVersion: 5,
         threadId: "thread-1",
         runId: "run-1",
         sequence: 3,
@@ -289,25 +289,36 @@ test("单一运行链等待付费审批并展示验收后的最终消息", async
     useConfigStore.setState({
         config: { ...defaultConfig, channels: [videoChannel()], models: [videoModel], videoModels: [videoModel], videoModel },
     });
-    const approvalView = runtimeView("waiting_approval", {
+    const approvalBase = runtimeView("waiting_approval", {
         stateVersion: 3,
         pendingToolCall: {
             toolCallId: "render-1",
             toolName: "media.generate",
             actionVersion: 2,
             arguments: {
-                planKey: "plan-1",
-                planVersion: 1,
-                artifactId: "artifact-1",
-                generationModel: { channelId: "channel-video", model: "video-model-mini" },
-                videoInputMode: "text_to_video",
-                videoConfig: { durationSeconds: 5, aspectRatio: "16:9", quality: "720p", generateAudio: false },
-                amountMicrocredits: 1_000_000,
-                quantity: 1,
+                mediaKind: "video",
+                modelRecordId: "video-model-record",
+                modelKey: "video-model-mini",
+                parameters: { prompt: "雨夜追逐", durationSeconds: 5, aspectRatio: "16:9", quality: "720p", generateAudio: false },
+                sourceResourceIds: [],
+                targetCanvasNodeId: "video-node",
+                clientRequestId: "generate-video-1",
             },
             expectedDelivery: answerDelivery(),
         },
     });
+    const approvalView: AgentRuntimeView = {
+        ...approvalBase,
+        pendingApproval: {
+            toolCallId: "render-1",
+            toolName: "media.generate",
+            actionVersion: 2,
+            proposalHash: "b".repeat(64),
+            expiresAt: "2026-08-15T00:05:00Z",
+            effect: { kind: "media_generation", summary: "生成 video 媒体", targetIds: ["video-node"] },
+            quote: { modelRecordId: "video-model-record", modelKey: "video-model-mini", priceVersion: 7, amountMicrocredits: 1_000_000 },
+        },
+    };
     const completedView = runtimeView("succeeded", {
         stateVersion: 4,
         stepNumber: 2,
@@ -327,7 +338,7 @@ test("单一运行链等待付费审批并展示验收后的最终消息", async
         },
         getRun: async () => approvalView,
         submitApproval: async (_runId, input) => {
-            calls.push(`approval:${input.decision}:${input.toolCallId}:${input.actionVersion}`);
+            calls.push(`approval:${input.decision}:${input.toolCallId}:${input.actionVersion}:${input.proposalHash}`);
             return completedView;
         },
         submitClarificationResponse: async () => completedView,
@@ -353,11 +364,11 @@ test("单一运行链等待付费审批并展示验收后的最终消息", async
     const approvalSummary = document.querySelector<HTMLElement>('[aria-label="冻结生成费用"]');
     expect(approvalSummary?.textContent).toContain("预计扣除");
     expect(approvalSummary?.textContent).toContain("1 积分");
-    expect(approvalSummary?.textContent).toContain("Seedance Mini");
-    expect(approvalSummary?.textContent).toContain("文生视频 · 720P · 16:9 · 5s · 1 个 · 无声");
+    expect(approvalSummary?.textContent).toContain("video-model-mini");
+    expect(approvalSummary?.textContent).toContain("价格版本7");
     await act(async () => button("批准执行").click());
     await settle();
-    expect(calls.at(-1)).toBe("approval:approved:render-1:2");
+    expect(calls.at(-1)).toBe(`approval:approved:render-1:2:${"b".repeat(64)}`);
     expect(document.body.textContent).toContain("画布整理已经完成。");
     expect(document.body.textContent).toContain("交付已验收");
 });
@@ -460,7 +471,7 @@ test("真实回复增量到达前显示思考中并在首个增量后切换为�
     if (!handlers) throw new Error("Agent SSE 未建立订阅");
     await act(async () =>
         handlers?.onEvent({
-            protocolVersion: 4,
+            protocolVersion: 5,
             threadId: "thread-1",
             runId: "run-1",
             sequence: 2,
@@ -533,7 +544,7 @@ test("运行已终止时即使完成事件稍晚到达也不继续显示流式�
     if (!handlers) throw new Error("Agent SSE 未建立订阅");
     await act(async () =>
         handlers?.onEvent({
-            protocolVersion: 4,
+            protocolVersion: 5,
             threadId: "thread-1",
             runId: "run-1",
             sequence: 2,

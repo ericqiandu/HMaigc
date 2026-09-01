@@ -1,22 +1,22 @@
 import { expect, test } from "bun:test";
 
-import { agentCanvasCommittedRevision } from "../src/lib/canvas/canvas-agent-runtime-event";
+import { agentCanvasCommittedReceipt } from "../src/lib/canvas/canvas-agent-runtime-event";
 import { prepareAgentCanvasRun, requireCanvasCollaborationRevision, requireEditableCanvasCollaboration } from "../src/lib/canvas/canvas-collaboration-preflight";
 import type { AgentRuntimeEvent } from "../src/services/api/agent-runtime";
 import type { CanvasCollaborationState } from "../src/services/api/canvas-collaboration";
 
-test("Agent canvas.project 使用 committedRevision 触发当前画布刷新", () => {
-    const event = agentEvent({ canvasId: "canvas-1", committedRevision: 8 });
+test("Agent canvas.apply_ops 使用 committedRevision 触发当前画布刷新", () => {
+    const event = agentEvent(canvasReceipt());
 
-    expect(agentCanvasCommittedRevision(event, "canvas-1")).toBe(8);
-    expect(agentCanvasCommittedRevision(event, "canvas-2")).toBeUndefined();
+    expect(agentCanvasCommittedReceipt(event, "canvas-1")?.committedRevision).toBe(8);
+    expect(agentCanvasCommittedReceipt(event, "canvas-2")).toBeUndefined();
 });
 
 test("后续运行事件携带旧工具结果时不重复刷新画布", () => {
-    const event = agentEvent({ canvasId: "canvas-1", committedRevision: 8 });
+    const event = agentEvent(canvasReceipt());
     event.kind = "run.completed";
 
-    expect(agentCanvasCommittedRevision(event, "canvas-1")).toBeUndefined();
+    expect(agentCanvasCommittedReceipt(event, "canvas-1")).toBeUndefined();
 });
 
 test("Agent 启动前权限尚未加载时读取权威协作状态", async () => {
@@ -90,7 +90,7 @@ test("首页新画布必须先完成定向远端创建，再建立 Agent 的 rev
 
 function agentEvent(output: Record<string, unknown>): AgentRuntimeEvent {
     return {
-        protocolVersion: 4,
+        protocolVersion: 5,
         threadId: "thread-1",
         runId: "run-1",
         sequence: 3,
@@ -99,12 +99,32 @@ function agentEvent(output: Record<string, unknown>): AgentRuntimeEvent {
         itemKind: "tool_call",
         payload: {
             toolCallId: "canvas-commit-1",
-            toolName: "canvas.project",
+            toolName: "canvas.apply_ops",
             actionVersion: 1,
             succeeded: true,
             output,
         },
         createdAt: "2026-08-20T00:00:00Z",
+    };
+}
+
+function canvasReceipt(): Record<string, unknown> {
+    return {
+        canvasId: "canvas-1",
+        baseRevision: 7,
+        committedRevision: 8,
+        clientMutationId: "canvas-mutation-1",
+        proposalHash: "a".repeat(64),
+        appliedOperationIds: ["operation-1"],
+        evidence: {
+            addedNodeIds: [],
+            updatedNodeIds: ["node-1"],
+            deletedNodeIds: [],
+            upsertedConnectionIds: [],
+            deletedConnectionIds: [],
+            selectedNodeIds: ["node-1"],
+            viewportApplied: false,
+        },
     };
 }
 
