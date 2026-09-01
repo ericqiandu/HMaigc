@@ -48,11 +48,15 @@ Tool schema v6 只提供六个原子能力：
 
 工具身份固定为 `runId + toolCallId + actionVersion`；写入与付费提案额外冻结小写 SHA-256 `proposalHash`。已完成工具只重放持久结果，拒绝、过期、哈希不匹配、模型/价格/输入变化和结算不确定都作为显式事实返回，不会自动换模型、降低交付目标或伪造成功。
 
+写入批准与付费批准相互独立，批准只对当前不可变提案在有效期内生效；一次批准不能授权后续新价格、新输入或另一类副作用。用户界面只展示简洁且可操作的错误说明，完整运维证据则通过 `runId`、`toolCallId`、`actionVersion`、`taskId`、`billingOrderId` 与供应商请求身份关联，既能定位真实失败，也不会向用户暴露供应商原始响应、内部堆栈或密钥。
+
 首个模型决策必须声明 `expectedDelivery`，Runtime 将其冻结为整条 Run 的交付合同。每轮基于真实 ToolCall、Task、BillingOrder、ready Resource、资产发布和画布 revision 构造 `deliveryEvidence`，再生成 `deliveryVerification`；只有全部 completion criteria 已满足时才允许 final。只有文本、计划、Task 已提交或节点占位均不构成交付完成。
 
 #### 当前 Web 与传输投影
 
 Web 只提交用户目标、真实画布/选区事实和显式配置，展示服务端持久化 Turn/Item、结构化追问、审批提案与结果。SSE 使用 UI protocol v5 和连续持久 sequence 断线补发；旧 `stage_review_resolution`、`artifact_review`、`media_assembly` 等事件不会映射成当前交互卡。
+
+刷新、断线重连或服务进程重启后，客户端都从持久化 Run、审批提案、连续事件序列和权威工具结果恢复；内存状态、浏览器计时器和前端乐观文案均不构成完成事实。同一批准或恢复请求重复到达时只复用原身份与结果，不重复修改画布、创建媒体任务或扣减积分。
 
 `canvas.apply_ops` 成功后由服务端权威 revision/CAS 和协作通道传播画布变化，浏览器不自行执行 Agent 写入。`media.generate` 终态由 Outbox 唤醒同一 Run，成功必须能重读 succeeded Task、settled BillingOrder 与归属正确的 ready Resource；失败、取消和账务不确定保持可审计状态。已经由供应商成功产出的 Resource 不因后续步骤失败被删除、覆盖或回滚。
 

@@ -4,6 +4,19 @@
 
 ## 未发布
 
+### Cloud Agent 单一路径硬切换
+
+- 新建 Agent Run 统一使用 Runtime v5、Policy v5、Tool schema v6 与 UI protocol v5；模型在单一可恢复循环中基于真实项目上下文、动态模型目录、工具结果和按需加载的 Skills 自主决策，不再执行本地意图路由、固定 Specialist 顺序或 Production Graph。
+- Tool schema v6 只发布 `canvas.read`、`canvas.apply_ops`、`assets.read`、`assets.publish`、`media.generate`、`skills.load` 六个原子能力。画布写入复用 revision/CAS 真源，媒体生成复用 Task、BillingOrder、积分和 Resource 商业链路，资产发布在单一事务中写入完整资产关系；缺失契约或事实时显式失败，不提供旧工具映射、模型降级或隐式回退。
+- 写入与付费操作分别冻结包含作用域、参数、价格、过期时间和幂等身份的不可变审批提案；重复批准只重放原结果，拒绝、过期、哈希变化、报价变化和结算不确定不会产生第二次副作用。
+- Web 只投影持久化 UI protocol v5 事件、结构化追问和审批卡。SSE 断线按连续 sequence 补发，进程重启从 Run、ToolCall、Task、BillingOrder、Resource 与 Outbox 事实恢复；用户错误保持简洁，运维人员可通过运行、工具、任务、账单和供应商请求身份关联完整证据。
+- Specialist、Stage、Production Graph、Artifact Ledger、视觉分析与媒体装配的模型、仓储和数据表只保留历史终态审计读取；当前路由、依赖注入、协调器、Outbox、Web 交互和工具 schema 不再执行这些旧链路，非终态旧 Run 只能通过原子退役审计收口。
+
+### Agent 发布切换契约
+
+- 生产切换必须先只读审计活动 Runtime v5 Run、历史非终态 Run、媒体任务和未决账务；只有操作者明确批准后，才允许原子退休已证明尚未跨越供应商、计费或资产边界的旧运行。
+- 数据库变更保持追加式并验证必需索引；Backend 与 Web 必须以同一版本发布。上线后必须通过协议版本、审批拒绝/批准、重复批准幂等、SSE 恢复和历史路由不可用的烟雾测试，失败时回滚不可变镜像与同一恢复点，禁止启用运行时兼容或旧执行链兜底。
+
 ## v1.0.72 - 2026-08-29
 
 ### Agent 多专家生产运行时
