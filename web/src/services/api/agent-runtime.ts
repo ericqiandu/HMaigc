@@ -51,6 +51,12 @@ export type AgentPendingApproval = {
     effect: AgentApprovalEffect;
     quote?: AgentApprovalCostQuote;
 };
+export type AgentApprovalSubmission = {
+    toolCallId: string;
+    actionVersion: number;
+    proposalHash: string;
+    decision: "approved" | "rejected";
+};
 export type AgentDeliveryVerification = { status: "satisfied" | "repairable" | "failed"; rationale: string; missingCriteria?: Array<{ fact: string; artifact?: string }> };
 export type AgentRuntimeGenerationModelSelection = { channelId: string; model: string };
 export type AgentRuntimeGenerationModelSelections = { image?: AgentRuntimeGenerationModelSelection; video?: AgentRuntimeGenerationModelSelection };

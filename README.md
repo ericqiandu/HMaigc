@@ -42,9 +42,15 @@ HMaigc 是面向 AI 影视与短剧生产的商业化创作平台，覆盖项目
 
 Run 的工具调用次数和绝对截止时间是持久化运行事实。协调器在任何模型或工具副作用前检查截止时间；预算耗尽分别以 `tool_call_budget_exhausted` 或 `runtime_deadline_exceeded` 终结。用户停止 Run 时，检查点、活动工具和关联 Task 在同一事务中关闭；在途供应商请求通过本地取消句柄或跨实例检查点观察停止，已有供应商请求而费用事实不足的账单进入 `uncertain` 等待核对。
 
+#### 当前 Web 运行投影
+
+- Web 只投影 Runtime v5 的持久化 Turn/Item 与当前 SSE 生命周期事件；刷新时先从服务端历史恢复，再由更高 sequence 的实时事实覆盖同一 `itemId`。界面不推导 Production Stage、Specialist、内部思考步骤、阶段耗时或模拟进度，也不保留旧生产卡兼容入口。
+- `canvas.read`、`assets.read`、`skills.load` 仅显示事实活动，不产生确认按钮。`canvas.apply_ops`、`assets.publish`、`media.generate` 共用唯一审批卡，分别展示冻结的画布操作、资产发布目标或模型参数；`media.generate` 还必须展示冻结报价与有效期。每张卡只允许一组“批准执行 / 拒绝执行”，提交身份固定为 `toolCallId + actionVersion + proposalHash`；过期、身份变化或影响不匹配时禁用执行并要求 Agent 创建新提案。
+- 已完成工具必须提供与状态一致的 `succeeded` 事实；已完成的 `media.generate` 还必须提供全部可验证 Resource 身份、媒体类型与站内地址，缺失或畸形数据作为协议错误显式展示。真实生成资源一经出现即保留在活动记录中，后续画布写入或投影失败不得隐藏、覆盖或删除该资源。
+
 #### 已退役的多专家生产事实（Runtime v4，仅历史审计）
 
-下列 Graph、Stage、Specialist、Artifact Ledger、旧媒体生成和装配结构只用于读取既有 Runtime v4 / Policy v4 / Tool schema v5 / Production schema v2 审计事实，不再接受新模型决策，也不能恢复为活动 Run。正式 HTTP 路由不再注册阶段审核和 Artifact revision 操作，UI protocol v5 也拒绝 `stage_review_resolution`、`artifact_review` 等退役事件；历史数据库事实保留用于运维审计，但不会被投影成当前交互卡或重新执行。相关不可达实现将在后续硬切清理里程碑删除。更早的 Runtime v3 / Policy v3 / Tool schema v4 终态历史同样只读保留，不双写、不回填。
+下列 Graph、Stage、Specialist、Artifact Ledger、旧媒体生成和装配结构只用于读取既有 Runtime v4 / Policy v4 / Tool schema v5 / Production schema v2 审计事实，不再接受新模型决策，也不能恢复为活动 Run。正式 HTTP 路由不再注册阶段审核和 Artifact revision 操作，UI protocol v5 也拒绝 `stage_review_resolution`、`artifact_review` 等退役事件；历史数据库事实保留用于运维审计，但不会被投影成当前交互卡或重新执行。Web 的旧生产卡、阶段审核组件及其 API client 已删除，不存在兼容入口。更早的 Runtime v3 / Policy v3 / Tool schema v4 终态历史同样只读保留，不双写、不回填。
 
 - `agent_production_graph_versions` 按完整租户/用户/项目/画布/Thread/Run scope 追加不可变 Graph 版本；同一 scope 的 `graphKey + version` 唯一，完整阶段定义只写入一次。
 - `agent_production_stages` 保存 Graph 内阶段的可恢复 CAS 生命周期；`graphVersionId + stageKey` 唯一，`status/version/reviewRevisionId/lastErrorCode` 是可变控制事实，正文和媒体内容不写入阶段行。

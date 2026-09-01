@@ -230,100 +230,6 @@
     font-weight: 650;
 }
 
-.canvas-agent-avatar {
-    width: 28px;
-    height: 28px;
-}
-
-.canvas-agent-tool-card,
-.canvas-agent-proposal-card {
-    border: 0;
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--foreground) 5%, transparent);
-    box-shadow: none;
-}
-
-.canvas-agent-tool-card {
-    padding: 11px 12px;
-}
-
-.canvas-agent-proposal-card {
-    padding: 12px;
-}
-
-.canvas-agent-tool-icon {
-    width: 28px;
-    height: 28px;
-    border: 0;
-    border-radius: 6px;
-}
-
-.canvas-agent-status-badge {
-    display: inline-flex;
-    min-height: 20px;
-    flex: 0 0 auto;
-    align-items: center;
-    padding: 2px 7px;
-    border: 0;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 16px;
-}
-
-.canvas-agent-impact-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 1px;
-    overflow: hidden;
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--foreground) 8%, transparent);
-}
-
-.canvas-agent-impact-metric {
-    min-width: 0;
-    padding: 8px;
-    background: color-mix(in srgb, var(--background) 96%, transparent);
-}
-
-.canvas-agent-proposal-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    margin-top: 12px;
-}
-
-.canvas-agent-proposal-actions .ant-btn {
-    height: 32px !important;
-    border-radius: 6px !important;
-    font-size: 13px;
-    font-weight: 600;
-}
-
-.canvas-agent-proposal-actions .canvas-agent-proposal-secondary.ant-btn {
-    border-color: transparent;
-    background: color-mix(in srgb, var(--foreground) 6%, transparent);
-    color: var(--foreground);
-}
-
-.canvas-agent-proposal-actions .canvas-agent-proposal-primary.ant-btn {
-    border-color: transparent;
-    background: var(--foreground);
-    color: var(--background);
-}
-
-.canvas-agent-detail {
-    max-height: 256px;
-    margin-top: 10px;
-    overflow: auto;
-    padding: 10px;
-    border: 0;
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--foreground) 4%, transparent);
-    font-size: 11px;
-    line-height: 16px;
-}
-
 .canvas-agent-composer-wrap {
     padding: 8px 12px 12px;
 }
@@ -378,294 +284,6 @@
     }
 }
 
-.agent-production-timeline {
-    display: grid;
-    gap: 10px;
-    margin-top: 10px;
-}
-
-.agent-production-card,
-.agent-production-status-card,
-.agent-production-protocol-error {
-    color: color-mix(in srgb, var(--foreground) 88%, transparent);
-    background: color-mix(in srgb, var(--foreground) 5%, transparent);
-}
-
-.agent-production-card {
-    display: grid;
-    gap: 10px;
-    padding: 14px;
-    border-radius: 14px;
-}
-
-.agent-production-card-header,
-.agent-production-review-actions,
-.agent-production-card-error,
-.agent-production-status-card,
-.agent-production-protocol-error,
-.agent-production-inline-action,
-.agent-production-primary-action,
-.agent-production-secondary-action,
-.agent-production-stop-action {
-    display: flex;
-    align-items: center;
-}
-
-.agent-production-card-header {
-    justify-content: space-between;
-    gap: 10px;
-}
-
-.agent-production-card-heading,
-.agent-production-status-content,
-.agent-production-artifact-body,
-.agent-production-review-controls,
-.agent-production-candidate-review,
-.agent-production-publication-form {
-    display: grid;
-    min-width: 0;
-    gap: 6px;
-}
-
-.agent-production-card-kicker,
-.agent-production-fact-label,
-.agent-production-status-copy,
-.agent-production-resolved-copy {
-    color: color-mix(in srgb, var(--foreground) 48%, transparent);
-    font-size: 11px;
-    line-height: 17px;
-}
-
-.agent-production-card-title,
-.agent-production-artifact-name,
-.agent-production-status-title {
-    color: color-mix(in srgb, var(--foreground) 94%, transparent);
-    font-size: 13px;
-    line-height: 20px;
-}
-
-.agent-production-review-state {
-    flex: none;
-    padding: 3px 7px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--foreground) 8%, transparent);
-    color: color-mix(in srgb, var(--foreground) 56%, transparent);
-    font-size: 10px;
-    line-height: 16px;
-}
-
-.agent-production-review-state[data-decision="approved"],
-.agent-production-status-card[data-status="succeeded"] {
-    color: var(--status-success);
-}
-
-.agent-production-review-state[data-decision="stopped"],
-.agent-production-status-card[data-status="failed"],
-.agent-production-protocol-error {
-    color: var(--status-danger);
-}
-
-.agent-production-card-summary,
-.agent-production-artifact-copy,
-.agent-production-artifact-script,
-.agent-production-fact-value,
-.agent-production-action-error {
-    margin: 0;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    font-size: 12px;
-    line-height: 18px;
-}
-
-.agent-production-card-summary {
-    color: color-mix(in srgb, var(--foreground) 62%, transparent);
-}
-
-.agent-production-artifact-script {
-    max-height: 180px;
-    overflow: auto;
-    color: color-mix(in srgb, var(--foreground) 86%, transparent);
-}
-
-.agent-production-fact-row,
-.agent-production-fact-list {
-    display: grid;
-    grid-template-columns: 76px minmax(0, 1fr);
-    gap: 4px 8px;
-}
-
-.agent-production-fact-list .agent-production-fact-label {
-    grid-row: 1 / span 20;
-}
-
-.agent-production-card-loading {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    color: color-mix(in srgb, var(--foreground) 52%, transparent);
-    font-size: 11px;
-}
-
-.agent-production-loading-icon {
-    width: 13px;
-    height: 13px;
-    animation: canvas-agent-thinking-spin .8s linear infinite;
-}
-
-.agent-production-card-error,
-.agent-production-protocol-error,
-.agent-production-status-card {
-    gap: 8px;
-    padding: 10px 12px;
-    border-radius: 12px;
-}
-
-.agent-production-card-error {
-    justify-content: space-between;
-    color: var(--status-danger);
-    background: color-mix(in srgb, var(--status-danger) 9%, transparent);
-}
-
-.agent-production-card-error-copy {
-    min-width: 0;
-    font-size: 11px;
-    line-height: 17px;
-}
-
-.agent-production-inline-action,
-.agent-production-primary-action,
-.agent-production-secondary-action,
-.agent-production-stop-action {
-    justify-content: center;
-    gap: 5px;
-    min-height: 32px;
-    padding: 0 10px;
-    border: 0;
-    border-radius: 10px;
-    font-size: 11px;
-    cursor: pointer;
-}
-
-.agent-production-inline-action,
-.agent-production-secondary-action,
-.agent-production-stop-action {
-    background: color-mix(in srgb, var(--foreground) 8%, transparent);
-    color: color-mix(in srgb, var(--foreground) 76%, transparent);
-}
-
-.agent-production-primary-action {
-    background: var(--foreground);
-    color: var(--background);
-}
-
-.agent-production-stop-action {
-    color: var(--status-danger);
-}
-
-.agent-production-inline-action:disabled,
-.agent-production-primary-action:disabled,
-.agent-production-secondary-action:disabled,
-.agent-production-stop-action:disabled,
-.agent-production-candidate-select:disabled {
-    cursor: default;
-    opacity: .4;
-}
-
-.agent-production-action-icon,
-.agent-production-status-icon {
-    width: 13px;
-    height: 13px;
-    flex: none;
-}
-
-.agent-production-review-comment,
-.agent-production-publication-input,
-.agent-production-publication-select {
-    width: 100%;
-    border: 0;
-    outline: 0;
-    background: color-mix(in srgb, var(--foreground) 6%, transparent);
-    color: var(--foreground);
-    font: inherit;
-    font-size: 12px;
-}
-
-.agent-production-review-comment {
-    min-height: 56px;
-    resize: vertical;
-    padding: 9px 10px;
-    border-radius: 10px;
-}
-
-.agent-production-publication-input,
-.agent-production-publication-select {
-    height: 34px;
-    padding: 0 9px;
-    border-radius: 8px;
-}
-
-.agent-production-publication-select option {
-    color: var(--foreground);
-    background: var(--background);
-}
-
-.agent-production-review-actions {
-    flex-wrap: wrap;
-    gap: 7px;
-}
-
-.agent-production-action-error {
-    color: var(--status-danger);
-}
-
-.agent-production-candidate-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 7px;
-}
-
-.agent-production-candidate {
-    min-width: 0;
-    overflow: hidden;
-    border: 1px solid transparent;
-    border-radius: 9px;
-    background: color-mix(in srgb, var(--foreground) 5%, transparent);
-}
-
-.agent-production-candidate[data-selected="true"] {
-    border-color: color-mix(in srgb, var(--foreground) 42%, transparent);
-}
-
-.agent-production-candidate-media {
-    display: block;
-    width: 100%;
-    aspect-ratio: 16 / 10;
-    object-fit: cover;
-    background: color-mix(in srgb, var(--foreground) 6%, transparent);
-}
-
-.agent-production-candidate-audio {
-    display: block;
-    width: 100%;
-    min-height: 52px;
-}
-
-.agent-production-candidate-select {
-    width: 100%;
-    min-height: 30px;
-    border: 0;
-    background: transparent;
-    color: color-mix(in srgb, var(--foreground) 70%, transparent);
-    font-size: 11px;
-    cursor: pointer;
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .agent-production-loading-icon {
-        animation: none;
-    }
-}
-
 .canvas-agent-runtime-panel {
     position: fixed;
     inset: 0 0 0 auto;
@@ -683,7 +301,6 @@
 .canvas-agent-runtime-composer-footer,
 .canvas-agent-runtime-approval-heading,
 .canvas-agent-runtime-approval-actions,
-.canvas-agent-runtime-tool-result,
 .canvas-agent-runtime-error,
 .canvas-agent-runtime-failure {
     display: flex;
@@ -1179,25 +796,70 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.canvas-agent-runtime-arguments {
+.canvas-agent-runtime-approval-details,
+.canvas-agent-runtime-approval-invalid {
     margin-top: 10px;
 }
-.canvas-agent-runtime-arguments-summary {
-    cursor: pointer;
-    color: var(--muted-foreground);
-    font-size: 11px;
-    line-height: 18px;
+.canvas-agent-runtime-approval-details {
+    display: grid;
+    gap: 8px;
 }
-.canvas-agent-runtime-arguments-code {
-    max-height: 160px;
-    overflow: auto;
-    margin: 8px 0 0;
-    padding: 10px;
-    background: color-mix(in srgb, var(--foreground) 5%, transparent);
+.canvas-agent-runtime-approval-detail-meta,
+.canvas-agent-runtime-approval-expiry {
     font-size: 10px;
     line-height: 16px;
-    white-space: pre-wrap;
     overflow-wrap: anywhere;
+}
+.canvas-agent-runtime-approval-operation-list,
+.canvas-agent-runtime-approval-parameter-list {
+    display: grid;
+    gap: 5px;
+    margin: 0;
+    padding: 0;
+}
+.canvas-agent-runtime-approval-operation-list {
+    list-style: none;
+}
+.canvas-agent-runtime-approval-operation {
+    font-size: 11px;
+    line-height: 17px;
+}
+.canvas-agent-runtime-approval-parameter {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 8px;
+}
+.canvas-agent-runtime-approval-parameter-label,
+.canvas-agent-runtime-approval-parameter-value {
+    margin: 0;
+    font-size: 11px;
+    line-height: 17px;
+}
+.canvas-agent-runtime-approval-parameter-value {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.canvas-agent-runtime-approval-invalid {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    color: var(--status-danger);
+}
+.canvas-agent-runtime-approval-invalid-icon {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 15px;
+    margin-top: 2px;
+}
+.canvas-agent-runtime-approval-invalid-copy {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+}
+.canvas-agent-runtime-approval-invalid-title,
+.canvas-agent-runtime-approval-invalid-guidance {
+    font-size: 11px;
+    line-height: 17px;
 }
 .canvas-agent-runtime-approval-actions {
     justify-content: flex-end;
@@ -1208,26 +870,81 @@
 .canvas-agent-runtime-approve.ant-btn {
     min-height: 34px;
 }
-.canvas-agent-runtime-tool-result {
-    width: fit-content;
-    max-width: 100%;
-    gap: 10px;
-    padding: 5px 8px;
-    border-radius: 999px;
+.canvas-agent-runtime-activity {
+    display: grid;
+    gap: 6px;
+}
+.canvas-agent-runtime-activity-item {
+    display: flex;
+    min-width: 0;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 10px;
     background: color-mix(in srgb, var(--foreground) 5%, transparent);
-    font-size: 11px;
-    line-height: 17px;
 }
-.canvas-agent-runtime-tool-result-state[data-success="true"] {
-    color: var(--status-success);
-}
-.canvas-agent-runtime-tool-result-state[data-success="false"] {
+.canvas-agent-runtime-activity-item[data-status="failed"],
+.canvas-agent-runtime-activity-item[data-status="invalid"] {
     color: var(--status-danger);
 }
-.canvas-agent-runtime-tool-result-id {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+.canvas-agent-runtime-activity-icon,
+.canvas-agent-runtime-activity-icon-svg {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 14px;
+}
+.canvas-agent-runtime-activity-icon {
+    margin-top: 2px;
+}
+.canvas-agent-runtime-activity-copy {
+    display: grid;
+    min-width: 0;
+    flex: 1;
+    gap: 4px;
+}
+.canvas-agent-runtime-activity-heading {
+    display: flex;
+    min-width: 0;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+.canvas-agent-runtime-activity-title,
+.canvas-agent-runtime-activity-tool,
+.canvas-agent-runtime-activity-task,
+.canvas-agent-runtime-activity-error,
+.canvas-agent-runtime-activity-error-code {
+    font-size: 10px;
+    line-height: 16px;
+}
+.canvas-agent-runtime-activity-title {
+    font-weight: 600;
+}
+.canvas-agent-runtime-activity-tool,
+.canvas-agent-runtime-activity-error-code {
+    overflow-wrap: anywhere;
+}
+.canvas-agent-runtime-activity-resources {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+}
+.canvas-agent-runtime-resource-link,
+.canvas-agent-runtime-resource-image,
+.canvas-agent-runtime-resource-video,
+.canvas-agent-runtime-resource-audio {
+    display: block;
+    width: 100%;
+}
+.canvas-agent-runtime-resource-image,
+.canvas-agent-runtime-resource-video {
+    aspect-ratio: 16 / 10;
+    object-fit: cover;
+    background: color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+.canvas-agent-runtime-resource-audio {
+    grid-column: 1 / -1;
+    min-height: 40px;
 }
 .canvas-agent-runtime-error,
 .canvas-agent-runtime-failure {

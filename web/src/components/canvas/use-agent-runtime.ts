@@ -5,6 +5,7 @@ import {
     agentRuntimeClient,
     agentRuntimeHandleStorage,
     AgentRuntimeRequestError,
+    type AgentApprovalSubmission,
     type AgentClarificationAnswerInput,
     type AgentRuntimeClient,
     type AgentRuntimeEvent,
@@ -428,7 +429,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
     }, [adoptView, busy, client, reloadThreads, scheduleThreadReload, view]);
 
     const decideApproval = useCallback(
-        async (decision: "approved" | "rejected") => {
+        async (submission: AgentApprovalSubmission) => {
             const call = view?.state.status === "waiting_approval" ? view.state.pendingToolCall : undefined;
             const approval = view?.state.status === "waiting_approval" ? view.pendingApproval : undefined;
             if (!call || !approval || !view || busy) return;
@@ -436,7 +437,15 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
                 setError("审批提案与当前工具调用不一致，请刷新后重试");
                 return;
             }
-            const rejectedRunID = decision === "rejected" ? view.run.id : "";
+            if (
+                submission.toolCallId !== call.toolCallId ||
+                submission.actionVersion !== call.actionVersion ||
+                submission.proposalHash !== approval.proposalHash
+            ) {
+                setError("审批提交身份已变化，请刷新后由 Agent 创建新提案");
+                return;
+            }
+            const rejectedRunID = submission.decision === "rejected" ? view.run.id : "";
             if (rejectedRunID) {
                 stoppingRunIDRef.current = rejectedRunID;
                 if (runRefreshTimerRef.current) {
@@ -451,7 +460,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
                 adoptView(await client.submitApproval(view.run.id, {
                     toolCallId: call.toolCallId,
                     actionVersion: call.actionVersion,
-                    decision,
+                    decision: submission.decision,
                     proposalHash: approval.proposalHash,
                 }));
             } catch (cause) {

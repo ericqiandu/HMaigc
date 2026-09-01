@@ -1,5 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEventHandler, type PointerEventHandler, type SetStateAction } from "react";
-import { Bot, CircleAlert, History, PanelRightClose, Plus, ShieldCheck, XCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEventHandler, type PointerEventHandler, type SetStateAction } from "react";
+import { Bot, CircleAlert, History, PanelRightClose, Plus, XCircle } from "lucide-react";
 import { App, Button, Tooltip } from "antd";
 import { motion } from "motion/react";
 import { nanoid } from "nanoid";
@@ -10,24 +10,22 @@ import { deriveCanvasAgentSelectionDefaults } from "@/lib/canvas/canvas-agent-co
 import { createEmptyCanvasAgentDraft, removeLastCanvasAgentDraftSelection } from "@/lib/canvas/canvas-agent-draft";
 import { uploadImage } from "@/services/image-storage";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
-import type { AgentPendingApproval, AgentRuntimeClient, AgentRuntimeEvent, AgentRuntimeHandleStorage, AgentRuntimeStartConfiguration, AgentRuntimeState, AgentThreadHistoryTurn } from "@/services/api/agent-runtime";
-import type { AgentProductionClient } from "@/services/api/agent-production";
+import type { AgentRuntimeClient, AgentRuntimeEvent, AgentRuntimeHandleStorage, AgentRuntimeStartConfiguration, AgentRuntimeState, AgentThreadHistoryTurn } from "@/services/api/agent-runtime";
 import type { PlatformSkill } from "@/services/api/skills";
 import { decodeChannelModel, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasAgentGenerationModels, CanvasAgentLaunchRequest, CanvasAgentSkillSelection, CanvasNodeData } from "@/types/canvas";
 import { AgentChatComposer } from "./canvas-agent-chat-ui";
+import { AgentApprovalCard } from "./agent-approval-card";
+import { AgentRuntimeActivity } from "./agent-runtime-activity";
 import { AgentThinkingTrace } from "./agent-thinking-trace";
 import { CanvasAgentComposerControls } from "./canvas-agent-composer-controls";
 import { CanvasAgentSelectionSummary } from "./canvas-agent-selection-summary";
 import { AgentRuntimeHistoryList } from "./agent-runtime-history-list";
 import type { AgentConversationState } from "./agent-conversation-reducer";
 import { AgentClarificationHistory, AgentClarificationPanel, AgentClarificationStatus } from "./agent-clarification-panel";
-import { AgentApprovalSummary } from "./agent-approval-summary";
 import { agentRuntimeUsesLiveSubscription, useAgentRuntime } from "./use-agent-runtime";
 import "./canvas-agent-panel.css";
-
-const AgentProductionTimeline = lazy(() => import("./agent-production-card").then((module) => ({ default: module.AgentProductionTimeline })));
 
 export const CANVAS_AGENT_PANEL_MOTION_MS = 240;
 
@@ -48,7 +46,6 @@ type CanvasAssistantPanelProps = {
     onRuntimeEvent?: (event: AgentRuntimeEvent) => void;
     runtimeClient?: AgentRuntimeClient;
     runtimeStorage?: AgentRuntimeHandleStorage;
-    productionClient?: AgentProductionClient;
 };
 
 export function CanvasAssistantPanel({
@@ -68,7 +65,6 @@ export function CanvasAssistantPanel({
     onRuntimeEvent,
     runtimeClient,
     runtimeStorage,
-    productionClient,
 }: CanvasAssistantPanelProps) {
     const { message } = App.useApp();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -278,8 +274,6 @@ export function CanvasAssistantPanel({
                             connection={runtime.connection}
                             muted={theme.node.muted}
                             config={effectiveConfig}
-                            productionClient={productionClient}
-                            onProductionRefresh={runtime.refreshCurrentRun}
                         />
                     )}
                     {!historyOpen && runtime.view?.state.clarificationHistory.length ? <AgentClarificationHistory history={runtime.view.state.clarificationHistory} open={clarificationHistoryOpen} onOpenChange={setClarificationHistoryOpen} /> : null}
@@ -292,8 +286,14 @@ export function CanvasAssistantPanel({
                             </div>
                         </div>
                     ) : null}
-                    {runtime.view?.state.status === "waiting_approval" && runtime.view.state.pendingToolCall ? (
-                        <AgentApprovalCard state={runtime.view.state} approval={runtime.view.pendingApproval} busy={runtime.busy} muted={theme.node.muted} onDecision={(decision) => void runtime.decideApproval(decision)} />
+                    {runtime.view?.state.status === "waiting_approval" && runtime.view.state.pendingToolCall && runtime.view.pendingApproval ? (
+                        <AgentApprovalCard
+                            call={runtime.view.state.pendingToolCall}
+                            approval={runtime.view.pendingApproval}
+                            busy={runtime.busy}
+                            muted={theme.node.muted}
+                            onDecision={runtime.decideApproval}
+                        />
                     ) : null}
                 </section>
 
@@ -413,8 +413,6 @@ function AgentRunContent({
     connection,
     muted,
     config,
-    productionClient,
-    onProductionRefresh,
 }: {
     runId: string;
     state: AgentRuntimeState;
@@ -425,8 +423,6 @@ function AgentRunContent({
     connection: string;
     muted: string;
     config: AiConfig;
-    productionClient?: AgentProductionClient;
-    onProductionRefresh: () => Promise<void>;
 }) {
     const liveSubscription = agentRuntimeUsesLiveSubscription(state.status);
     const hasVisibleReply = conversation.items.some((item) => item.text.length > 0) || Boolean(state.finalMessage?.trim());
@@ -465,10 +461,7 @@ function AgentRunContent({
                     Agent 流式回复与最终事实冲突，请重新读取本轮运行。
                 </div>
             ) : null}
-            <Suspense fallback={<div className="agent-production-card-loading" role="status">正在加载阶段产物</div>}>
-                <AgentProductionTimeline runId={runId} turns={turns} events={events} client={productionClient} onRefresh={onProductionRefresh} />
-            </Suspense>
-            {state.lastToolResult ? <ToolResult state={state} muted={muted} /> : null}
+            <AgentRuntimeActivity runId={runId} turns={turns} events={events} muted={muted} />
             {state.finalMessage && !conversation.items.some((item) => (state.finalMessage ?? "").startsWith(item.text)) ? (
                 <article className="canvas-agent-runtime-final" aria-label="Agent 回复">
                     <p className="canvas-agent-runtime-final-copy">{state.finalMessage}</p>
@@ -490,59 +483,5 @@ function agentFailureMessage(failureCode: string): string {
 
 function knownAgentErrorMessage(errorCode: string): string | undefined {
     if (errorCode === "insufficient_credits") return "余额不足";
-    if (errorCode === "production_previous_billing_unresolved") return "上一次生成费用仍待确认，请先处理后再重试";
     return undefined;
-}
-
-function AgentApprovalCard({ state, approval, busy, muted, onDecision }: { state: AgentRuntimeState; approval?: AgentPendingApproval; busy: boolean; muted: string; onDecision: (decision: "approved" | "rejected") => void }) {
-    const call = state.pendingToolCall;
-    if (!call || !approval) return null;
-    return (
-        <div className="canvas-agent-runtime-approval">
-            <div className="canvas-agent-runtime-approval-heading">
-                <ShieldCheck className="canvas-agent-runtime-approval-icon" />
-                <div className="canvas-agent-runtime-approval-copy">
-                    <strong className="canvas-agent-runtime-approval-title">等待确认</strong>
-                    <span className="canvas-agent-runtime-approval-tool" style={{ color: muted }}>
-                        {call.toolName} · 版本 {call.actionVersion}
-                    </span>
-                </div>
-            </div>
-            <AgentApprovalSummary approval={approval} />
-            <section className="canvas-agent-runtime-approval-effect" aria-label="审批影响">
-                <strong className="canvas-agent-runtime-approval-effect-summary">{approval.effect.summary}</strong>
-                <span className="canvas-agent-runtime-approval-effect-targets" style={{ color: muted }}>
-                    {approval.effect.targetIds.join(" · ")}
-                </span>
-            </section>
-            <details className="canvas-agent-runtime-arguments">
-                <summary className="canvas-agent-runtime-arguments-summary">查看确定性参数</summary>
-                <pre className="canvas-agent-runtime-arguments-code">{JSON.stringify(call.arguments, null, 2)}</pre>
-            </details>
-            <div className="canvas-agent-runtime-approval-actions">
-                <Button className="canvas-agent-runtime-reject" disabled={busy} onClick={() => onDecision("rejected")}>
-                    拒绝执行
-                </Button>
-                <Button className="canvas-agent-runtime-approve" type="primary" disabled={busy} onClick={() => onDecision("approved")}>
-                    批准执行
-                </Button>
-            </div>
-        </div>
-    );
-}
-
-function ToolResult({ state, muted }: { state: AgentRuntimeState; muted: string }) {
-    const result = state.lastToolResult;
-    if (!result) return null;
-    return (
-        <div className="canvas-agent-runtime-tool-result">
-            <span className="canvas-agent-runtime-tool-result-state" data-success={result.succeeded}>
-                {result.succeeded ? "工具已完成" : "工具失败"}
-            </span>
-            <span className="canvas-agent-runtime-tool-result-id" style={{ color: muted }}>
-                {result.toolCallId}
-                {result.errorCode ? ` · ${knownAgentErrorMessage(result.errorCode) ?? result.errorCode}` : ""}
-            </span>
-        </div>
-    );
 }

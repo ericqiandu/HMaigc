@@ -314,7 +314,7 @@ test("单一运行链等待付费审批并展示验收后的最终消息", async
             toolName: "media.generate",
             actionVersion: 2,
             proposalHash: "b".repeat(64),
-            expiresAt: "2026-08-15T00:05:00Z",
+            expiresAt: "2099-08-15T00:05:00Z",
             effect: { kind: "media_generation", summary: "生成 video 媒体", targetIds: ["video-node"] },
             quote: { modelRecordId: "video-model-record", modelKey: "video-model-mini", priceVersion: 7, amountMicrocredits: 1_000_000 },
         },
@@ -772,30 +772,6 @@ test("余额不足时向用户显示可理解文案而不是内部错误码", as
 
     expect(document.querySelector(".canvas-agent-runtime-failure")?.textContent).toBe("余额不足");
     expect(document.body.textContent).not.toContain("insufficient_credits");
-});
-
-test("上一生成费用待确认时在失败卡和工具卡隐藏内部错误码", async () => {
-    const failed = runtimeView("failed", {
-        failureCode: "production_previous_billing_unresolved",
-        lastToolResult: {
-            toolCallId: "tool_retry_video_clip_002",
-            actionVersion: 1,
-            succeeded: false,
-            output: {},
-            errorCode: "production_previous_billing_unresolved",
-        },
-    });
-    const client = runtimeClient({
-        listThreads: async () => ({ items: [historyItem("thread-1", failed, "2026-08-15T04:00:00Z")] }),
-        getRun: async () => failed,
-    });
-
-    await mount(client);
-
-    const message = "上一次生成费用仍待确认，请先处理后再重试";
-    expect(document.querySelector(".canvas-agent-runtime-failure")?.textContent).toBe(message);
-    expect(document.querySelector(".canvas-agent-runtime-tool-result")?.textContent).toContain(message);
-    expect(document.body.textContent).not.toContain("production_previous_billing_unresolved");
 });
 
 test("服务端历史恢复成功也不会吞掉本地句柄读取错误", async () => {
