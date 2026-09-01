@@ -68,7 +68,6 @@ type agentRuntimeRequest interface {
 
 func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
 	agent := r.Group("/agent", agentRuntimeSecurityHeaders())
-	registerAgentProductionRoutes(agent, svc)
 	agent.GET("/threads", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -211,7 +210,11 @@ func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		var request submitAgentApprovalRequest
 		if err := decodeStrictAgentRequest(c, &request); err != nil {
-			fail(c, http.StatusBadRequest, err)
+			failAgentApprovalInvalid(c, err)
+			return
+		}
+		if err := validateAgentApprovalRequest(request); err != nil {
+			failAgentApprovalInvalid(c, err)
 			return
 		}
 		view, err := svc.SubmitScopedAgentApproval(user, c.Param("runId"), service.AgentToolApprovalSubmission{
@@ -255,6 +258,34 @@ func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, view)
 	})
+}
+
+func validateAgentApprovalRequest(request submitAgentApprovalRequest) error {
+	if strings.TrimSpace(request.ToolCallID) == "" || request.ActionVersion < 1 || !validLowerHexSHA256(request.ProposalHash) ||
+		(request.Decision != agentruntime.ToolApprovalApproved && request.Decision != agentruntime.ToolApprovalRejected) {
+		return errors.New("Agent 审批请求无效")
+	}
+	return nil
+}
+
+func validLowerHexSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func failAgentApprovalInvalid(c *gin.Context, err error) {
+	message := "Agent 审批请求无效"
+	if err != nil && err.Error() == "Agent 请求格式无效" {
+		message = err.Error()
+	}
+	c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "data": gin.H{"errorCode": "agent_approval_invalid"}, "msg": message})
 }
 
 func failAgentControl(c *gin.Context, err error) bool {

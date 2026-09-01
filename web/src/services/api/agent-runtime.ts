@@ -1,7 +1,6 @@
 import { localForageStorage } from "@/lib/localforage-storage";
 import { isAgentToolName, parseAgentCapabilityArguments, type AgentCapabilityArguments, type AgentToolName } from "./agent-capabilities";
 import { parseClarificationHistory, parsePendingClarification, type AgentClarificationAnswerInput, type AgentCompletedClarification, type AgentPendingClarification } from "./agent-clarification";
-import { parseAgentProductionTimelineContent, type AgentProductionTimelineContent } from "./agent-production";
 import { array, exactObject, flag, integer, object, text } from "./strict-contract";
 
 export { parseAgentCapabilityArguments } from "./agent-capabilities";
@@ -460,10 +459,7 @@ function parseTimelineContent(value: unknown, label: string, kind: AgentTimeline
     const source = object(value, label);
     let content: AgentTimelineItemContent;
     if (source.contentType !== undefined) {
-        const production = parseAgentProductionTimelineContent(source);
-        const expectedKind = productionTimelineItemKind(production);
-        if (kind !== expectedKind) throw new Error(`${label} 的 Agent 生产内容与 item kind 不一致`);
-        content = production;
+        content = parseAgentV5TimelineContent(source, label, kind);
     } else {
         content = kind === "artifact"
             ? exactObject(source, label, ["artifactId", "kind", "planKey", "planVersion", "referenceKey", "shotKey", "resourceId", "status"])
@@ -475,17 +471,97 @@ function parseTimelineContent(value: unknown, label: string, kind: AgentTimeline
     return content;
 }
 
-function productionTimelineItemKind(content: AgentProductionTimelineContent): AgentTimelineItemKind {
-    switch (content.contentType) {
-        case "stage_review_resolution":
-            return "approval";
-        case "media_assembly":
-            return "tool_call";
-        case "artifact_review":
-        case "asset_publication":
-        case "asset_publication_failed":
-            return "artifact";
+function parseAgentV5TimelineContent(source: Record<string, unknown>, label: string, kind: AgentTimelineItemKind): AgentTimelineItemContent {
+    if (source.contentType === "stage_review_resolution" || source.contentType === "artifact_review") {
+        throw new Error(`${label} 使用了 Agent UI v5 已退役的生产图事件: ${source.contentType}`);
     }
+    if (source.contentType === "media_assembly") {
+        if (kind !== "tool_call") throw new Error(`${label} 的媒体装配内容与 item kind 不一致`);
+        return parseMediaAssemblyTimelineContent(source, label);
+    }
+    if (source.contentType === "asset_publication") {
+        if (kind !== "artifact") throw new Error(`${label} 的资产入库内容与 item kind 不一致`);
+        const content = exactObject(source, label, ["contentType", "publicationId", "artifactRevisionId", "resourceId", "assetId", "assetVersionId", "projectAssetLinkId", "representationId", "publicationPurpose", "targetCategory", "targetBindingKey"]);
+        return {
+            contentType: "asset_publication",
+            publicationId: text(content.publicationId, `${label}.publicationId`),
+            artifactRevisionId: text(content.artifactRevisionId, `${label}.artifactRevisionId`),
+            resourceId: text(content.resourceId, `${label}.resourceId`),
+            assetId: text(content.assetId, `${label}.assetId`),
+            assetVersionId: text(content.assetVersionId, `${label}.assetVersionId`),
+            projectAssetLinkId: text(content.projectAssetLinkId, `${label}.projectAssetLinkId`),
+            representationId: text(content.representationId, `${label}.representationId`),
+            publicationPurpose: text(content.publicationPurpose, `${label}.publicationPurpose`),
+            targetCategory: enumText(content.targetCategory, `${label}.targetCategory`, ["character", "environment", "wardrobe", "prop", "weapon", "style", "other"]),
+            targetBindingKey: text(content.targetBindingKey, `${label}.targetBindingKey`),
+        };
+    }
+    if (source.contentType === "asset_publication_failed") {
+        if (kind !== "artifact") throw new Error(`${label} 的资产入库失败内容与 item kind 不一致`);
+        const content = exactObject(source, label, ["contentType", "publicationId", "artifactRevisionId", "errorCode"]);
+        return {
+            contentType: "asset_publication_failed",
+            publicationId: text(content.publicationId, `${label}.publicationId`),
+            artifactRevisionId: text(content.artifactRevisionId, `${label}.artifactRevisionId`),
+            errorCode: text(content.errorCode, `${label}.errorCode`),
+        };
+    }
+    throw new Error(`${label} 包含不受支持的 Agent UI v5 内容类型: ${String(source.contentType)}`);
+}
+
+function parseMediaAssemblyTimelineContent(source: Record<string, unknown>, label: string): AgentTimelineItemContent {
+    const content = exactObject(source, label, ["contentType", "toolCallId", "actionVersion", "taskId", "taskStatus", "stage", "clipCount", "audioMode", "output", "planRevision", "final", "errorCode"]);
+    const taskStatus = enumText(content.taskStatus, `${label}.taskStatus`, ["queued", "running", "succeeded", "failed", "cancelled"]);
+    const audioMode = enumText(content.audioMode, `${label}.audioMode`, ["none", "native", "independent"]);
+    const outputSource = exactObject(content.output, `${label}.output`, ["artifactKey", "container", "videoCodec", "audioCodec", "width", "height", "frameRate"]);
+    const output = {
+        artifactKey: text(outputSource.artifactKey, `${label}.output.artifactKey`),
+        container: enumText(outputSource.container, `${label}.output.container`, ["mp4"]),
+        videoCodec: enumText(outputSource.videoCodec, `${label}.output.videoCodec`, ["h264"]),
+        audioCodec: enumText(outputSource.audioCodec, `${label}.output.audioCodec`, ["none", "aac"]),
+        width: integer(outputSource.width, `${label}.output.width`),
+        height: integer(outputSource.height, `${label}.output.height`),
+        frameRate: integer(outputSource.frameRate, `${label}.output.frameRate`),
+    };
+    if ((audioMode === "none") !== (output.audioCodec === "none")) throw new Error(`${label}.output.audioCodec 与声音模式冲突`);
+    const result: AgentTimelineItemContent = {
+        contentType: "media_assembly",
+        toolCallId: text(content.toolCallId, `${label}.toolCallId`),
+        actionVersion: integer(content.actionVersion, `${label}.actionVersion`),
+        taskId: text(content.taskId, `${label}.taskId`),
+        taskStatus,
+        stage: text(content.stage, `${label}.stage`),
+        clipCount: integer(content.clipCount, `${label}.clipCount`),
+        audioMode,
+        output,
+        planRevision: parseTimelineRevisionRef(content.planRevision, `${label}.planRevision`),
+    };
+    if (content.final !== undefined) {
+        const final = exactObject(content.final, `${label}.final`, ["artifactRevision", "resourceId", "adopted"]);
+        result.final = {
+            artifactRevision: parseTimelineRevisionRef(final.artifactRevision, `${label}.final.artifactRevision`),
+            resourceId: text(final.resourceId, `${label}.final.resourceId`),
+            adopted: flag(final.adopted, `${label}.final.adopted`),
+        };
+    }
+    if (content.errorCode !== undefined) result.errorCode = text(content.errorCode, `${label}.errorCode`);
+    const hasFinal = result.final !== undefined;
+    const hasError = result.errorCode !== undefined;
+    if ((taskStatus === "queued" || taskStatus === "running") && (hasFinal || hasError)) throw new Error(`${label} 进行中事实冲突`);
+    if (taskStatus === "succeeded" && (!hasFinal || hasError)) throw new Error(`${label} 成功事实不完整`);
+    if ((taskStatus === "failed" || taskStatus === "cancelled") && (hasFinal || !hasError)) throw new Error(`${label} 失败事实不完整`);
+    return result;
+}
+
+function parseTimelineRevisionRef(value: unknown, label: string): Record<string, unknown> {
+    const source = exactObject(value, label, ["artifactId", "revisionId"]);
+    return { artifactId: text(source.artifactId, `${label}.artifactId`), revisionId: text(source.revisionId, `${label}.revisionId`) };
+}
+
+function enumText(value: unknown, label: string, allowed: readonly string[]): string {
+    const parsed = text(value, label);
+    if (!allowed.includes(parsed)) throw new Error(`${label} 不受支持: ${parsed}`);
+    return parsed;
 }
 
 function rejectTransientMediaLocator(value: unknown, label: string): void {

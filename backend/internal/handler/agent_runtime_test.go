@@ -125,7 +125,7 @@ func TestAgentRuntimeHTTPReadsPersistedRunAndResumesSSEAfterSequence(t *testing.
 		t.Fatalf("events content type = %q", contentType)
 	}
 	if body := events.Body.String(); !strings.Contains(body, "id: 1\n") || !strings.Contains(body, "event: run.started\n") ||
-		!strings.Contains(body, `"protocolVersion":`+strconv.Itoa(agentruntime.ProductionAgentUIProtocolVersion)) || !strings.Contains(body, `"threadId":"`+scope.ThreadID+`"`) ||
+		!strings.Contains(body, `"protocolVersion":`+strconv.Itoa(agentruntime.CloudAgentUIProtocolVersion)) || !strings.Contains(body, `"threadId":"`+scope.ThreadID+`"`) ||
 		!strings.Contains(body, `"runId":"`+scope.RunID+`"`) || !strings.Contains(body, `"sequence":1`) {
 		t.Fatalf("events body = %s", body)
 	}
@@ -133,6 +133,50 @@ func TestAgentRuntimeHTTPReadsPersistedRunAndResumesSSEAfterSequence(t *testing.
 	after := fixture.request(http.MethodGet, "/api/agent/runs/"+scope.RunID+"/events?afterSequence="+strconv.FormatInt(1, 10), "", fixture.userCookie, "")
 	if after.Code != http.StatusOK || strings.Contains(after.Body.String(), "id: 1\n") {
 		t.Fatalf("resumed events status = %d, body = %s", after.Code, after.Body.String())
+	}
+}
+
+func TestAgentApprovalRejectsMalformedIdentityBeforeRunLookup(t *testing.T) {
+	fixture := openProviderAccountHandlerFixture(t)
+	if err := database.EnsureAgentRuntimeIntegritySchema(fixture.db); err != nil {
+		t.Fatal(err)
+	}
+	RegisterAgentRuntimeRoutes(fixture.router.Group("/api"), service.New(repository.New(fixture.db), t.TempDir()))
+
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{name: "empty tool call", body: `{"toolCallId":"","actionVersion":1,"proposalHash":"` + strings.Repeat("a", 64) + `","decision":"approved"}`},
+		{name: "invalid action version", body: `{"toolCallId":"call-1","actionVersion":0,"proposalHash":"` + strings.Repeat("a", 64) + `","decision":"approved"}`},
+		{name: "invalid proposal hash", body: `{"toolCallId":"call-1","actionVersion":1,"proposalHash":"ABC","decision":"approved"}`},
+		{name: "invalid decision", body: `{"toolCallId":"call-1","actionVersion":1,"proposalHash":"` + strings.Repeat("a", 64) + `","decision":"allow"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := fixture.request(http.MethodPost, "/api/agent/runs/missing-run/approvals", test.body, fixture.userCookie, "")
+			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"errorCode":"agent_approval_invalid"`) {
+				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestAgentEventV5DoesNotRegisterRetiredProductionGraphRoutes(t *testing.T) {
+	fixture := openProviderAccountHandlerFixture(t)
+	RegisterAgentRuntimeRoutes(fixture.router.Group("/api"), service.New(repository.New(fixture.db), t.TempDir()))
+
+	for _, request := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{method: http.MethodPost, path: "/api/agent/runs/run-1/stages/stage-1/reviews", body: `{}`},
+		{method: http.MethodGet, path: "/api/agent/runs/run-1/artifacts/artifact-1/revisions/revision-1"},
+	} {
+		response := fixture.request(request.method, request.path, request.body, fixture.userCookie, "")
+		if response.Code != http.StatusNotFound || strings.TrimSpace(response.Body.String()) != "404 page not found" {
+			t.Fatalf("retired route %s %s returned status=%d body=%s", request.method, request.path, response.Code, response.Body.String())
+		}
 	}
 }
 

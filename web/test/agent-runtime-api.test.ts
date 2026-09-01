@@ -115,7 +115,7 @@ test("付费媒体审批严格保留服务端冻结报价", () => {
     expect(() => parseAgentRuntimeView({ ...mediaView, pendingApproval: missingQuote })).toThrow("冻结报价");
 });
 
-test("Agent UI v5 硬切并严格保留可恢复的产物审核事件", () => {
+test("Agent UI v5 拒绝退役的产物审核事件与旧协议", () => {
     const event = {
         protocolVersion: 5,
         threadId: "thread-1",
@@ -136,9 +136,30 @@ test("Agent UI v5 硬切并严格保留可恢复的产物审核事件", () => {
         createdAt: "2026-08-28T00:00:00Z",
     } as const;
 
-    expect(parseAgentRuntimeEvent(event)).toEqual(event);
+
+    expect(() => parseAgentRuntimeEvent(event)).toThrow("退役");
     expect(() => parseAgentRuntimeEvent({ ...event, protocolVersion: 2 })).toThrow("协议版本");
-    expect(() => parseAgentRuntimeEvent({ ...event, payload: { ...event.payload, signedUrl: "https://example.test/transient" } })).toThrow("短期媒体地址");
+    expect(() => parseAgentRuntimeEvent({ ...event, payload: { ...event.payload, signedUrl: "https://example.test/transient" } })).toThrow();
+
+    expect(() =>
+        parseAgentRuntimeEvent({
+            ...event,
+            itemId: "stage-review-1",
+            itemKind: "approval",
+            payload: {
+                contentType: "stage_review_resolution",
+                stageId: "stage-script",
+                stageVersion: 3,
+                revisionId: "revision-script-1",
+                decision: "approved",
+                clientRequestId: "review-1",
+                resultStageVersion: 4,
+                resultStatus: "approved",
+                resultReviewRevisionId: "revision-script-1",
+                resultUpdatedAt: "2026-08-28T00:00:00Z",
+            },
+        }),
+    ).toThrow("退役");
 });
 
 const productionToolCases: Array<[AgentToolName, Record<string, unknown>]> = [

@@ -169,7 +169,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
         const expectedThreadID = view.run.threadId;
         const next = await client.getRun(expectedRunID);
         if (next.run.id !== expectedRunID || next.run.threadId !== expectedThreadID || threadIdRef.current !== expectedThreadID) {
-            throw new Error("Agent 阶段审核后的运行归属与当前会话不一致");
+            throw new Error("Agent 运行刷新后的归属与当前会话不一致");
         }
         adoptView(next);
         await reloadThreads();
@@ -301,10 +301,8 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
         }
         setConnection("connecting");
         let closeSubscription: () => void = () => undefined;
-        // UI text is reconstructed from the durable event log after a refresh. The
-        // saved cursor still fences business side effects, so replay never repeats
-        // canvas mutations, notifications, or persisted recovery progress.
-        closeSubscription = client.subscribe(runId, 0, {
+        const afterSequence = cursorRef.current;
+        closeSubscription = client.subscribe(runId, afterSequence, {
             onOpen: () => {
                 if (stoppingRunIDRef.current !== runId) setConnection("connected");
             },
@@ -323,9 +321,9 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
                     setError("Agent 实时事件与当前会话归属冲突");
                     return;
                 }
-                setTimeline((current) => appendAgentTimelineEvent(current, event));
                 if (event.sequence <= cursorRef.current) return;
                 cursorRef.current = event.sequence;
+                setTimeline((current) => appendAgentTimelineEvent(current, event));
                 void storage.save(canvasId, { threadId: event.threadId, activeRunId: runId, lastSequence: event.sequence }).catch((cause: unknown) => setError(errorMessage(cause, "Agent 事件游标保存失败")));
                 onRuntimeEventRef.current?.(event);
                 scheduleThreadReload();

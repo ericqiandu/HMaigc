@@ -65,7 +65,7 @@ func agentRuntimeViewNeedsHistoricalConfiguration(view AgentRuntimeView) bool {
 		view.State.ClarificationHistory == nil
 }
 
-const CurrentAgentUIProtocolVersion = agentruntime.ProductionAgentUIProtocolVersion
+const CurrentAgentUIProtocolVersion = agentruntime.CloudAgentUIProtocolVersion
 
 var ErrAgentEventProjectionFailed = errors.New("agent event projection failed")
 var ErrAgentStreamCursorInvalid = errors.New("agent stream cursor invalid")
@@ -242,15 +242,7 @@ func projectAgentItemEvent(projected AgentUIEvent, event model.AgentRunEvent, it
 			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent approval timeline facts are invalid"))
 		}
 		if envelope.ContentType == agentruntime.StageReviewContentType {
-			content, err := agentruntime.DecodeStageReviewResolutionContent([]byte(item.ContentJSON))
-			if err != nil || item.Status != model.AgentTimelineItemCompleted || projected.Kind != AgentUIEventApprovalResolved {
-				return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent stage review resolution facts are invalid"))
-			}
-			projected.Payload, err = json.Marshal(content)
-			if err != nil {
-				return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, err)
-			}
-			return projected, nil
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("retired stage review resolution is not part of Agent UI v5"))
 		}
 	}
 	if item.Kind == model.AgentTimelineItemToolCall {
@@ -283,15 +275,7 @@ func projectAgentItemEvent(projected AgentUIEvent, event model.AgentRunEvent, it
 		return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent artifact timeline facts are invalid"))
 	}
 	if envelope.ContentType == agentruntime.ArtifactReviewContentType {
-		content, err := agentruntime.DecodeArtifactReviewContent([]byte(item.ContentJSON))
-		if err != nil {
-			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent artifact review timeline facts are invalid"))
-		}
-		projected.Payload, err = json.Marshal(content)
-		if err != nil {
-			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, err)
-		}
-		return projected, nil
+		return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("retired artifact review is not part of Agent UI v5"))
 	}
 	if envelope.ContentType == agentruntime.AssetPublicationContentType {
 		content, err := agentruntime.DecodeAssetPublicationContent([]byte(item.ContentJSON))

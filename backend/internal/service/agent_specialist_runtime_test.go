@@ -195,7 +195,7 @@ func TestRunSpecialistRejectsMultipleArtifactsForSingleReviewStage(t *testing.T)
 	}
 }
 
-func TestFirstVisibleReviewIsScriptBundle(t *testing.T) {
+func TestRetiredSpecialistReviewIsNotProjectedByCloudV5(t *testing.T) {
 	request := scriptSpecialistRuntimeRequestFixture("runtime-token-agent-model", "deepseek-v4-flash")
 	response := scriptSpecialistRuntimeResultJSON(t, request)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -236,20 +236,8 @@ func TestFirstVisibleReviewIsScriptBundle(t *testing.T) {
 		t.Fatalf("first replay records = %#v, error = %v", records, err)
 	}
 	firstReplay, err := ProjectAgentEvent(specialistRuntimeScope().ThreadID, records[0].Event, records[0].Item, CurrentAgentUIProtocolVersion)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reconnected, err := svc.repo.AgentTimelineEventsAfter(specialistRuntimeScope(), item.SourceEventSequence-1, 10)
-	if err != nil || len(reconnected) != 1 {
-		t.Fatalf("reconnected records = %#v, error = %v", reconnected, err)
-	}
-	secondReplay, err := ProjectAgentEvent(specialistRuntimeScope().ThreadID, reconnected[0].Event, reconnected[0].Item, CurrentAgentUIProtocolVersion)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if firstReplay.Sequence != item.SourceEventSequence || secondReplay.Sequence != item.SourceEventSequence ||
-		firstReplay.ItemID != item.ID || secondReplay.ItemID != item.ID || string(firstReplay.Payload) != string(secondReplay.Payload) {
-		t.Fatalf("SSE replay mismatch: first=%#v second=%#v", firstReplay, secondReplay)
+	if !errors.Is(err, ErrAgentEventProjectionFailed) {
+		t.Fatalf("ProjectAgentEvent() = %#v, error = %v, want %v", firstReplay, err, ErrAgentEventProjectionFailed)
 	}
 }
 

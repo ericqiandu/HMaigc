@@ -12,7 +12,7 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
-func TestCurrentAgentContractsHardCutToCloudV6(t *testing.T) {
+func TestAgentRuntimeTransportHardCutsToCloudV5UI(t *testing.T) {
 	if agentruntime.CurrentRuntimeVersion != agentruntime.CloudRuntimeVersion ||
 		agentruntime.CurrentPolicyVersion != agentruntime.CloudPolicyVersion ||
 		agentruntime.CurrentToolSchemaVersion != agentruntime.CloudToolSchemaVersion {
@@ -31,8 +31,11 @@ func TestCurrentAgentContractsHardCutToCloudV6(t *testing.T) {
 		agentruntime.CurrentToolSchemaVersion == agentruntime.ProductionToolSchemaVersion {
 		t.Fatal("current cloud contracts reopened the retired production v4/v5 execution path")
 	}
-	if CurrentAgentUIProtocolVersion != agentruntime.ProductionAgentUIProtocolVersion {
-		t.Fatalf("current UI protocol = %d, want production protocol %d", CurrentAgentUIProtocolVersion, agentruntime.ProductionAgentUIProtocolVersion)
+	if CurrentAgentUIProtocolVersion != agentruntime.CloudAgentUIProtocolVersion {
+		t.Fatalf("current UI protocol = %d, want cloud protocol %d", CurrentAgentUIProtocolVersion, agentruntime.CloudAgentUIProtocolVersion)
+	}
+	if CurrentAgentUIProtocolVersion == agentruntime.ProductionAgentUIProtocolVersion {
+		t.Fatal("current UI protocol reopened the retired production protocol")
 	}
 }
 
@@ -271,7 +274,7 @@ func TestProjectAgentItemEventCarriesTimelineKind(t *testing.T) {
 	}
 }
 
-func TestProjectAgentEventMapsPersistedStageReviewResolution(t *testing.T) {
+func TestAgentEventRejectsRetiredStageReviewResolution(t *testing.T) {
 	now := time.Now().UTC()
 	content := agentruntime.StageReviewResolutionContent{
 		ContentType: agentruntime.StageReviewContentType, StageID: "stage-script", StageVersion: 3,
@@ -289,16 +292,28 @@ func TestProjectAgentEventMapsPersistedStageReviewResolution(t *testing.T) {
 		Ordinal: 4, SourceEventSequence: 8, ContentJSON: string(payload),
 		StartedAt: now, CompletedAt: &now, CreatedAt: now, UpdatedAt: now,
 	}
-	projected, err := ProjectAgentEvent(item.ThreadID, model.AgentRunEvent{
+	if _, err := ProjectAgentEvent(item.ThreadID, model.AgentRunEvent{
 		RunID: item.RunID, Sequence: item.SourceEventSequence, Kind: agentruntime.EventApprovalDecided,
 		PayloadJSON: string(payload), CreatedAt: now,
-	}, &item, CurrentAgentUIProtocolVersion)
-	if err != nil {
-		t.Fatal(err)
+	}, &item, CurrentAgentUIProtocolVersion); err == nil {
+		t.Fatal("retired stage review resolution was projected into Agent UI v5")
 	}
-	if projected.Kind != AgentUIEventApprovalResolved || projected.ItemID != item.ID ||
-		projected.ItemKind != model.AgentTimelineItemApproval || string(projected.Payload) != string(payload) {
-		t.Fatalf("projected stage review resolution = %#v", projected)
+}
+
+func TestAgentEventRejectsRetiredArtifactReview(t *testing.T) {
+	now := time.Now().UTC()
+	payload := `{"contentType":"artifact_review","stageId":"stage-script","stageVersion":3,"artifactId":"artifact-script","revisionId":"revision-script-1","artifactSchema":"script_bundle.v1","summary":"剧本初稿待确认"}`
+	item := model.AgentTimelineItem{
+		ID: "item-artifact-review", ThreadID: "thread-1", RunID: "run-1",
+		Kind: model.AgentTimelineItemArtifact, Status: model.AgentTimelineItemCompleted,
+		Ordinal: 4, SourceEventSequence: 8, ContentJSON: payload,
+		StartedAt: now, CompletedAt: &now, CreatedAt: now, UpdatedAt: now,
+	}
+	if _, err := ProjectAgentEvent(item.ThreadID, model.AgentRunEvent{
+		RunID: item.RunID, Sequence: item.SourceEventSequence, Kind: agentruntime.EventArtifactAvailable,
+		PayloadJSON: payload, CreatedAt: now,
+	}, &item, CurrentAgentUIProtocolVersion); err == nil {
+		t.Fatal("retired artifact review was projected into Agent UI v5")
 	}
 }
 

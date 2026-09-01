@@ -397,7 +397,7 @@ test("刷新时从持久句柄恢复运行并重放耐久事件", async () => {
         },
     };
     await mount(client, storage);
-    expect(calls).toEqual(["resume:run-1", "subscribe:0"]);
+    expect(calls).toEqual(["resume:run-1", "subscribe:9"]);
     expect(document.body.textContent).toContain("已执行 2 步 · 上限 8");
 });
 
@@ -712,7 +712,7 @@ test("没有本地句柄时采用服务端最近运行并保存恢复身份", as
         listThreads: async () => ({ items: [historyItem("thread-active", running, "2026-08-15T04:00:00Z")] }),
         getRun: async () => running,
         subscribe: (_runId, afterSequence) => {
-            expect(afterSequence).toBe(0);
+            expect(afterSequence).toBe(6);
             return () => undefined;
         },
     });

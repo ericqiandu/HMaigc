@@ -71,7 +71,7 @@ test("服务端 turns/items 是恢复真源且重复或乱序事件不会重复�
     expect(received).toEqual([delta, snapshot]);
 });
 
-test("活动 Run 刷新后从零重放气泡文本但不重复业务副作用", async () => {
+test("活动 Run 刷新后从持久游标续传且忽略迟到重复事件", async () => {
     const running = runtimeView("running", 2, 4);
     let subscribedAfter = -1;
     let handlers: Parameters<AgentRuntimeClient["subscribe"]>[2] | null = null;
@@ -100,8 +100,8 @@ test("活动 Run 刷新后从零重放气泡文本但不重复业务副作用", 
         handlers?.onEvent(fresh);
     });
 
-    expect(subscribedAfter).toBe(0);
-    expect(runtime?.events).toEqual([replayed, fresh]);
+    expect(subscribedAfter).toBe(4);
+    expect(runtime?.events).toEqual([fresh]);
     expect(runtime?.lastSequence).toBe(5);
     expect(received).toEqual([fresh]);
 });
