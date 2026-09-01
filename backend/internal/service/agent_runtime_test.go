@@ -81,6 +81,9 @@ func TestAgentRuntimeModelTaskSettlesCreditsAndResumesFromStoredDecision(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	if started.Run.MaxSteps != input.MaxSteps || started.State.MaxSteps != input.MaxSteps {
+		t.Fatalf("frozen max steps: run=%d state=%d want=%d", started.Run.MaxSteps, started.State.MaxSteps, input.MaxSteps)
+	}
 	if err := svc.ProcessNextTask(); err != nil {
 		var callLogs []model.ApiCallLog
 		if queryErr := db.Order("created_at ASC").Find(&callLogs, "task_id = ?", started.ModelTask.ID).Error; queryErr != nil {
@@ -396,6 +399,13 @@ func TestStartAgentRuntimeCreatesOneBilledFrozenModelTask(t *testing.T) {
 		UserMessage: "读取当前画布并告诉我下一步", MaxSteps: 4,
 		Configuration: guidedAgentRuntimeConfigurationInput(),
 	}
+	for _, invalidMaxSteps := range []int{0, agentRuntimeMaxSteps + 1} {
+		invalid := input
+		invalid.MaxSteps = invalidMaxSteps
+		if _, startErr := svc.StartAgentRuntime(invalid); startErr == nil || !strings.Contains(startErr.Error(), "Agent 请求事实无效") {
+			t.Fatalf("invalid max steps %d error = %v", invalidMaxSteps, startErr)
+		}
+	}
 	first, err := svc.StartAgentRuntime(input)
 	if err != nil {
 		t.Fatal(err)
@@ -480,6 +490,11 @@ func TestStartAgentRuntimeCreatesOneBilledFrozenModelTask(t *testing.T) {
 	changedMode.Configuration.ExecutionMode = agentruntime.ExecutionAutomatic
 	if _, err := svc.StartAgentRuntime(changedMode); err == nil || !strings.Contains(err.Error(), "request facts conflict") {
 		t.Fatalf("changed execution mode replay error = %v", err)
+	}
+	changedSteps := input
+	changedSteps.MaxSteps++
+	if _, err := svc.StartAgentRuntime(changedSteps); err == nil || !strings.Contains(err.Error(), "request facts conflict") {
+		t.Fatalf("changed max steps replay error = %v", err)
 	}
 	if err := db.Model(&model.Task{}).Where("id = ?", first.ModelTask.ID).Update("input_json", `{}`).Error; err != nil {
 		t.Fatal(err)

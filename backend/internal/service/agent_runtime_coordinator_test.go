@@ -21,7 +21,7 @@ func TestAdvanceAgentRunExpiresPersistedDeadlineBeforeResumingWork(t *testing.T)
 	scope := agentRuntimeServiceScope()
 	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
 		Scope: scope, ClientRequestID: "expired-runtime", UserMessage: "回答问题",
-		Configuration: guidedAgentRuntimeConfigurationInput(),
+		MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func TestCoordinateCompletedCloudToolNeverExecutesAgainAfterRestart(t *testing.T
 	scope := agentRuntimeServiceScope()
 	if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
 		Scope: scope, ClientRequestID: "completed-tool-restart", UserMessage: "读取画布",
-		Configuration: AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionAutomatic},
+		MaxSteps: 4, Configuration: AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionAutomatic},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestCoordinatePendingCloudReadExecutesRegistryCapability(t *testing.T) {
 	}
 	if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
 		Scope: scope, ClientRequestID: "pending-cloud-read", UserMessage: "读取画布",
-		Configuration: AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionAutomatic},
+		MaxSteps: 4, Configuration: AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionAutomatic},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestCoordinatePendingAgentToolRejectsRetiredRunContractBeforeExecution(t *t
 	scope := agentRuntimeServiceScope()
 	if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
 		Scope: scope, ClientRequestID: "retired-tool-contract", UserMessage: "读取画布",
-		Configuration: AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionAutomatic},
+		MaxSteps: 4, Configuration: AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionAutomatic},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestAdvanceAgentRunReusesOneDeterministicModelTask(t *testing.T) {
 	scope := agentRuntimeServiceScope()
 	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
 		Scope: scope, ClientRequestID: "coordinator-start", UserMessage: "回答问题",
-		Configuration: guidedAgentRuntimeConfigurationInput(),
+		MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -266,7 +266,7 @@ func TestRecoverStaleAgentRunsSerializesConcurrentRecovery(t *testing.T) {
 	scope := agentRuntimeServiceScope()
 	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
 		Scope: scope, ClientRequestID: "stale-recovery", UserMessage: "回答问题",
-		Configuration: guidedAgentRuntimeConfigurationInput(),
+		MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -324,7 +324,7 @@ func TestAdvanceAgentRunExecutesFreeSkillOnceAndCreatesOneNextModelTask(t *testi
 	scope := agentRuntimeServiceScope()
 	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
 		Scope: scope, ClientRequestID: "coordinator-skill-run", UserMessage: "加载分镜技能",
-		Configuration: AgentRuntimeConfigurationInput{SkillDirs: []string{selected.Dir}, ExecutionMode: agentruntime.ExecutionAutomatic},
+		MaxSteps: 4, Configuration: AgentRuntimeConfigurationInput{SkillDirs: []string{selected.Dir}, ExecutionMode: agentruntime.ExecutionAutomatic},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -368,7 +368,7 @@ func TestAdvanceAgentRunPausesAtStructuredClarification(t *testing.T) {
 	scope := agentRuntimeServiceScope()
 	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
 		Scope: scope, ClientRequestID: "coordinator-clarification", UserMessage: "生成汽车广告剧本",
-		Configuration: guidedAgentRuntimeConfigurationInput(),
+		MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -100,7 +100,7 @@ func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntime
 	if !input.Scope.CanMutateCanvas() {
 		return nil, Forbidden("当前用户没有执行 Agent 的画布权限")
 	}
-	if input.ClientRequestID == "" || input.UserMessage == "" || len(input.UserMessage) > 64*1024 {
+	if input.ClientRequestID == "" || input.UserMessage == "" || len(input.UserMessage) > 64*1024 || input.MaxSteps < 1 || input.MaxSteps > agentRuntimeMaxSteps {
 		return nil, BadAuthRequest("Agent 请求事实无效")
 	}
 	scope := input.Scope
@@ -124,7 +124,7 @@ func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntime
 			},
 			Initialize: repository.InitializeAgentRunInput{
 				Scope: scope, ModelRecordID: selected.ID, ModelKey: selected.ModelKey,
-				MaxSteps: agentRuntimeMaxSteps, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+				MaxSteps: input.MaxSteps, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
 				RuntimeVersion: agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
 				UserMessage: input.UserMessage, Configuration: configuration, Now: now,
 				Limits: &agentruntime.RuntimeLimits{
@@ -149,7 +149,7 @@ func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntime
 	if err != nil {
 		return nil, err
 	}
-	if state.UserMessage != input.UserMessage || state.MaxSteps != agentRuntimeMaxSteps || !agentRuntimeConfigurationMatchesInput(state.Configuration, input.Configuration) {
+	if state.UserMessage != input.UserMessage || state.MaxSteps != input.MaxSteps || !agentRuntimeConfigurationMatchesInput(state.Configuration, input.Configuration) {
 		return nil, errors.New("agent runtime request facts conflict")
 	}
 	switch state.Status {

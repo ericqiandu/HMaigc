@@ -16,7 +16,7 @@ func TestSubmitAgentClarificationResponseResumesSameRunOnce(t *testing.T) {
 	scope := agentRuntimeServiceScope()
 	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
 		Scope: scope, ClientRequestID: "clarification-service-run", UserMessage: "生成汽车广告剧本",
-		Configuration: guidedAgentRuntimeConfigurationInput(),
+		MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestConcurrentFinalClarificationSubmissionsCommitAndWakeOnce(t *testing.T) 
 	scope := agentRuntimeServiceScope()
 	if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
 		Scope: scope, ClientRequestID: "clarification-concurrent-run", UserMessage: "生成汽车广告剧本",
-		Configuration: guidedAgentRuntimeConfigurationInput(),
+		MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestSubmitAgentClarificationResponseMapsVersionAndIdentityConflicts(t *test
 	scope := agentRuntimeServiceScope()
 	if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
 		Scope: scope, ClientRequestID: "clarification-error-run", UserMessage: "生成汽车广告剧本",
-		Configuration: guidedAgentRuntimeConfigurationInput(),
+		MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
 	}); err != nil {
 		t.Fatal(err)
 	}

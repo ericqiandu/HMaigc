@@ -372,7 +372,7 @@ func TestAgentTaskOutboxIgnoresStaleModelWakeupAfterRunAdvances(t *testing.T) {
 	scope := agentRuntimeServiceScope()
 	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
 		Scope: scope, ClientRequestID: "stale-model-outbox", UserMessage: "生成汽车广告剧本",
-		Configuration: guidedAgentRuntimeConfigurationInput(),
+		MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
 	})
 	if err != nil {
 		t.Fatal(err)

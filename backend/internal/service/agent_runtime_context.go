@@ -174,10 +174,10 @@ func agentRuntimeCallableTools(mode agentruntime.ExecutionMode) ([]agentRuntimeC
 		}
 		tools = append(tools, agentRuntimeCallableToolFact{
 			Name: descriptor.Name, ActionVersion: descriptor.ActionVersion, RiskLevel: descriptor.RiskLevel,
-			RequiredAccess: descriptor.RequiredAccess,
+			RequiredAccess:   descriptor.RequiredAccess,
 			ApprovalRequired: agentruntime.ApprovalRequiredFor(policy, mode),
-			ArgumentsSchema: append(json.RawMessage(nil), descriptor.ArgumentsSchema...),
-			ResultSchema: append(json.RawMessage(nil), descriptor.ResultSchema...),
+			ArgumentsSchema:  append(json.RawMessage(nil), descriptor.ArgumentsSchema...),
+			ResultSchema:     append(json.RawMessage(nil), descriptor.ResultSchema...),
 		})
 	}
 	return tools, nil

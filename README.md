@@ -30,7 +30,7 @@ HMaigc 是面向 AI 影视与短剧生产的商业化创作平台，覆盖项目
 
 - 首页创作框先上传参考图片并创建真实画布项目，把提示词、账号级资源 ID、系统动态模型选择、平台第一方公开 Skill 目录与显式执行模式写入项目内的 `pendingAgentLaunch`；提示词和临时 Blob URL 均不进入 URL 或持久事实。
 - 打开新画布后，Agent 面板用该请求创建或复用服务端 thread，并以持久化 `clientRequestId` 启动 run；只有取得运行事实后才消费启动请求。启动响应丢失时刷新或重试仍复用同一请求 ID，不重复创建运行。
-- Agent 推理模型、语义规划与交付判断由服务端 Runtime 统一决定。首页与画布共用同一份草稿契约，Web 只提交用户目标、动态模型选择、已授权 Skill 版本、账号级 Resource 身份和显式执行模式；服务端重新核验并冻结这些事实。新 Run 固定使用 Runtime v5 / Policy v5 / Tool schema v6，工具调用预算固定为 24，并同时受 24 步决策上限约束；服务端还会冻结从首次启动时间计算的 30 分钟绝对截止时间。浏览器不能修改这些限制，进程重启也不会重置预算或截止时间。
+- Agent 推理模型、语义规划与交付判断由服务端 Runtime 统一决定。首页与画布共用同一份草稿契约，Web 只提交用户目标、动态模型选择、已授权 Skill 版本、账号级 Resource 身份、显式执行模式和 `1–24` 步决策预算；服务端重新核验并冻结这些事实。新 Run 固定使用 Runtime v5 / Policy v5 / Tool schema v6，工具调用预算固定为 24，决策步数采用本次请求明确提交并通过边界校验的值；服务端还会冻结从首次启动时间计算的 30 分钟绝对截止时间。同一幂等请求不能变更决策预算，进程重启也不会重置工具预算、决策预算或截止时间。
 - Tool schema v6 只接受 `canvas.read`、`canvas.apply_ops`、`assets.read`、`assets.publish`、`media.generate`、`skills.load` 六个原子能力及其严格参数。旧 `skill.load`、Specialist、Production Graph、`vision.analyze`、`media.assemble`、`canvas.project` 等决策不会映射或降级，而是以 `model_decision_invalid` 显式终结。六个能力均已接入当前权威数据源：读取能力只返回作用域内事实，`canvas.apply_ops` 通过画布 revision/CAS 真源原子提交，`media.generate` 复用现有 Task/BillingOrder/Resource 商业链路，`assets.publish` 在单一事务中创建 Asset、confirmed AssetVersion、ProjectAssetLink 与 AssetRepresentation。每次写入或付费执行都会重新核验租户、项目、画布、用户权限与冻结审批提案；输出只保留当前能力契约允许的已持久化事实，禁止回退旧执行图。
 - 模型每轮接收精确身份与作用域、动态模型事实、按需加载的 Skill 描述，以及六原子能力的参数和结果 schema。上下文上限为 512 KiB；未加载 Skill 的 instructions 不进入上下文，`docs/`、`assets/`、`ai-metadata/`、固定工作流和固定 Specialist 顺序均不参与运行时知识装配。
 
