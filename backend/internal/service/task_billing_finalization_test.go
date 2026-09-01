@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -485,23 +486,37 @@ func TestAgentTaskOutboxIgnoresStaleModelWakeupAfterRunAdvances(t *testing.T) {
 }
 
 func TestExpectedAgentTaskIDReadsFrozenGenerationTaskIdentity(t *testing.T) {
+	scope := agentRuntimeServiceScope()
 	tests := []struct {
 		name      string
 		toolName  agentruntime.ToolName
 		arguments []byte
 		want      string
+		wantErr   bool
 	}{
 		{
 			name: "legacy production render", toolName: agentruntime.ToolProductionRender,
 			arguments: []byte(`{"taskId":"production-task"}`), want: "production-task",
 		},
 		{
-			name: "current media generation", toolName: agentruntime.ToolMediaGenerate,
-			arguments: []byte(`{"commercial":{"taskId":"media-task"}}`), want: "media-task",
+			name: "retired media envelope", toolName: agentruntime.ToolMediaGenerate,
+			arguments: []byte(`{"commercial":{"taskId":"media-task"}}`), wantErr: true,
 		},
 		{
 			name: "current visual analysis", toolName: agentruntime.ToolVisionAnalyze,
 			arguments: []byte(`{"commercial":{"taskId":"vision-task"}}`), want: "vision-task",
+		},
+		{
+			name: "atomic media capability", toolName: agentruntime.ToolMediaGenerate,
+			arguments: []byte(`{"mediaKind":"image","modelRecordId":"runtime-image-model","modelKey":"kz_gpt_image2","parameters":{"prompt":"鲜橙产品特写","aspectRatio":"1:1","resolution":"1K","quality":"medium","count":1},"sourceResourceIds":[],"targetCanvasNodeId":"image-node-1","clientRequestId":"runtime-image-outbox"}`),
+			want: MediaAttemptIdentity(scope, MediaGenerationCommand{
+				ArtifactRevisionID: agentMediaCapabilityIdentity(scope, agentruntime.MediaGenerateArguments{
+					MediaKind: agentruntime.MediaKindImage, ModelRecordID: "runtime-image-model", ModelKey: "kz_gpt_image2",
+					Parameters:        json.RawMessage(`{"prompt":"鲜橙产品特写","aspectRatio":"1:1","resolution":"1K","quality":"medium","count":1}`),
+					SourceResourceIDs: []string{}, TargetCanvasNodeID: "image-node-1", ClientRequestID: "runtime-image-outbox",
+				}),
+				Attempt: 1, TaskType: "canvas_image", Capability: "image",
+			}),
 		},
 	}
 	for _, test := range tests {
@@ -510,7 +525,13 @@ func TestExpectedAgentTaskIDReadsFrozenGenerationTaskIdentity(t *testing.T) {
 				Status: agentruntime.RunWaitingTool, PendingToolStarted: true,
 				PendingToolCall: &agentruntime.ToolCallDecision{ToolName: test.toolName, Arguments: test.arguments},
 			}
-			got, err := expectedAgentTaskID(state, "generation-run", agentWakeGenerationTaskFinished)
+			got, err := expectedAgentTaskID(state, scope, agentWakeGenerationTaskFinished)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("expected retired media envelope to fail closed")
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}

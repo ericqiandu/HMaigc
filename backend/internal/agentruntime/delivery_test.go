@@ -29,6 +29,14 @@ func TestVerifyDeliveryUsesOnlyStructuredFacts(t *testing.T) {
 			evidence: agentruntime.DeliveryEvidence{Artifacts: []agentruntime.DeliveryArtifact{{Kind: agentruntime.ArtifactImage, URL: "https://cdn.example.com/result.png"}}}, want: agentruntime.VerificationSatisfied,
 		},
 		{
+			name:     "generated task resource satisfied before asset publication",
+			expected: agentruntime.ExpectedDelivery{Kind: agentruntime.DeliveryGeneratedAsset, RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactImage}, CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactArtifact, Artifact: agentruntime.ArtifactImage}}},
+			evidence: agentruntime.DeliveryEvidence{Artifacts: []agentruntime.DeliveryArtifact{{
+				Kind: agentruntime.ArtifactImage, ResourceID: "resource-generated", URL: "/api/resources/resource-generated/file",
+				ResourceReady: true, SourceTaskID: "task-generated", SourceTaskSucceeded: true,
+			}}}, want: agentruntime.VerificationSatisfied,
+		},
+		{
 			name:     "mixed requires both facts",
 			expected: agentruntime.ExpectedDelivery{Kind: agentruntime.DeliveryMixed, RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactVideo}, TargetCanvasID: "canvas-1", CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactCanvasRevision}, {Fact: agentruntime.DeliveryFactArtifact, Artifact: agentruntime.ArtifactVideo}}},
 			evidence: agentruntime.DeliveryEvidence{CanvasID: "canvas-1", CanvasRevision: 5, CanvasCurrent: true}, want: agentruntime.VerificationRepairable,
@@ -151,6 +159,40 @@ func TestFinalAssemblyDeliveryRequiresSuccessfulTaskReadyResourceAndCurrentRevis
 				t.Fatalf("incomplete assembly delivery = %#v", verification)
 			}
 		})
+	}
+}
+
+func TestCurrentCapabilityDeliveryAcceptsPersistedTaskAndPublicationFactsWithoutLegacyRevisions(t *testing.T) {
+	t.Parallel()
+
+	generated := agentruntime.ExpectedDelivery{
+		Kind:              agentruntime.DeliveryGeneratedAsset,
+		RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactVideo},
+		CompletionCriteria: []agentruntime.DeliveryCriterion{
+			{Fact: agentruntime.DeliveryFactTaskBackedResource, Artifact: agentruntime.ArtifactVideo},
+		},
+	}
+	generatedEvidence := agentruntime.DeliveryEvidence{Artifacts: []agentruntime.DeliveryArtifact{{
+		Kind: agentruntime.ArtifactVideo, ResourceID: "resource-video", URL: "/api/resources/resource-video/file",
+		ResourceReady: true, SourceTaskID: "task-video", SourceTaskSucceeded: true,
+	}}}
+	if verification := agentruntime.VerifyDelivery(generated, generatedEvidence); verification.Status != agentruntime.VerificationSatisfied {
+		t.Fatalf("current media delivery = %#v", verification)
+	}
+
+	published := agentruntime.ExpectedDelivery{
+		Kind:              agentruntime.DeliveryGeneratedAsset,
+		RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactImage},
+		CompletionCriteria: []agentruntime.DeliveryCriterion{
+			{Fact: agentruntime.DeliveryFactPublication, Artifact: agentruntime.ArtifactImage},
+		},
+	}
+	publishedEvidence := agentruntime.DeliveryEvidence{Artifacts: []agentruntime.DeliveryArtifact{{
+		Kind: agentruntime.ArtifactImage, ResourceID: "resource-image", URL: "/api/resources/resource-image/file",
+		ResourceReady: true, PublicationID: "asset-image", Approved: true,
+	}}}
+	if verification := agentruntime.VerifyDelivery(published, publishedEvidence); verification.Status != agentruntime.VerificationSatisfied {
+		t.Fatalf("current asset publication delivery = %#v", verification)
 	}
 }
 

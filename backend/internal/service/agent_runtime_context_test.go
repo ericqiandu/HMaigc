@@ -320,7 +320,7 @@ func createAgentRuntimeVideoModel(t *testing.T, db *gorm.DB, fixture agentRuntim
 		ID: "runtime-video-model", ChannelID: channel.ID, ModelKey: "doubao-seedance-2-5-260628", DisplayName: "Seedance 2.5",
 		ProviderCredentialID: fixture.credential.ID, AccessPolicy: model.ModelAccessAuthenticated, Capability: "video",
 		BillingMode: "per_second", PriceStrategy: "video_resolution", PriceConfigured: true, Enabled: true,
-		PriceTiers: tiers, CreatedAt: now, UpdatedAt: now,
+		PriceVersion: 1, PriceTiers: tiers, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&channelModel).Error; err != nil {
 		t.Fatal(err)

@@ -246,6 +246,25 @@ func (s *Service) coordinatePendingAgentTool(scope agentruntime.Scope, input Coo
 			}
 			return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, failureCode, map[string]string{"reason": executionErr.Error()})
 		}
+		if execution.Pending {
+			if len(execution.Output) != 0 {
+				return nil, errors.New("pending agent capability returned terminal output")
+			}
+			if state.PendingToolStarted {
+				return s.agentRuntimeProgressForCurrentState(scope, state)
+			}
+			started, beginErr := agentruntime.BeginToolExecution(state, agentruntime.ToolExecution{
+				ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
+			})
+			if beginErr != nil {
+				return nil, beginErr
+			}
+			progress, commitErr := s.commitAgentRuntimeState(scope, state, started)
+			if commitErr != nil {
+				return nil, commitErr
+			}
+			return s.agentRuntimeProgressForCurrentState(scope, progress.State)
+		}
 		output = execution.Output
 	} else {
 		switch call.ToolName {

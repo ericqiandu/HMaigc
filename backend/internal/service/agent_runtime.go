@@ -289,6 +289,15 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 	if err != nil {
 		return nil, err
 	}
+	if run.ToolSchemaVersion == agentruntime.CurrentToolSchemaVersion &&
+		transition.State.Status == agentruntime.RunWaitingApproval && transition.State.PendingToolCall != nil &&
+		transition.State.PendingToolCall.ToolName == agentruntime.ToolMediaGenerate {
+		quote, quoteErr := s.freezeAgentMediaCapabilityQuote(scope, *transition.State.PendingToolCall, time.Now().UTC())
+		if quoteErr != nil {
+			return nil, errors.Join(errors.New("media.generate approval quote could not be frozen"), quoteErr)
+		}
+		transition.ApprovalCostQuote = quote
+	}
 	progress, err := s.commitAgentRuntimeState(scope, state, transition)
 	if err != nil {
 		return nil, err
@@ -404,13 +413,13 @@ func (s *Service) ensureAgentRuntimeModelTask(scope agentruntime.Scope, run mode
 	if err != nil {
 		return nil, err
 	}
-	activePolicy, capability, err := s.membershipActiveTaskPolicy(scope.ActorUserID, billingScope, agentRuntimeModelTaskType, policy)
+	activePolicy, _, err := s.membershipActiveTaskPolicy(scope.ActorUserID, billingScope, agentRuntimeModelTaskType, policy)
 	if err != nil {
 		return nil, err
 	}
 	task := &model.Task{
 		ID: taskID, UserID: scope.ActorUserID, Audience: model.TaskAudienceInternal, ProjectID: scope.CanvasID,
-		Type: agentRuntimeModelTaskType, Capability: capability, Status: model.TaskStatusQueued,
+		Type: agentRuntimeModelTaskType, Status: model.TaskStatusQueued,
 		Stage: "等待 Agent 模型调度", Progress: 5, Prompt: prompt, Operation: agentRuntimeModelOperation(scope.RunID),
 		Provider: "system", Model: item.ModelKey, InputJSON: string(encodedInput),
 	}
@@ -426,8 +435,9 @@ func (s *Service) ensureAgentRuntimeModelTask(scope agentruntime.Scope, run mode
 	if err != nil {
 		return nil, err
 	}
+	task.Capability = order.Capability
 	task.BillingOrderID = order.ID
-	watermark, err := s.taskWatermarkCapability(capability, order)
+	watermark, err := s.taskWatermarkCapability(task.Capability, order)
 	if err != nil {
 		return nil, err
 	}

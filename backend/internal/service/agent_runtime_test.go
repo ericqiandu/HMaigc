@@ -1068,7 +1068,7 @@ func createAgentRuntimeImageModel(t *testing.T, db *gorm.DB, fixture agentRuntim
 	channelModel := model.ChannelModel{
 		ID: "runtime-image-model", ChannelID: channel.ID, ModelKey: "kz_gpt_image2", DisplayName: "GPT Image 2",
 		ProviderCredentialID: fixture.credential.ID, AccessPolicy: model.ModelAccessAuthenticated, Capability: "image",
-		BillingMode: "fixed_request", PriceStrategy: "image_resolution", UnitPriceMicrocredits: 250, PriceConfigured: true, Enabled: true,
+		BillingMode: "fixed_request", PriceStrategy: "image_resolution", UnitPriceMicrocredits: 250, PriceConfigured: true, Enabled: true, PriceVersion: 1,
 		PriceTiers: gptImage2TestPriceTiers("runtime-image-model", 250),
 		CreatedAt:  now, UpdatedAt: now,
 	}

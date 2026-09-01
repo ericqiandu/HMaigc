@@ -6,7 +6,8 @@ import (
 )
 
 type ToolExecutionResult struct {
-	Output json.RawMessage
+	Output  json.RawMessage
+	Pending bool
 }
 
 func NewToolExecutionResult(name ToolName, result CapabilityResult) (ToolExecutionResult, error) {
@@ -83,12 +84,20 @@ type AssetsPublishResult struct {
 func (AssetsPublishResult) capabilityResult() {}
 
 type MediaGenerateResult struct {
-	TaskID          string    `json:"taskId"`
-	MediaKind       MediaKind `json:"mediaKind"`
-	ClientRequestID string    `json:"clientRequestId"`
+	TaskID          string                         `json:"taskId"`
+	BillingOrderID  string                         `json:"billingOrderId"`
+	MediaKind       MediaKind                      `json:"mediaKind"`
+	ClientRequestID string                         `json:"clientRequestId"`
+	Resources       []MediaGeneratedResourceResult `json:"resources"`
 }
 
 func (MediaGenerateResult) capabilityResult() {}
+
+type MediaGeneratedResourceResult struct {
+	ResourceID string    `json:"resourceId"`
+	Kind       MediaKind `json:"kind"`
+	URL        string    `json:"url"`
+}
 
 type SkillsLoadResult struct {
 	SkillDir     string `json:"skillDir"`
@@ -276,10 +285,15 @@ func decodeAssetsPublishResult(payload json.RawMessage) (CapabilityResult, error
 
 func decodeMediaGenerateResult(payload json.RawMessage) (CapabilityResult, error) {
 	var wire MediaGenerateResult
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || !wire.MediaKind.Valid() {
+	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || !wire.MediaKind.Valid() ||
+		len(wire.Resources) < 1 || len(wire.Resources) > capabilityResourceLimit {
 		return nil, errCapabilityResultInvalid
 	}
 	taskID, err := normalizeIdentifier(wire.TaskID, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	billingOrderID, err := normalizeIdentifier(wire.BillingOrderID, capabilityIdentifierLimit)
 	if err != nil {
 		return nil, errCapabilityResultInvalid
 	}
@@ -287,7 +301,23 @@ func decodeMediaGenerateResult(payload json.RawMessage) (CapabilityResult, error
 	if err != nil {
 		return nil, errCapabilityResultInvalid
 	}
-	return MediaGenerateResult{TaskID: taskID, MediaKind: wire.MediaKind, ClientRequestID: requestID}, nil
+	resources := make([]MediaGeneratedResourceResult, 0, len(wire.Resources))
+	seen := make(map[string]struct{}, len(wire.Resources))
+	for _, resource := range wire.Resources {
+		resourceID, normalizeErr := normalizeResourceIdentifier(resource.ResourceID)
+		if normalizeErr != nil || resource.Kind != wire.MediaKind || resource.URL != "/api/resources/"+resourceID+"/file" {
+			return nil, errCapabilityResultInvalid
+		}
+		if _, exists := seen[resourceID]; exists {
+			return nil, errCapabilityResultInvalid
+		}
+		seen[resourceID] = struct{}{}
+		resources = append(resources, MediaGeneratedResourceResult{ResourceID: resourceID, Kind: resource.Kind, URL: resource.URL})
+	}
+	return MediaGenerateResult{
+		TaskID: taskID, BillingOrderID: billingOrderID, MediaKind: wire.MediaKind,
+		ClientRequestID: requestID, Resources: resources,
+	}, nil
 }
 
 func decodeSkillsLoadResult(payload json.RawMessage) (CapabilityResult, error) {

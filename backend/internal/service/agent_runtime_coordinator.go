@@ -145,7 +145,7 @@ func (s *Service) advanceAgentRunReferenceWithTaskFence(reference repository.Act
 		if loadErr != nil {
 			return loadErr
 		}
-		expectedTaskID, expectedErr := expectedAgentTaskID(state, reference.RunID, wakeup)
+		expectedTaskID, expectedErr := expectedAgentTaskID(state, scope, wakeup)
 		if expectedErr != nil {
 			return expectedErr
 		}

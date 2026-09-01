@@ -380,13 +380,13 @@ func (s *Service) ensureAgentSpecialistTask(scope agentruntime.Scope, parentRun 
 	if err != nil {
 		return nil, providerConfig{}, err
 	}
-	activePolicy, capability, err := s.membershipActiveTaskPolicy(scope.ActorUserID, billingScope, agentSpecialistModelTaskType, policy)
+	activePolicy, _, err := s.membershipActiveTaskPolicy(scope.ActorUserID, billingScope, agentSpecialistModelTaskType, policy)
 	if err != nil {
 		return nil, providerConfig{}, err
 	}
 	task := &model.Task{
 		ID: taskID, UserID: scope.ActorUserID, Audience: model.TaskAudienceInternal, ProjectID: scope.CanvasID,
-		Type: agentSpecialistModelTaskType, Capability: capability, Status: model.TaskStatusQueued,
+		Type: agentSpecialistModelTaskType, Status: model.TaskStatusQueued,
 		Stage: "等待 Specialist 模型调度", Progress: 5, Prompt: prompt, Operation: agentSpecialistOperation(request.SpecialistRunID),
 		Provider: "system", Model: item.ModelKey, InputJSON: string(encodedInput),
 	}
@@ -398,11 +398,12 @@ func (s *Service) ensureAgentSpecialistTask(scope agentruntime.Scope, parentRun 
 	if err != nil {
 		return nil, providerConfig{}, err
 	}
+	task.Capability = order.Capability
 	task.BillingOrderID = order.ID
 	if err := s.ensureTaskProjectActive(scope.ActorUserID, scope.CanvasID); err != nil {
 		return nil, providerConfig{}, err
 	}
-	watermark, err := s.taskWatermarkCapability(capability, order)
+	watermark, err := s.taskWatermarkCapability(task.Capability, order)
 	if err != nil {
 		return nil, providerConfig{}, err
 	}

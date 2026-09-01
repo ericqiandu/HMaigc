@@ -110,13 +110,16 @@ func taskOutboxRetryDelay(attempt int) time.Duration {
 	return time.Duration(1<<attempt) * time.Second
 }
 
-func expectedAgentTaskID(state agentruntime.RuntimeState, runID string, wakeup agentRunWakeup) (string, error) {
+func expectedAgentTaskID(state agentruntime.RuntimeState, scope agentruntime.Scope, wakeup agentRunWakeup) (string, error) {
+	if err := scope.Validate(); err != nil {
+		return "", err
+	}
 	switch wakeup {
 	case agentWakeModelTaskFinished:
 		if state.Status != agentruntime.RunQueued && state.Status != agentruntime.RunRunning {
 			return "", nil
 		}
-		return agentRuntimeModelTaskID(runID, state.StepNumber), nil
+		return agentRuntimeModelTaskID(scope.RunID, state.StepNumber), nil
 	case agentWakeGenerationTaskFinished:
 		if state.Status != agentruntime.RunWaitingTool || state.PendingToolCall == nil || !state.PendingToolStarted {
 			return "", nil
@@ -126,6 +129,25 @@ func expectedAgentTaskID(state agentruntime.RuntimeState, runID string, wakeup a
 		default:
 			return "", nil
 		}
+		if state.PendingToolCall.ToolName == agentruntime.ToolMediaGenerate {
+			decoded, err := agentruntime.DecodeCapabilityArguments(
+				agentruntime.ToolMediaGenerate,
+				state.PendingToolCall.Arguments,
+			)
+			if err != nil {
+				return "", fmt.Errorf("decode pending media capability task identity: %w", err)
+			}
+			arguments, ok := decoded.(agentruntime.MediaGenerateArguments)
+			if !ok {
+				return "", errors.New("pending media capability arguments have an invalid type")
+			}
+			return MediaAttemptIdentity(scope, MediaGenerationCommand{
+				ArtifactRevisionID: agentMediaCapabilityIdentity(scope, arguments),
+				Attempt:            1,
+				TaskType:           "canvas_" + string(arguments.MediaKind),
+				Capability:         string(arguments.MediaKind),
+			}), nil
+		}
 		var envelope agentPendingTaskEnvelope
 		if err := json.Unmarshal(state.PendingToolCall.Arguments, &envelope); err != nil {
 			return "", fmt.Errorf("decode pending Agent task identity: %w", err)
@@ -133,7 +155,10 @@ func expectedAgentTaskID(state agentruntime.RuntimeState, runID string, wakeup a
 		if taskID := strings.TrimSpace(envelope.TaskID); taskID != "" {
 			return taskID, nil
 		}
-		return strings.TrimSpace(envelope.Commercial.TaskID), nil
+		if taskID := strings.TrimSpace(envelope.Commercial.TaskID); taskID != "" {
+			return taskID, nil
+		}
+		return "", errors.New("pending Agent generation task identity is missing")
 	default:
 		return "", errors.New("task outbox wakeup is invalid")
 	}

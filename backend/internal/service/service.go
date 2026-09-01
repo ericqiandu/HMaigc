@@ -684,11 +684,11 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 	if err != nil {
 		return nil, err
 	}
-	activeTaskPolicy, capability, err := s.membershipActiveTaskPolicy(userID, billingAccountScope{TeamID: billingOrder.TeamID}, taskType, policy)
+	activeTaskPolicy, concurrencyClass, err := s.membershipActiveTaskPolicy(userID, billingAccountScope{TeamID: billingOrder.TeamID}, taskType, policy)
 	if err != nil {
 		return nil, err
 	}
-	task.Capability = capability
+	task.Capability = billingOrder.Capability
 	if identity.BillingIdempotencyKey != "" {
 		billingOrder.IdempotencyKey = identity.BillingIdempotencyKey
 	}
@@ -711,7 +711,7 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 	task.BillingOrderID = billingOrder.ID
 	task.Provider = "system"
 	task.Model = billingOrder.Model
-	watermarkCapability, err := s.taskWatermarkCapability(capability, billingOrder)
+	watermarkCapability, err := s.taskWatermarkCapability(task.Capability, billingOrder)
 	if err != nil {
 		return nil, err
 	}
@@ -726,7 +726,7 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 		}
 	}
 	if errors.Is(err, repository.ErrCapabilityTaskLimit) {
-		return nil, BadAuthRequest(capabilityLimitMessage(capability, activeTaskPolicy.CapabilityLimit))
+		return nil, BadAuthRequest(capabilityLimitMessage(concurrencyClass, activeTaskPolicy.ClassLimit))
 	}
 	if errors.Is(err, repository.ErrActiveTaskLimit) {
 		return nil, BadAuthRequest(fmt.Sprintf("当前账号同时排队或运行的任务最多 %d 个，请等待已有任务完成", activeTaskPolicy.TotalLimit))
@@ -860,14 +860,13 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 		if orderErr != nil {
 			return nil, orderErr
 		}
-		activeTaskPolicy, capability, policyErr := s.membershipActiveTaskPolicy(userID, billingAccountScope{TeamID: order.TeamID}, task.Type, policy)
+		activeTaskPolicy, concurrencyClass, policyErr := s.membershipActiveTaskPolicy(userID, billingAccountScope{TeamID: order.TeamID}, task.Type, policy)
 		if policyErr != nil {
 			return nil, policyErr
 		}
-		task.Capability = capability
 		resumed, resumeErr := s.repo.ResumeTaskWithUncertainBilling(userID, task.ID, activeTaskPolicy)
 		if errors.Is(resumeErr, repository.ErrCapabilityTaskLimit) {
-			return nil, BadAuthRequest(capabilityLimitMessage(capability, activeTaskPolicy.CapabilityLimit))
+			return nil, BadAuthRequest(capabilityLimitMessage(concurrencyClass, activeTaskPolicy.ClassLimit))
 		}
 		if errors.Is(resumeErr, repository.ErrActiveTaskLimit) {
 			return nil, BadAuthRequest(fmt.Sprintf("当前账号同时排队或运行的任务最多 %d 个，请等待已有任务完成", activeTaskPolicy.TotalLimit))
@@ -909,12 +908,12 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	if err := s.ensureTaskProjectActive(userID, task.ProjectID); err != nil {
 		return nil, err
 	}
-	activeTaskPolicy, capability, err := s.membershipActiveTaskPolicy(userID, billingAccountScope{TeamID: billingOrder.TeamID}, task.Type, policy)
+	activeTaskPolicy, concurrencyClass, err := s.membershipActiveTaskPolicy(userID, billingAccountScope{TeamID: billingOrder.TeamID}, task.Type, policy)
 	if err != nil {
 		return nil, err
 	}
-	task.Capability = capability
-	watermarkCapability, err := s.taskWatermarkCapability(capability, billingOrder)
+	task.Capability = billingOrder.Capability
+	watermarkCapability, err := s.taskWatermarkCapability(task.Capability, billingOrder)
 	if err != nil {
 		return nil, err
 	}
@@ -926,7 +925,7 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 		return nil, BadAuthRequest("本月团队积分额度已用尽，请联系团队管理员调整额度")
 	}
 	if errors.Is(err, repository.ErrCapabilityTaskLimit) {
-		return nil, BadAuthRequest(capabilityLimitMessage(capability, activeTaskPolicy.CapabilityLimit))
+		return nil, BadAuthRequest(capabilityLimitMessage(concurrencyClass, activeTaskPolicy.ClassLimit))
 	}
 	if errors.Is(err, repository.ErrActiveTaskLimit) {
 		return nil, BadAuthRequest(fmt.Sprintf("当前账号同时排队或运行的任务最多 %d 个，请等待已有任务完成", activeTaskPolicy.TotalLimit))

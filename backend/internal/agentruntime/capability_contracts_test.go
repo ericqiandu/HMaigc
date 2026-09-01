@@ -241,7 +241,7 @@ func TestCapabilityAssetsPublishAcceptsResourceIdentityOnly(t *testing.T) {
 func TestCapabilityResultsUseStrictVersionedSchemas(t *testing.T) {
 	t.Parallel()
 
-	valid := json.RawMessage(`{"taskId":"task-1","mediaKind":"video","clientRequestId":"request-1"}`)
+	valid := json.RawMessage(`{"taskId":"task-1","billingOrderId":"order-1","mediaKind":"video","clientRequestId":"request-1","resources":[{"resourceId":"resource-1","kind":"video","url":"/api/resources/resource-1/file"}]}`)
 	result, err := agentruntime.DecodeCapabilityResult(agentruntime.ToolMediaGenerate, valid)
 	if err != nil {
 		t.Fatalf("DecodeCapabilityResult() error = %v", err)
@@ -250,7 +250,17 @@ func TestCapabilityResultsUseStrictVersionedSchemas(t *testing.T) {
 		t.Fatalf("DecodeCapabilityResult() type = %T", result)
 	}
 
-	unknown := json.RawMessage(`{"taskId":"task-1","mediaKind":"video","clientRequestId":"request-1","url":"https://example.com/final.mp4"}`)
+	for _, invalid := range []json.RawMessage{
+		json.RawMessage(`{"taskId":"task-1","mediaKind":"video","clientRequestId":"request-1"}`),
+		json.RawMessage(`{"taskId":"task-1","billingOrderId":"order-1","mediaKind":"video","clientRequestId":"request-1","resources":[]}`),
+		json.RawMessage(`{"taskId":"task-1","billingOrderId":"order-1","mediaKind":"video","clientRequestId":"request-1","resources":[{"resourceId":"resource-1","kind":"video","url":"https://example.com/final.mp4"}]}`),
+	} {
+		if _, err := agentruntime.DecodeCapabilityResult(agentruntime.ToolMediaGenerate, invalid); err == nil {
+			t.Fatal("incomplete or non-authoritative media result was accepted")
+		}
+	}
+
+	unknown := json.RawMessage(`{"taskId":"task-1","billingOrderId":"order-1","mediaKind":"video","clientRequestId":"request-1","resources":[{"resourceId":"resource-1","kind":"video","url":"/api/resources/resource-1/file"}],"providerUrl":"https://example.com/final.mp4"}`)
 	if _, err := agentruntime.DecodeCapabilityResult(agentruntime.ToolMediaGenerate, unknown); err == nil {
 		t.Fatal("unknown result field was accepted")
 	}

@@ -222,13 +222,13 @@ func VerifyDelivery(expected ExpectedDelivery, evidence DeliveryEvidence) Delive
 			})
 		case DeliveryFactPublication:
 			satisfied = deliveryArtifactMatches(artifacts[criterion.Artifact], func(artifact DeliveryArtifact) bool {
-				return artifact.ArtifactID != "" && artifact.RevisionID != "" && artifact.Approved &&
-					artifact.ResourceID != "" && artifact.ResourceReady && artifact.URL != "" && artifact.PublicationID != ""
+				return artifact.Approved && artifact.ResourceID != "" && artifact.ResourceReady &&
+					artifact.URL != "" && artifact.PublicationID != ""
 			})
 		case DeliveryFactTaskBackedResource:
 			satisfied = deliveryArtifactMatches(artifacts[criterion.Artifact], func(artifact DeliveryArtifact) bool {
-				return artifact.ArtifactID != "" && artifact.RevisionID != "" && artifact.CurrentRevision &&
-					artifact.ResourceID != "" && artifact.ResourceReady && artifact.URL != "" &&
+				revisionCurrent := artifact.ArtifactID == "" || artifact.CurrentRevision
+				return revisionCurrent && artifact.ResourceID != "" && artifact.ResourceReady && artifact.URL != "" &&
 					artifact.SourceTaskID != "" && artifact.SourceTaskSucceeded
 			})
 		}
@@ -253,10 +253,10 @@ func validDeliveryArtifact(artifact DeliveryArtifact) bool {
 	if artifact.URL == "" && !hasExactRevision {
 		return false
 	}
-	if artifact.Approved && !hasExactRevision {
+	if artifact.Approved && !hasExactRevision && artifact.PublicationID == "" {
 		return false
 	}
-	if artifact.ResourceReady && (!hasExactRevision || artifact.ResourceID == "" || artifact.URL == "") {
+	if artifact.ResourceReady && (artifact.ResourceID == "" || artifact.URL == "") {
 		return false
 	}
 	if artifact.CurrentRevision && !hasExactRevision {

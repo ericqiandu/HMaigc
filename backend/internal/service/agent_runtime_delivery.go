@@ -11,12 +11,32 @@ import (
 )
 
 func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMessage string) (agentruntime.DeliveryEvidence, error) {
+	run, err := s.repo.AgentRunForScope(scope)
+	if err != nil {
+		return agentruntime.DeliveryEvidence{}, err
+	}
 	calls, err := s.repo.AgentToolCallsForScope(scope)
 	if err != nil {
 		return agentruntime.DeliveryEvidence{}, err
 	}
 	evidence := agentruntime.DeliveryEvidence{FinalMessage: strings.TrimSpace(finalMessage)}
 	seenArtifacts := make(map[string]bool)
+	currentArtifactIndex := make(map[string]int)
+	upsertCurrentArtifact := func(artifact agentruntime.DeliveryArtifact) error {
+		key := string(artifact.Kind) + "\x00" + artifact.ResourceID
+		if index, found := currentArtifactIndex[key]; found {
+			merged, mergeErr := mergeCurrentCapabilityDeliveryArtifact(evidence.Artifacts[index], artifact)
+			if mergeErr != nil {
+				return mergeErr
+			}
+			evidence.Artifacts[index] = merged
+			return nil
+		}
+		currentArtifactIndex[key] = len(evidence.Artifacts)
+		evidence.Artifacts = append(evidence.Artifacts, artifact)
+		seenArtifacts[key] = true
+		return nil
+	}
 	approvedRevisionIDs := map[string]struct{}{}
 	publicationByRevisionID := map[string]string{}
 	mediaFactsLoaded := false
@@ -92,6 +112,18 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 				seenArtifacts[key] = true
 			}
 		case agentruntime.ToolMediaGenerate:
+			if run.ToolSchemaVersion == agentruntime.CurrentToolSchemaVersion {
+				artifacts, err := s.currentMediaCapabilityDeliveryArtifacts(scope, call)
+				if err != nil {
+					return agentruntime.DeliveryEvidence{}, err
+				}
+				for _, artifact := range artifacts {
+					if err := upsertCurrentArtifact(artifact); err != nil {
+						return agentruntime.DeliveryEvidence{}, err
+					}
+				}
+				continue
+			}
 			arguments, err := decodeFrozenAgentMediaGenerationArguments(json.RawMessage(call.InputJSON))
 			if err != nil {
 				return agentruntime.DeliveryEvidence{}, errors.New("agent media delivery input is invalid")
@@ -134,6 +166,17 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 					evidence.Artifacts = append(evidence.Artifacts, artifact)
 					seenArtifacts[key] = true
 				}
+			}
+		case agentruntime.ToolAssetsPublish:
+			if run.ToolSchemaVersion != agentruntime.CurrentToolSchemaVersion {
+				continue
+			}
+			artifact, err := s.currentAssetCapabilityDeliveryArtifact(scope, call)
+			if err != nil {
+				return agentruntime.DeliveryEvidence{}, err
+			}
+			if err := upsertCurrentArtifact(artifact); err != nil {
+				return agentruntime.DeliveryEvidence{}, err
 			}
 		case agentruntime.ToolMediaAssemble:
 			artifact, err := s.mediaAssemblyDeliveryArtifact(scope, call)
@@ -185,6 +228,131 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 		evidence.CanvasCurrent = project.Revision == evidence.CanvasRevision
 	}
 	return evidence, nil
+}
+
+func mergeCurrentCapabilityDeliveryArtifact(
+	current agentruntime.DeliveryArtifact,
+	incoming agentruntime.DeliveryArtifact,
+) (agentruntime.DeliveryArtifact, error) {
+	if current.Kind != incoming.Kind || current.ResourceID == "" || current.ResourceID != incoming.ResourceID ||
+		current.URL == "" || current.URL != incoming.URL || !current.ResourceReady || !incoming.ResourceReady ||
+		(current.PublicationID != "" && incoming.PublicationID != "" && current.PublicationID != incoming.PublicationID) ||
+		(current.SourceTaskID != "" && incoming.SourceTaskID != "" && current.SourceTaskID != incoming.SourceTaskID) {
+		return agentruntime.DeliveryArtifact{}, errors.New("agent capability delivery facts conflict")
+	}
+	if current.PublicationID == "" {
+		current.PublicationID = incoming.PublicationID
+	}
+	if current.SourceTaskID == "" {
+		current.SourceTaskID = incoming.SourceTaskID
+	}
+	current.Approved = current.Approved || incoming.Approved
+	current.SourceTaskSucceeded = current.SourceTaskSucceeded || incoming.SourceTaskSucceeded
+	return current, nil
+}
+
+func (s *Service) currentMediaCapabilityDeliveryArtifacts(scope agentruntime.Scope, call model.AgentToolCall) ([]agentruntime.DeliveryArtifact, error) {
+	decodedArguments, err := agentruntime.DecodeCapabilityArguments(agentruntime.ToolMediaGenerate, json.RawMessage(call.InputJSON))
+	if err != nil {
+		return nil, errors.New("agent media delivery input is invalid")
+	}
+	arguments, ok := decodedArguments.(agentruntime.MediaGenerateArguments)
+	if !ok {
+		return nil, errors.New("agent media delivery input type is invalid")
+	}
+	decodedResult, err := agentruntime.DecodeCapabilityResult(agentruntime.ToolMediaGenerate, json.RawMessage(call.OutputJSON))
+	if err != nil {
+		return nil, errors.New("agent media delivery evidence is invalid")
+	}
+	result, ok := decodedResult.(agentruntime.MediaGenerateResult)
+	if !ok || result.MediaKind != arguments.MediaKind || result.ClientRequestID != arguments.ClientRequestID {
+		return nil, errors.New("agent media delivery receipt conflicts with its approved request")
+	}
+	expectedTaskID := MediaAttemptIdentity(scope, MediaGenerationCommand{
+		ArtifactRevisionID: agentMediaCapabilityIdentity(scope, arguments),
+		Attempt:            1,
+		TaskType:           "canvas_" + string(result.MediaKind),
+		Capability:         string(result.MediaKind),
+	})
+	if result.TaskID != expectedTaskID {
+		return nil, errors.New("agent media delivery task identity conflicts with its approved request")
+	}
+	task, err := s.repo.TaskForUser(scope.ActorUserID, result.TaskID)
+	if err != nil || task.ProjectID != scope.CanvasID || task.Type != "canvas_"+string(result.MediaKind) ||
+		task.Capability != string(result.MediaKind) || task.Operation != agentMediaGenerationOperationForRun(scope.RunID) ||
+		task.Status != model.TaskStatusSucceeded || task.BillingOrderID != result.BillingOrderID {
+		return nil, errors.Join(errors.New("agent media task delivery evidence is invalid"), err)
+	}
+	order, err := s.repo.BillingOrder(result.BillingOrderID)
+	if err != nil || order.UserID != scope.ActorUserID || order.TeamID != taskTeamID(scope) ||
+		order.TaskID != task.ID || order.Capability != string(result.MediaKind) || order.Status != model.BillingStatusSettled {
+		return nil, errors.Join(errors.New("agent media billing delivery evidence is invalid"), err)
+	}
+	authoritativeResources, err := s.agentMediaCapabilityResources(scope, task, result.MediaKind)
+	if err != nil || len(authoritativeResources) != len(result.Resources) {
+		return nil, errors.Join(errors.New("agent media task result delivery evidence is invalid"), err)
+	}
+	artifacts := make([]agentruntime.DeliveryArtifact, 0, len(authoritativeResources))
+	for index, resource := range authoritativeResources {
+		receipt := result.Resources[index]
+		if receipt != resource {
+			return nil, errors.New("agent media receipt resource conflicts with the authoritative task result")
+		}
+		artifacts = append(artifacts, agentruntime.DeliveryArtifact{
+			Kind:                agentruntime.ArtifactKind(result.MediaKind),
+			ResourceID:          resource.ResourceID,
+			URL:                 resource.URL,
+			ResourceReady:       true,
+			SourceTaskID:        task.ID,
+			SourceTaskSucceeded: true,
+		})
+	}
+	return artifacts, nil
+}
+
+func (s *Service) currentAssetCapabilityDeliveryArtifact(
+	scope agentruntime.Scope,
+	call model.AgentToolCall,
+) (agentruntime.DeliveryArtifact, error) {
+	decodedArguments, err := agentruntime.DecodeCapabilityArguments(agentruntime.ToolAssetsPublish, json.RawMessage(call.InputJSON))
+	if err != nil {
+		return agentruntime.DeliveryArtifact{}, errors.New("agent asset publication delivery input is invalid")
+	}
+	arguments, ok := decodedArguments.(agentruntime.AssetsPublishArguments)
+	if !ok || arguments.DomainProjectID != scope.DomainProjectID {
+		return agentruntime.DeliveryArtifact{}, errors.New("agent asset publication delivery scope is invalid")
+	}
+	decodedResult, err := agentruntime.DecodeCapabilityResult(agentruntime.ToolAssetsPublish, json.RawMessage(call.OutputJSON))
+	if err != nil {
+		return agentruntime.DeliveryArtifact{}, errors.New("agent asset publication delivery receipt is invalid")
+	}
+	result, ok := decodedResult.(agentruntime.AssetsPublishResult)
+	if !ok || result.DomainProjectID != arguments.DomainProjectID || result.ResourceID != arguments.ResourceID ||
+		result.ClientMutationID != arguments.ClientMutationID {
+		return agentruntime.DeliveryArtifact{}, errors.New("agent asset publication receipt conflicts with its approved request")
+	}
+	fact, err := s.repo.AgentCapabilityAssetPublicationForScope(scope, result.AssetID, result.ResourceID)
+	if err != nil {
+		return agentruntime.DeliveryArtifact{}, errors.Join(errors.New("agent asset publication persisted evidence is invalid"), err)
+	}
+	if fact.Asset.Title != arguments.DisplayName {
+		return agentruntime.DeliveryArtifact{}, errors.New("agent asset publication display name conflicts with persisted evidence")
+	}
+	return agentruntime.DeliveryArtifact{
+		Kind:          agentruntime.ArtifactKind(fact.Resource.Kind),
+		ResourceID:    fact.Resource.ID,
+		URL:           "/api/resources/" + fact.Resource.ID + "/file",
+		ResourceReady: true,
+		PublicationID: fact.Asset.ID,
+		Approved:      true,
+	}, nil
+}
+
+func taskTeamID(scope agentruntime.Scope) string {
+	if scope.TenantKind == agentruntime.TenantTeam {
+		return scope.TenantID
+	}
+	return ""
 }
 
 func validateAgentCanvasProjectionDelivery(

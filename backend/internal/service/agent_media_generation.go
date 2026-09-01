@@ -395,7 +395,7 @@ func (s *Service) validateMediaTaskFacts(
 ) (*model.Task, *model.BillingOrder, error) {
 	if task == nil || task.ID != attempt.TaskID || task.UserID != scope.ActorUserID ||
 		task.ProjectID != scope.CanvasID || task.Audience != model.TaskAudienceInternal ||
-		task.Type != attempt.TaskType || task.Operation != attempt.Operation ||
+		task.Type != attempt.TaskType || task.Capability != attempt.Capability || task.Operation != attempt.Operation ||
 		task.Prompt != attempt.Prompt || task.BillingOrderID == "" {
 		return nil, nil, errors.New("media task identity facts conflict")
 	}
