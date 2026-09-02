@@ -61,14 +61,28 @@ const gptImage2Capabilities: ProviderModelCapabilities = {
     outputCounts: [1],
     inputVariants: [],
     referenceVideoResolutions: [],
+    generatedAudioResolutions: [],
     ratios: [...ratios],
+    durations: [],
     durationMin: 0,
     durationMax: 0,
     supportsSmartDuration: false,
+    supportsTextToVideo: false,
+    supportsImageToVideo: false,
+    supportsReferenceVideo: false,
+    supportsNativeAudio: false,
+    supportsDialogue: false,
+    supportsVoiceReference: false,
+    supportsLipSync: false,
+    supportsIndependentAudio: false,
     supportsGeneratedAudio: false,
+    supportsGeneratedAudioWithReferenceVideo: false,
     watermarkCapability: "unsupported" as const,
     supportsAudioOnly: false,
     requiresAdaptiveFrames: false,
+    generationModes: [],
+    adaptiveRatioModes: [],
+    requiredAdaptiveRatioModes: [],
     maxImages: 0,
     maxImagesWithVideo: 0,
     maxVideos: 0,
@@ -76,6 +90,7 @@ const gptImage2Capabilities: ProviderModelCapabilities = {
     maxVideoDurationSeconds: 0,
     maxAudioDurationSeconds: 0,
     tools: [],
+    supportsTokenUsageBilling: false,
 };
 
 describe("图片模型能力驱动参数", () => {
@@ -154,7 +169,7 @@ describe("图片模型能力驱动参数", () => {
             { model: "images::kz_gpt_image2", size: "2048x1024", quality: "high", count: "4", transparentBackground: "true" },
         );
         const patch = imageModelMetadataPatch(next, "images::ratio-only");
-        expect(patch).toEqual({ model: "images::ratio-only", size: "1:1", quality: "", count: 1, transparentBackground: "false" });
+        expect(patch).toEqual({ channelId: "images", model: "ratio-only", size: "1:1", quality: "", count: 1, transparentBackground: "false" });
     });
 
     test("生成前只保留模型声明的参数", () => {

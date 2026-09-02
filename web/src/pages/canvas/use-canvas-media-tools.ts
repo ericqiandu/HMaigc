@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { App } from "antd";
 import { nanoid } from "nanoid";
+import { buildVideoLastFrameMetadata } from "@/lib/canvas/canvas-derived-media";
 
 import type { CanvasImageCropRect } from "@/components/canvas/canvas-node-crop-dialog";
 import type { CanvasImageMaskEditPayload } from "@/components/canvas/canvas-node-mask-edit-dialog";
@@ -179,10 +180,9 @@ export function useCanvasMediaTools({
                 position: { x: node.position.x + node.width + 96, y: node.position.y },
                 width: size.width,
                 height: size.height,
-                metadata: { ...imageMetadata(image), prompt: node.metadata?.prompt, workflowKind: node.metadata?.workflowKind, workflowTitle: node.metadata?.workflowTitle, shotIndex: node.metadata?.shotIndex },
+                metadata: buildVideoLastFrameMetadata(node.id, { ...imageMetadata(image), prompt: node.metadata?.prompt, workflowKind: node.metadata?.workflowKind, workflowTitle: node.metadata?.workflowTitle, shotIndex: node.metadata?.shotIndex }),
             };
             setNodes((current) => [...current, child]);
-            setConnections((current) => [...current, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
             setSelectedNodeIds(new Set([childId]));
             setSelectedConnectionId(null);
             setHoveredNodeId(null);
@@ -196,7 +196,7 @@ export function useCanvasMediaTools({
             extractingVideoFrameNodeIdRef.current = null;
             setExtractingVideoFrameNodeId(null);
         }
-    }, [message, setConnections, setHoveredNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds, setToolbarNodeId, startUploadStatus]);
+    }, [message, setHoveredNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds, setToolbarNodeId, startUploadStatus]);
 
     const mergeVideosByIds = useCallback(async (videoNodeIds: string[], targetNodeId?: string, compositionClips?: CanvasVideoCompositionClip[]): Promise<CanvasNodeData | null> => {
         if (mergeVideoRunningRef.current) return null;

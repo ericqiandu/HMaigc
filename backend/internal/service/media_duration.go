@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,13 @@ import (
 )
 
 type mediaDurationProbe func(context.Context, io.Reader) (int64, error)
+
+type mediaFileMetadata struct {
+	DurationMS int64
+	MimeType   string
+}
+
+type mediaFileProbe func(context.Context, string) (mediaFileMetadata, error)
 
 func (s *Service) authoritativeMediaDuration(kind string, body io.ReadSeeker) (int64, error) {
 	if kind != "video" && kind != "audio" {
@@ -65,6 +73,34 @@ func ffprobeMediaDuration(ctx context.Context, body io.Reader) (int64, error) {
 		return 0, fmt.Errorf("ffprobe 执行失败：%s", strings.TrimSpace(stderr.String()))
 	}
 	return parseMediaDurationMilliseconds(stdout.String())
+}
+
+func ffprobeMediaFile(ctx context.Context, filePath string) (mediaFileMetadata, error) {
+	command := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-show_entries", "format=duration,format_name", "-of", "json", filePath)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		return mediaFileMetadata{}, fmt.Errorf("ffprobe 执行失败: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	var document struct {
+		Format struct {
+			Duration   string `json:"duration"`
+			FormatName string `json:"format_name"`
+		} `json:"format"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &document); err != nil {
+		return mediaFileMetadata{}, fmt.Errorf("解析 ffprobe 输出失败：%w", err)
+	}
+	durationMS, err := parseMediaDurationMilliseconds(document.Format.Duration)
+	if err != nil {
+		return mediaFileMetadata{}, err
+	}
+	if !strings.Contains(document.Format.FormatName, "mp4") && !strings.Contains(document.Format.FormatName, "mov") {
+		return mediaFileMetadata{}, errors.New("装配输出不是 MP4 容器")
+	}
+	return mediaFileMetadata{DurationMS: durationMS, MimeType: "video/mp4"}, nil
 }
 
 func parseMediaDurationMilliseconds(value string) (int64, error) {

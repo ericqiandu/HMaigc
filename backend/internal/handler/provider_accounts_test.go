@@ -224,6 +224,7 @@ func TestProviderAccountHandlerPrioritizesParseAuditPersistenceFailure(t *testin
 type providerAccountHandlerFixture struct {
 	router      *gin.Engine
 	db          *gorm.DB
+	svc         *service.Service
 	adminCookie string
 	userCookie  string
 	userID      string
@@ -278,7 +279,7 @@ func openProviderAccountHandlerFixture(t *testing.T) *providerAccountHandlerFixt
 	RegisterWatermarkPolicyRoutes(api, svc)
 	RegisterUserDataRoutes(api, svc)
 	RegisterAuthRoutes(api, svc)
-	fixture := &providerAccountHandlerFixture{router: router, db: db, adminCookie: adminCookie, userCookie: userCookie, userID: user.ID}
+	fixture := &providerAccountHandlerFixture{router: router, db: db, svc: svc, adminCookie: adminCookie, userCookie: userCookie, userID: user.ID}
 	t.Cleanup(fixture.closeDB)
 	return fixture
 }

@@ -21,7 +21,10 @@ var (
 	ErrAdminAgentRunBillingUnresolved = errors.New("admin agent run billing is unresolved")
 )
 
-const adminAgentRunInterruptedCode = "admin_agent_run_interrupted"
+const (
+	adminAgentRunInterruptedCode = "admin_agent_run_interrupted"
+	agentRunInterruptedStage     = "Agent 任务已终止"
+)
 
 type AdminAgentRunInterruptCommand struct {
 	RunID                string
@@ -56,6 +59,7 @@ type adminAgentRunControlTarget struct {
 	Status            model.TaskStatus `gorm:"column:status"`
 	BillingOrderID    string           `gorm:"column:billing_order_id"`
 	ProviderRequestID string           `gorm:"column:provider_request_id"`
+	PollStage         string           `gorm:"column:poll_stage"`
 }
 
 type adminAgentRunScopeFacts struct {
@@ -64,6 +68,7 @@ type adminAgentRunScopeFacts struct {
 	ActorUserID     string                  `gorm:"column:actor_user_id"`
 	Status          agentruntime.RunStatus  `gorm:"column:status"`
 	StateVersion    int                     `gorm:"column:state_version"`
+	RuntimeVersion  int                     `gorm:"column:runtime_version"`
 	TenantKind      agentruntime.TenantKind `gorm:"column:tenant_kind"`
 	TenantID        string                  `gorm:"column:tenant_id"`
 	CreatedByUserID string                  `gorm:"column:created_by_user_id"`
@@ -110,7 +115,13 @@ func (r *Repository) InterruptAdminAgentRun(command AdminAgentRunInterruptComman
 		if current.StateVersion != command.ExpectedStateVersion {
 			return ErrAdminAgentRunStateConflict
 		}
-		targets, err := loadAdminAgentRunControlTargets(tx, scope.RunID)
+		loadTargets := func() ([]adminAgentRunControlTarget, error) {
+			if facts.RuntimeVersion == agentruntime.ProductionRuntimeVersion {
+				return loadAgentRunTreeControlTargets(tx, scope)
+			}
+			return loadAdminAgentRunControlTargets(tx, scope.RunID)
+		}
+		targets, err := loadTargets()
 		if err != nil {
 			return err
 		}
@@ -147,10 +158,15 @@ func (r *Repository) InterruptAdminAgentRun(command AdminAgentRunInterruptComman
 			}
 			return err
 		}
+		if facts.RuntimeVersion == agentruntime.ProductionRuntimeVersion {
+			if err := cancelAgentSpecialistLifecyclesTx(tx, scope, command.Now); err != nil {
+				return err
+			}
+		}
 		if err := failAdminAgentRunPendingFacts(tx, scope, current, command.Now); err != nil {
 			return err
 		}
-		taskDispositions, reconciliationPending, err := disposeAdminAgentRunControlTargets(tx, targets, command.Reason, command.Now)
+		taskDispositions, reconciliationPending, err := disposeAdminAgentRunControlTargets(tx, targets, command.Reason, command.Now, false)
 		if err != nil {
 			return err
 		}
@@ -179,6 +195,17 @@ func loadAdminAgentRunControlTargets(db *gorm.DB, runID string) ([]adminAgentRun
 	for _, target := range modelTargets {
 		targetByID[target.TaskID] = target
 	}
+	var visionTargets []adminAgentRunControlTarget
+	if err := db.Model(&model.Task{}).
+		Select("id AS task_id, 'vision' AS kind, user_id, status, billing_order_id, provider_request_id, poll_stage").
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("operation = ? AND type = ? AND audience = ? AND status IN ?", "agent_vision:"+runID, "agent_vision_analysis", model.TaskAudienceInternal, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).
+		Find(&visionTargets).Error; err != nil {
+		return nil, err
+	}
+	for _, target := range visionTargets {
+		targetByID[target.TaskID] = target
+	}
 	var mediaTargets []adminAgentRunControlTarget
 	if err := db.Table("tasks AS tasks").
 		Select("tasks.id AS task_id, 'media' AS kind, tasks.user_id AS user_id, tasks.status AS status, tasks.billing_order_id AS billing_order_id, tasks.provider_request_id AS provider_request_id").
@@ -190,6 +217,23 @@ func loadAdminAgentRunControlTargets(db *gorm.DB, runID string) ([]adminAgentRun
 		return nil, err
 	}
 	for _, target := range mediaTargets {
+		targetByID[target.TaskID] = target
+	}
+	assemblyOperation, err := agentruntime.MediaAssemblyOperationForRun(runID)
+	if err != nil {
+		return nil, err
+	}
+	var assemblyTargets []adminAgentRunControlTarget
+	if err := db.Model(&model.Task{}).
+		Select("id AS task_id, 'assembly' AS kind, user_id, status, billing_order_id, provider_request_id").
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("operation = ? AND type = ? AND audience = ? AND execution_kind = ? AND status IN ?",
+			assemblyOperation, agentruntime.MediaAssemblyTaskType, model.TaskAudienceInternal,
+			model.TaskExecutionLocalMediaAssembly, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).
+		Find(&assemblyTargets).Error; err != nil {
+		return nil, err
+	}
+	for _, target := range assemblyTargets {
 		targetByID[target.TaskID] = target
 	}
 	targets := make([]adminAgentRunControlTarget, 0, len(targetByID))
@@ -206,10 +250,13 @@ func adminAgentRunHasUnresolvedBilling(db *gorm.DB, runID string, targets []admi
 	taskIDs := make([]string, 0, len(targets))
 	billingOrderIDs := make([]string, 0, len(targets))
 	for _, target := range targets {
+		taskIDs = append(taskIDs, target.TaskID)
 		if strings.TrimSpace(target.BillingOrderID) == "" {
+			if target.Kind == "assembly" {
+				continue
+			}
 			return true, nil
 		}
-		taskIDs = append(taskIDs, target.TaskID)
 		if target.BillingOrderID != "" {
 			billingOrderIDs = append(billingOrderIDs, target.BillingOrderID)
 		}
@@ -244,27 +291,18 @@ func adminAgentRunHasUnresolvedBilling(db *gorm.DB, runID string, targets []admi
 	return len(rows) != 0, nil
 }
 
-type adminAgentTaskCancelUpdates struct {
-	Status         model.TaskStatus `gorm:"column:status"`
-	Stage          string           `gorm:"column:stage"`
-	PollStage      string           `gorm:"column:poll_stage"`
-	NextPollAt     *time.Time       `gorm:"column:next_poll_at"`
-	CompletedAt    *time.Time       `gorm:"column:completed_at"`
-	LeaseOwner     string           `gorm:"column:lease_owner"`
-	LeaseExpiresAt *time.Time       `gorm:"column:lease_expires_at"`
-	UpdatedAt      time.Time        `gorm:"column:updated_at"`
-}
-
 func disposeAdminAgentRunControlTargets(
 	db *gorm.DB,
 	targets []adminAgentRunControlTarget,
 	reason string,
 	now time.Time,
+	allowRunningReconciliation bool,
 ) ([]AdminAgentRunTaskDisposition, bool, error) {
 	dispositions := make([]AdminAgentRunTaskDisposition, 0, len(targets))
 	reconciliationPending := false
 	for _, target := range targets {
 		providerSubmitted := strings.TrimSpace(target.ProviderRequestID) != ""
+		providerPossiblySubmitted := providerSubmitted || strings.TrimSpace(target.PollStage) != "" || (allowRunningReconciliation && target.Status == model.TaskStatusRunning)
 		billingStatus := model.BillingStatus("")
 		if target.BillingOrderID != "" {
 			var order model.BillingOrder
@@ -278,13 +316,14 @@ func disposeAdminAgentRunControlTargets(
 				return nil, false, ErrAdminAgentRunBillingUnresolved
 			}
 			providerSubmitted = providerSubmitted || strings.TrimSpace(order.ProviderRequestID) != ""
+			providerPossiblySubmitted = providerPossiblySubmitted || providerSubmitted
 			switch {
-			case !providerSubmitted && target.Status == model.TaskStatusQueued && order.Status == model.BillingStatusReserved:
-				if err := refundBillingOrderTx(db, &order, "管理员终止未提交的 Agent 任务："+reason); err != nil {
+			case !providerPossiblySubmitted && target.Status == model.TaskStatusQueued && order.Status == model.BillingStatusReserved:
+				if err := refundBillingOrderTx(db, &order, "终止未提交的 Agent 任务："+reason); err != nil {
 					return nil, false, err
 				}
 				billingStatus = model.BillingStatusRefunded
-			case providerSubmitted && (order.Status == model.BillingStatusReserved || order.Status == model.BillingStatusRunning || order.Status == model.BillingStatusUncertain):
+			case providerPossiblySubmitted && (order.Status == model.BillingStatusReserved || order.Status == model.BillingStatusRunning || order.Status == model.BillingStatusUncertain):
 				if order.Status != model.BillingStatusUncertain {
 					updates := uncertainBillingUpdates(order, "管理员终止已提交的 Agent 任务，费用状态待核对", now)
 					updated := db.Model(&model.BillingOrder{}).Where("id = ? AND status = ?", order.ID, order.Status).Updates(updates)
@@ -297,7 +336,7 @@ func disposeAdminAgentRunControlTargets(
 				}
 				billingStatus = model.BillingStatusUncertain
 				reconciliationPending = true
-			case !providerSubmitted && adminAgentRunBillingStatusUnresolved(order.Status):
+			case !providerPossiblySubmitted && adminAgentRunBillingStatusUnresolved(order.Status):
 				return nil, false, ErrAdminAgentRunBillingUnresolved
 			default:
 				billingStatus = order.Status
@@ -305,20 +344,21 @@ func disposeAdminAgentRunControlTargets(
 		}
 		pollStage := ""
 		var nextPollAt *time.Time
-		stage := "管理员已终止 Agent 任务"
-		if providerSubmitted {
+		stage := agentRunInterruptedStage
+		if providerPossiblySubmitted {
 			pollStage = "cancel_reconcile"
 			next := now
 			nextPollAt = &next
-			stage = "管理员已请求取消上游任务，等待结果核对"
+			stage = "已请求取消上游 Agent 任务，等待结果核对"
 			reconciliationPending = true
 		}
 		result := db.Model(&model.Task{}).
 			Where("id = ? AND user_id = ? AND status = ?", target.TaskID, target.UserID, target.Status).
-			Select("status", "stage", "poll_stage", "next_poll_at", "completed_at", "lease_owner", "lease_expires_at", "updated_at").
-			Updates(adminAgentTaskCancelUpdates{
-				Status: model.TaskStatusCancelled, Stage: stage, PollStage: pollStage, NextPollAt: nextPollAt,
-				CompletedAt: &now, LeaseOwner: "", LeaseExpiresAt: nil, UpdatedAt: now,
+			Updates(map[string]any{
+				"status": model.TaskStatusCancelled, "stage": stage, "poll_stage": pollStage, "next_poll_at": nextPollAt,
+				"completed_at": &now, "cancel_requested_at": &now, "cancel_reason_code": "admin_terminated",
+				"lease_generation": gorm.Expr("lease_generation + ?", 1), "lease_token": "", "lease_owner": "", "lease_expires_at": nil,
+				"updated_at": now,
 			})
 		if result.Error != nil {
 			return nil, false, result.Error
@@ -329,7 +369,7 @@ func disposeAdminAgentRunControlTargets(
 		dispositions = append(dispositions, AdminAgentRunTaskDisposition{
 			TaskID: target.TaskID, Kind: target.Kind, PreviousStatus: target.Status, Status: model.TaskStatusCancelled,
 			BillingStatus: billingStatus, ProviderRequestSubmitted: providerSubmitted,
-			ReconciliationPending: providerSubmitted || billingStatus == model.BillingStatusUncertain,
+			ReconciliationPending: providerPossiblySubmitted || billingStatus == model.BillingStatusUncertain,
 		})
 	}
 	return dispositions, reconciliationPending, nil
@@ -339,7 +379,8 @@ func loadAdminAgentRunScopeFacts(db *gorm.DB, runID string) (adminAgentRunScopeF
 	var facts adminAgentRunScopeFacts
 	result := db.Table("agent_runs AS runs").
 		Select(`runs.id AS run_id, runs.thread_id AS thread_id, runs.actor_user_id AS actor_user_id,
-			runs.status AS status, runs.state_version AS state_version, threads.tenant_kind AS tenant_kind,
+			runs.status AS status, runs.state_version AS state_version, runs.runtime_version AS runtime_version,
+			threads.tenant_kind AS tenant_kind,
 			threads.tenant_id AS tenant_id, threads.created_by_user_id AS created_by_user_id,
 			threads.domain_project_id AS domain_project_id, threads.canvas_id AS canvas_id`).
 		Joins("JOIN agent_threads AS threads ON threads.id = runs.thread_id").

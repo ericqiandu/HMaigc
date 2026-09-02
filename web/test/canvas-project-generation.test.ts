@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { isGenerationCanceled, resetInterruptedGeneration } from "../src/lib/canvas/canvas-project-generation";
+import { isGenerationCanceled, isGenerationTaskRecoveryCandidate, resetInterruptedGeneration } from "../src/lib/canvas/canvas-project-generation";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
 describe("resetInterruptedGeneration", () => {
@@ -26,6 +26,22 @@ describe("resetInterruptedGeneration", () => {
 describe("isGenerationCanceled", () => {
     test("treats the backend terminal cancellation fact as a normal cancellation", () => {
         expect(isGenerationCanceled(new Error("任务已取消"))).toBe(true);
+    });
+});
+
+describe("isGenerationTaskRecoveryCandidate", () => {
+    test("does not let browser task recovery take ownership of an Agent runtime placeholder", () => {
+        const node = audioNode({ width: 340, height: 220 });
+        node.metadata = { status: "loading", agentRunId: "agent-run-1" };
+
+        expect(isGenerationTaskRecoveryCandidate(node)).toBe(false);
+    });
+
+    test("keeps browser-owned loading nodes in task-center recovery", () => {
+        const node = audioNode({ width: 340, height: 220 });
+        node.metadata = { status: "loading" };
+
+        expect(isGenerationTaskRecoveryCandidate(node)).toBe(true);
     });
 });
 

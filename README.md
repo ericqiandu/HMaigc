@@ -10,42 +10,83 @@ HMaigc 是面向 AI 影视与短剧生产的商业化创作平台，覆盖项目
 - `docker-compose.production.yml`：使用 PostgreSQL 和 Redis 的生产环境。
 
 仓库只保留上述两条运行路径，不再维护旧镜像部署、重复 Compose 或上游一键安装脚本。
-画布助手已硬切到单一服务端 Agent Runtime，并通过后端系统模型渠道完成鉴权、计费和请求审计；不再提供本机 Agent、Codex 插件连接或浏览器内模型循环。服务端负责冻结模型、决策循环、高层工具协调、通用交付验收和可恢复检查点；Web 只提交用户目标与真实选区事实、展示持久化事件并处理审批。
+
+## AI 对话架构（当前）
+
+画布只有一个双模式 Agent 外壳、两个显式推理宿主和一套权威执行平面：
+
+- `网站`：由 HMaigc 托管 Agent Runtime 完成语义规划、工具选择和交付自检；文本推理通过后台系统模型渠道鉴权、计费和审计。
+- `本机`：由用户电脑上的 [HMaigc Canvas Agent](canvas-agent/README.md) 调用本机 Codex 完成同类规划；浏览器只桥接提案和展示结果，本机进程不持有 HMaigc Cookie、云端模型密钥或 OSS 凭据。Canvas Agent 通过 Codex MCP 配置的环境变量白名单把回环令牌仅传给 MCP 子进程，并为六种规范工具分别暴露闭合输入 Schema，使 Codex 直接获得真实字段与操作联合类型，禁止依赖开放对象猜测媒体、画布或 Skill 参数。`canvas.read` 同时返回当前画布的 `domainProjectId` 与服务器生成的可调用媒体模型事实，后续资产读取和媒体生成必须复用这些权威身份，禁止把 canvas ID 当作项目 ID 或猜测模型记录。
+- 两种宿主共用 `canvas.read`、`canvas.apply_ops`、`assets.read`、`assets.publish`、`media.generate`、`skills.load` 六个原子能力及同一能力注册表、权限、审批、计费、幂等、画布 revision/CAS、审计与交付验证合同；网站宿主额外开放 `vision.analyze`，并在创建网站 Run 时冻结管理员配置的默认视觉模型。本机 MCP 不暴露该能力，也不以默认视觉模型是否配置作为启动前提。受保护动作只由后端提交，浏览器和本机进程都不能直写画布或读取供应商凭据。
+- `canvas.read` 与 `canvas.apply_ops` 按画布所有权、画布 ID 和可选项目绑定的精确一致性授权；没有绑定项目的自由画布是合法作用域。`assets.read` 与 `assets.publish` 仍只允许项目作用域，缺少项目绑定时显式失败。
+- `canvas.apply_ops`、`assets.publish`、`media.generate` 的每个不可变提案在两种宿主中分别确认；网站 Agent 的 `vision.analyze` 也使用独立 L2 付费审批，批准前不创建 Task 或预留积分。本机 Codex 推理不记入 HMaigc 文本模型账单，媒体生成仍使用服务器冻结的动态模型与积分报价。
+- 网站与本机历史分别保存。切换、断连或失败不会自动选择另一模式，也不会把一个模式的状态伪装成另一个模式的成功结果。本机 Codex turn 失败、取消、缺少结构化最终决策、主动断连或工作区卸载时，Web bridge 必须分别尝试终止本机 turn 与对应的后端审计 Run；两侧均进入终态后才正常释放 bridge，卸载路径中的任一终止失败必须记录为结构化错误，禁止静默留下永久 `running` 的审计任务。若通用交付校验返回 `repairable` 或结构化决策反馈，bridge 必须把权威失败事实作为不进入用户历史的临时消息续接同一 Codex thread 和同一审计 Run，禁止取消后新建执行链。
+
+服务端仍负责冻结模型与 Skill 事实、决策/外部提案状态机、高层工具协调、通用交付验收和可恢复检查点。Web 只提交用户目标与真实选区事实、展示权威事件和处理审批；本机模式的权威链路为“Codex MCP 提案 → Web bridge → 后端外部决策网关 → 共享执行器 → 权威结果 → 原 Codex turn”。批准接口直接返回的权威工具结果与 SSE 补发事件属于同一结果合同：本机 bridge 只向原 Codex turn 交付一次，同时把 `canvas.apply_ops` 提交回执交给当前画布刷新；画布不等待可丢失的后续事件，也不在浏览器重放写入。回环 MCP 响应在等待人工审批期间持续发送传输心跳，本机工具等待覆盖后端 15 分钟审批有效期并保留 1 分钟结果交付余量；本机 turn 已终结后到达的补发事件只刷新权威视图，不再交给已经释放的 bridge。
+
+### Web 交付与页面切换
+
+- Web HTML 随不可变 Web 镜像同源交付；哈希 JS/CSS、字体和程序图片以版本目录发布到 `https://static.hm.kunagent.com/hmaigc/web/releases/<version>/`。Actions 只构建一次 `dist`，先上传并验证完整 CDN 清单，再把同一份 `dist` 封装进 Web 镜像；HTML 中的程序资源 URL 必须精确绑定当前版本，CSP 只放行该固定静态域名，不提供同源或其他域名的静默回退。
+- 用户上传与模型生成的图片、视频和音频继续保存在后端配置的对象存储中。程序包与用户媒体是两条独立生命周期：程序发布不会迁移、覆盖或删除用户媒体。
+- 匿名首访只恢复鉴权外壳；画布、资产和模型配置工作区仅在登录、已登录刷新或退出边界按需加载。工作台路由只在鼠标按下、悬停或键盘聚焦形成真实导航意图时预取模块与对应数据，不再在首页加载后后台扫预取，避免与首屏程序资源和接口争抢带宽；预取失败会显式记录且不阻断当前页面。
+- React Query 的共享新鲜度窗口负责页面复用；项目工作台不再在每次挂载时无条件重复请求。全局入口不预载首页专属大图，避免访问画布、后台或项目时争抢首屏带宽。
+
+### 画布交互与媒体链路
+
+- 图片与视频节点的 `@` 引用候选来自当前画布真实资源与公开 Skills；未连接资源必须先通过统一连线契约并建立连接，成功后才在当前光标位置插入稳定引用。拖拽连线、Agent 画布操作和服务端画布 mutation 使用同一方向语义，视频输出不能连接图片或音频输入。
+- 画布拖动预览只修改被拖节点的 DOM transform 与相邻连接路径；连接目标命中使用连接开始时建立的空间索引，pointermove 热路径不扫描完整节点或连接集合，也不触发保存和网络请求。
+- 用户媒体仍保存在对象存储中。画布使用受控的 `/api/resources/:id/file?direct=1` 地址直接渲染图片并流式播放视频、音频，完整 Blob 只在下载或明确复用时按需读取。登录用户上传必须成功写入后端资源，不会静默落入浏览器本地存储；访客本地模式是独立显式分支。
+- 上传节点进入项目资产时只定向写入当前素材，再建立项目关联并保存关联事实；项目查询刷新不阻塞必要持久化链路，失败会留下可检索告警。
 
 ### 首页到 Agent 的创作链路
 
 - 首页创作框先上传参考图片并创建真实画布项目，把提示词、账号级资源 ID、系统动态模型选择、平台第一方公开 Skill 目录与显式执行模式写入项目内的 `pendingAgentLaunch`；提示词和临时 Blob URL 均不进入 URL 或持久事实。
 - 打开新画布后，Agent 面板用该请求创建或复用服务端 thread，并以持久化 `clientRequestId` 启动 run；只有取得运行事实后才消费启动请求。启动响应丢失时刷新或重试仍复用同一请求 ID，不重复创建运行。
-- Agent 推理模型、工具规划与交付判断由服务端 Runtime 统一决定。首页与画布共用同一份草稿契约，允许用户从系统动态目录显式指定本次运行的图片/视频模型、公开 Skills、参考图片与执行模式；选中视频节点打开 Agent 时，Web 只从该节点已保存的精确渠道模型和明确 Skill 标记补齐空白草稿，多节点模型冲突时不猜测默认值。Web 只提交 `channelId + model`、Skill 目录标识、账号级 `resourceId + name` 和模式枚举，发送后的用户消息从服务端冻结 run 配置只读展示本轮模型与 Skills，不能用仍在编辑的草稿伪造已提交事实。服务端重新校验模型可调用且已定价、读取 Skill 详情、核对资源归属与可用状态，并将模型、Skill 指令、资源 MIME/尺寸及执行模式冻结进 run checkpoint。每个 run 的步骤预算由服务端固定为 24，浏览器提交的步数不参与运行事实。手动模式自动执行只读工具，规划与画布写入必须审批；自动模式可连续完成无费用的规划和画布提交；两种模式下每一个 `production.render` 付费 Artifact 都必须展示冻结报价并由用户确认后才创建 Task、BillingOrder 和积分预留。
-- 模型只可调用 `skill.load`、`production.plan`、`production.render`、`canvas.commit` 四个高层工具；角色、服装、道具、场景参考图和正式分镜/视频结果只以服务端 Task、BillingOrder、Resource、Artifact Ledger 和交付验收事实为准。
+- Agent 推理模型、语义规划与交付判断由服务端 Runtime 统一决定。首页与画布共用同一份草稿契约，Web 只提交用户目标、动态媒体模型选择、已授权 Skill 版本、账号级 Resource 身份、显式执行模式和 `1–24` 步决策预算；服务端重新核验并冻结这些事实。创建网站 Run 时，服务端额外冻结管理员配置的默认视觉模型记录、模型键和价格版本；创建本机 Codex Run 时不冻结该网站专属能力。用户请求和 Web 草稿都不得提交或覆盖视觉模型。新 Run 固定使用 Runtime v5 / Policy v5 / Tool schema v8，工具调用预算固定为 24，决策步数采用本次请求明确提交并通过边界校验的值；服务端还会冻结从首次启动时间计算的 30 分钟绝对截止时间。同一幂等请求不能变更决策预算，进程重启也不会重置工具预算、决策预算或截止时间。
+- Tool schema v8 的服务端契约接受 `canvas.read`、`canvas.apply_ops`、`assets.read`、`assets.publish`、`media.generate`、`vision.analyze`、`skills.load` 七个原子能力及其严格参数；本机 Codex MCP 只发布其中不含 `vision.analyze` 的六种工具。`canvas.apply_ops` 的七类操作、`media.generate` 的图片/视频/音频参数和网站 Agent `vision.analyze` 的 Resource 身份/细节等级分别使用封闭契约；`add_node.node.type` 只允许 `image`、`text`、`script`、`skill`、`config`、`video`、`audio`、`frame`，节点生命周期只允许 `idle`、`success`、`loading`、`error`。媒体调用的 `targetCanvasNodeId` 必须指向已存在的非空同类媒体节点。旧 `skill.load`、Specialist、Production Graph、`media.assemble`、`canvas.project` 等决策不会映射或降级；v7 非终态 Run 显式退役，已终结历史只读。七个服务端能力均接入当前权威数据源：读取能力只返回作用域内事实，`canvas.apply_ops` 通过画布 revision/CAS 真源原子提交，`media.generate` 复用现有 Task/BillingOrder/Resource 商业链路，`vision.analyze` 使用独立 Task、Token BillingOrder 与响应 usage 结算，`assets.publish` 在单一事务中创建 Asset、confirmed AssetVersion、ProjectAssetLink 与 AssetRepresentation。每次写入或付费执行都会重新核验租户、项目、画布、用户权限与冻结审批提案；输出只保留当前能力契约允许的已持久化事实，禁止回退旧执行图。
+- 模型每轮接收精确身份与作用域、动态模型事实、按需加载的 Skill 描述，以及七原子能力的参数和结果 schema。每个可调用媒体模型事实都包含后端权威的 `modelRecordId`、渠道、模型键、能力、报价和供应商参数取值；`media.generate` 的图片、视频、音频参数分别使用能力注册表公开的封闭结构，参数值只能取自对应模型的 `providerCapabilities`。图片模型只有在 `providerCapabilities.qualities` 非空时才允许提交 `quality`，为空时必须省略该字段。`vision.analyze` 只能引用本 Run 的会话附件、当前画布真实绑定的租户自有 ready Resource 或当前项目已确认资产；服务端在供应商请求前重新验证租户/项目/画布归属、MIME、字节数和像素尺寸，客户端 URL、data URL 和对象存储 key 均不进入工具契约。上下文上限为 512 KiB；未加载 Skill 的 instructions 不进入上下文，`docs/`、`assets/`、`ai-metadata/`、固定工作流和固定 Specialist 顺序均不参与运行时知识装配。
+- 模型决策未通过严格协议校验时，模型任务会写入一条结构化诊断日志，只保留决策类型、工具名、参数键以及媒体身份字段是否存在/非空等结构事实；提示词、消息正文和 instructions 不进入该日志。首个 `model_decision_invalid` 会作为临时运行时反馈回灌同一 Agent 链并只允许一次模型自修复；连续第二次仍无效则显式终止，避免无限重试。每一次真实模型请求仍独立计费，但无效决策不会创建工具审批、媒体任务或媒体账单，也不会进入 Outbox 重试。网站与本机 Codex 共用该行为，且均禁止后端修补参数、切换模型或代替 Agent 选择默认值。
+- 网站 Agent 默认模型只接受系统目录中使用 `chat-completion` 或 `openai-response` 接口的合格文本模型；默认视觉模型只接受显式发布为 `vision`、使用相同两类接口、凭据健康且 Token 价格完整的模型。两者都只能由管理员配置，前端没有用户侧视觉开关或模型选择器。Agent 决策请求统一开启严格 JSON 输出：Chat Completions 发送 `response_format.type=json_object`，Responses 发送 `text.format.type=json_object`，随后仍由 Tool schema v8 严格解码与交付验证；上游拒绝协议或返回无效决策时显式失败，不切换模型、不猜测修补。
 
 ### 单一 Agent Runtime
 
-- 运行作用域固定绑定租户、用户、项目、画布、会话和运行记录；每次工具执行都会重新读取真实画布权限，不信任浏览器缓存的权限声明。
-- `AgentRunEvent` 是追加式审计真源，`AgentTimelineItem` 是与 Run、Event、Checkpoint、ToolCall 同事务维护的查询投影。Run 初始化固定写入 `run.created`、`user.message`、初始 Checkpoint 和已完成的用户消息 Item；Item 使用确定性身份、连续 ordinal 与唯一来源 sequence，任何投影冲突都会回滚整次状态迁移，禁止以不完整时间线伪装成功。
-- Agent 文本模型仍通过耐久 Task 保留队列恢复、计费、供应商请求与审计事实，但 Task 受众固定为 `internal`；普通用户任务列表、详情、日志、取消和重试接口只查询 `customer` Task，管理员、账务与 Runtime 协调器继续按权限读取内部事实。媒体 Task 仍保持客户可见。
-- Agent Chat Completions 固定使用供应商 `text/event-stream` 与 `stream_options.include_usage=true`。Run 在等待 worker 时保持 `queued`；worker 真正发起首个供应商请求前先以 CAS 持久化 `queued -> running` 和 `run.status_changed`，SSE 将该事实投影为 `state.snapshot`，因此 Web 在首个可见增量前以可展开真实事件轨迹显示“思考中”，首个增量到达后收起为“已思考”并在下方同一无标题正文持续增长。服务端只从严格 `ModelDecision` JSON 中释放已确认属于顶层 `kind=final` 的 `final.message` 增量；`reasoning_content`、工具参数、澄清结构和交付合同不进入用户正文。每段可见增量与助手 Item 同事务写入连续 sequence，再由 SSE 断线补发；任务断线重领会以新的 `item.started` 原子重置同一消息，协议截断或最终决策无效则追加 `agent.message_failed` 并保留已流出正文。UI 协议 v2 的每个 Item 事件显式携带持久化 `itemKind`；React 只把 `agent_message` 按 `itemId + sequence` 增量维护为同一个助手气泡，用户消息仍由 Run 状态单独展示。刷新时从零重放耐久事件、仅对新游标执行业务副作用，并只保留有界事件展示窗口；不提供完整响应回退、模型降级或前端假打字。
-- 工具、审批和结果共用同一个 `tool_call` Item 生命周期：等待审批、已批准、已开始、完成、失败、拒绝或中断都更新同一身份，不创建并行的“执行中”残留项。运行中的追加指令以 `clientRequestId` 持久化并幂等去重；Agent 活动期间 Composer 的发送按钮原位切换为停止按钮。用户点击停止时，Web 立即对当前 Run 建立事件闸门并使排队或在途状态刷新失效，不等待中断接口返回才停止正文增长；服务端再以 `stateVersion` CAS 进入终态，并在同一事务的消息投影写入边界拒绝终态 Run 的迟到 `model.delta` 与 `agent.message_failed`。停止接口会立即取消同一实例正在执行的内部模型 Task；其他 worker 实例上的模型请求会以有界间隔观察持久 Run 检查点并取消真实供应商 HTTP 流，即使供应商尚未发送可见正文也不会继续跑完整请求。取消后的内部 Task 进入 `cancelled`，供应商费用事实不足时账单保持 `uncertain` 等待核对。已经提交的媒体任务不被回滚，迟到成功结果追加独立 `artifact.available` 事件和 Artifact Item，保持 Run 终态及 Checkpoint 不变。
-- 管理后台的“Agent 任务”只对管理员开放，跨用户列出未结束 Run，并在分页前按服务端权威状态、活动分类、用户和运行/项目/画布作用域筛选。列表与详情只返回 Run 身份、状态版本、停滞时长、等待类型、关联模型/媒体 Task、账务、供应商请求和控制处置事实，不返回用户提示词、助手正文、工具参数或凭据。`active`、`awaiting_user`、`possibly_stalled` 由服务端根据持久状态和更新时间分类，Web 不按本地时钟重新猜测。
-- 管理员终止严格接收最新 `stateVersion`、4–500 字符审计原因和详情接口签发的确认短语。事务以 Run 行锁与 CAS 原子写入 `run.interrupted`、终态 Checkpoint、活动助手/工具/Artifact 时间线和关联 Task/Billing 处置；重复或过期提交返回稳定 409 及最新 Run，Web 保留原因但清空确认，要求管理员按最新事实重新确认。尚未提交供应商的排队任务会取消并退回预留积分；已经提交的任务只停止 Agent 继续推进、请求供应商取消并进入可恢复账务核对，不能宣称供应商计算已经停止。无法与活动任务安全对应的未决账务会阻断终止，避免删除成本事实或重复退款。
-- 时间线、生产计划和迟到资产的每一次读写都重新校验租户、操作者、项目、画布、Thread 与 Run 所有权；时间线只保存已鉴权的 `resourceId` 和媒体元数据，不保存会过期的 OSS 签名地址。
-- `stateVersion` 独立承担审批、工具结果和恢复操作的并发控制，`stepNumber` 只在模型作出下一次决策时递增，避免工具恢复被重复计费为模型步骤。每个新的模型步骤都会从当前 Run 的成功工具、真实 Resource、画布 revision 与 Artifact Ledger 重新构造累计 `deliveryEvidence`，再对冻结的 `expectedDelivery` 生成 `deliveryVerification`；已满足的 criterion 不得重复执行，只缺 `final_message` 时 Agent 必须直接完成回复，避免已交付媒体后再次规划、审批或生成。
-- Runtime 只有一个事件驱动协调入口：run 创建、模型任务终结、审批决定和媒体任务终结都会以持久化事实唤醒同一协调器；协调器在有界转换次数内继续免费工具或创建唯一下一模型任务。worker 不再每 5 秒扫描并盲推全部运行，只按分钟检查超过恢复阈值且仍未终结的 run，并使用跨实例互斥与游标恢复进程中断后的事件。
-- 信息确实不足时，模型可返回严格的 `clarification_request`，由 Runtime 在同一 Run 冻结交付合同和 1–3 个结构化问题，并切换到不占用 worker 的 `waiting_input`。问题类型只允许单选、多选和自由文本；逐题保存只写 checkpoint/event，不消耗模型 Token，也不创建工具、媒体任务、账单或积分冻结。最终提交使用 `stateVersion` CAS 将 pending 问答原子追加到不可变 history，产生 `clarification.responded` 后只唤醒一次同一协调器；下一模型步骤读取原始结构化问答继续执行，不创建第二条 Run。完全相同重放不增加事件或任务，并发提交只有一个事务可推进。
-- 追问内容由 Agent 基于本轮真实事实自主决定，本地仅校验问题/选项/答案的类型、数量、身份、长度和权限，不做关键词路由、默认答案或语义改写。`requestId` 复用、回答冲突、过期版本、非法问题身份与非等待态提交都会返回稳定错误码及最新状态版本；用户显式忽略的问题以 `skipped=true` 保留，禁止补写推测答案。
-- 首个模型决策必须声明结构化 `expectedDelivery`，Runtime 将其冻结为整条 run 的不可变交付合同；`final_message` 与 `canvas_revision` 条件不得携带 Artifact 字段，只有 `artifact` 条件必须声明具体资产类型。后续每个工具调用和最终答复必须逐字段保持一致。工具失败或证据不足不能把图片、视频或画布交付降级成文字回答，合同漂移会作为显式修复事实回灌同一条有界执行链。用户拒绝任一工具审批时，本轮立即进入 `cancelled` 并记录 `approval.decided -> tool.result -> run.interrupted` 事实，不再启动下一条文本模型 Task；L1 可逆写操作与 L2 扣费媒体工具使用同一拒绝即终止契约，禁止 Agent 在同一 Run 内换身份重复请求。
-- 工具调用按 `runId + toolCallId + actionVersion` 冻结并幂等登记。`production.plan` 的严格 DTO 同时保存非时间线 `references`（角色、服装、道具、场景）和正式镜头 `shotKey/order/durationMs/scriptText/deliverables/imagePrompt/videoPrompt/referenceKeys/dependencies`；每个镜头必须用 `deliverables` 显式声明 `storyboard_image`、`video_clip` 或两者，它是 Prompt 必填关系、Artifact Ledger 身份和计划交付数量的唯一真源。未声明的 Prompt、重复或未知交付物、纯视频镜头引用参考图以及缺少 `deliverables` 的旧执行计划都会显式失败，禁止从文案、Prompt 或既有 Artifact 猜测意图。参考图不占时间线，不能伪装为 0 秒镜头；重复/缺失参考、非连续顺序、未来依赖或正式镜头总时长不匹配也会显式失败。计划成功后创建不可变版本和精确 Artifact Ledger：参考图以 `referenceKey` 标识，分镜与视频以 `shotKey + deliverable` 标识；纯视频计划只产生脚本和视频 Artifact。`production.render` 先逐项审批并生成参考图；分镜只有在绑定参考 Resource 全部就绪后才创建任务，并把真实参考图作为模型输入。视频在审批前冻结 `videoInputMode`：同镜存在已声明且就绪的分镜 Resource 时使用 `storyboard` 并冻结该精确 Resource ID；不存在时仅允许 `providerCapabilities.supportsTextToVideo=true` 的所选模型冻结为 `text_to_video` 并以零参考图执行，否则在报价和审批前返回 `production_prerequisite_missing`。批准后的执行只消费该冻结事实；缺失模式的旧载荷明确失败，不重新选择分镜、不自动生成额外图片，也不降级模型。能力、报价、Task、BillingOrder、积分预留、远程结果物化和恢复都沿现有单一路径持久化，不依赖浏览器重复提交。
-- `canvas.commit` 从计划声明的完整 Artifact 集合、就绪 Resource 和对应成功 `production.render` 的服务端冻结参数构造稳定节点/连线 ID 的确定性投影，使用画布 revision CAS 与稳定 `clientMutationId` 只提交一次。每轮模型事实由 Runtime 从完整 Artifact Ledger 生成排序稳定的 `productionPlan.commitArtifactIds`，明确包含该计划实际存在的脚本、参考图、分镜图和视频身份；模型必须把它逐项原样用于提交，不再自行判断或只选择媒体 Artifact。媒体节点会固化真实 `channelId + model`、比例、画质、数量或视频分辨率、时长、音频开关与输入模式；Web 打开节点编辑器时以这些事实覆盖账号全局默认，并按同一精确渠道和参数重新询价，因此 Agent 生成的 Mini/Pro、文生/图生及实际参数不会被显示成默认配置。视频比例与其他参数一样必须来自所选模型动态发布的能力目录并冻结进渲染 DTO，缺少或冲突的冻结渲染事实会使提交显式失败，不允许供应商或前端默认值补洞。纯图片镜头投影为“脚本→图片”，纯视频镜头投影为“脚本→视频”，双交付镜头投影为“脚本→图片→视频”；不存在的媒体不会生成空节点、空行绑定或悬空连接。脚本节点逐镜携带服务端已校验的 `deliverables`，Web 只展示生产合同声明的图片或视频阶段；没有生产合同的手工脚本节点仍提供完整媒体编辑能力，不从 Prompt 猜测交付类型。每轮模型事实都包含服务端权威 `canvasRevision`；画布已变更时显式返回 `canvas_revision_conflict + currentRevision`。`artifactIds` 不完整或多余时返回 `expectedArtifactIds + receivedArtifactIds` 的真实 Ledger 差异，其他投影或参数不完整时返回可审计的结构化 `reason`，供同一有界执行链只修正画布提交，禁止猜测版本、重开相同生产计划或重复付费渲染。画布提交成功后以 Artifact 状态/attempt CAS 回填 `canvasNodeId`，成功媒体 Artifact 同步进入 `committed`，进程在提交与回填之间中断时可安全重放。交付验收不含纯视频特判，仍从最后一次成功提交的完整计划恢复已声明的剧本、参考图、分镜和视频真实证据；续跑只生成剩余资产时也不会遗失前序交付事实或重复提交画布。
-- 个人与团队画布统一使用同一条 WebSocket revision/CAS 增量变更通道；浏览器加载后必须先同步服务端权威快照，再提交本地差异。`PUT /api/canvas-projects/:id` 只负责首次创建远程画布，已存在项目一律拒绝整页覆盖，防止浏览器旧快照覆盖 Agent、协作者或其他设备刚提交的节点。
-- Web 在启动 Agent run 前先将当前画布未提交变更收敛到权威 revision；首次权限预检只建立远程基线与权限事实，不覆盖 WebSocket 建连前的本地编辑。SSE 只消费协议版本 `2` 的 `AgentUIEvent`，并在收到携带成功 `canvas.commit` 工具结果的 `item.completed` 时读取 `committedRevision`，再通过已鉴权的协作查询获取画布事实；查询 revision 低于已确认提交或低于当前本地基线时显式失败或忽略过期响应，禁止旧快照回退已展示的 Agent 交付。
-- 每个新工具动作必须使用未出现过的 `toolCallId + actionVersion`；模型误复用历史身份时，Runtime 记录显式 `tool_identity_reused` 修复事实并继续同一执行链，不会再次写入冲突记录。同一工具以语义相同的 JSON 参数连续返回相同错误码与相同结构化失败证据时，首次错误允许 Agent 根据事实修正，第二次直接以该错误终结 run；错误原因已经变化时继续留给 Agent 修正，禁止误判为死循环。最后一个模型步骤不得再开启新工具调用；历史运行若已进入该状态，拒绝或完成工具后会保存结果并以 `step_budget_exhausted` 明确终结。图片生成公共契约要求规范字符串字段 `size/count` 并强制匹配本次运行冻结的图片模型；`quality` 仅在动态 `providerCapabilities.qualities` 发布非空候选时才允许从候选中填写，候选为空则必须省略，禁止默认画质、`ratio/resolution` 或其他未知字段绕开正式任务契约。
-- 模型每轮只接收当前用户真正可调用、已定价且凭据健康的图片、视频和音频模型事实；用户显式选择图片或视频模型时，本次 run 的对应能力目录只保留该模型，未选择的能力仍使用完整可调用目录。模型作出工具决策后，渲染准备严格使用该模型步骤 prompt 中冻结的可调用目录，不会在审批前重新读取已漂移的在线目录。Skill 目录由 HMaigc 自有数据库和随版本发布的 `SKILL.md` 建立，不再依赖外部社区网络接口；目录列表只返回元数据，完整指令只在查看详情或服务端冻结 run 时读取。每个已发布版本以目录、版本号和 SHA-256 校验值形成不可变事实，启动时发现同版本正文漂移会显式拒绝发布；升级迁移会从历史 checkpoint 与 event 已冻结的指令一次性计算并写入校验值，迁移后仍由同一严格契约读取，不保留旧分支。模型和 Skill 配置随 run checkpoint 冻结，不暴露 Base URL、Key 或凭据密文，也不会用硬编码候选兜底。已选 Skill 的完整执行说明必须先通过 `skill.load` 按冻结版本按需加载，未加载时模型只看到目录元数据；Runtime 会冻结已加载目录并在最终答复前拒绝遗漏选定 Skill 的交付。存在活动生产计划时，每轮同时注入当前 Agent thread 在同一租户、项目与画布作用域内最新的活动 `productionPlan` 与完整 Artifact Ledger，因此后续 run 能继续上一 run 的计划和已付费资产；不同 thread 之间严格隔离。工具准备或执行失败都会先持久化失败的 ToolCall/ToolResult，再把结构化原因回灌同一执行链；不能因 `LastToolResult` 覆盖而遗失计划事实或重复规划。
-- 每次 run 同时冻结 `runtimeVersion`、`policyVersion` 与工具 schema 版本。工具 schema v3 保留四个高层工具，但把参考资产提升为正式计划与 Artifact Ledger 契约；v2 中尚未执行且检查点、模型 Task/Billing 事实完整的排队 run 可按既有事务退役为 `tool_schema_retired`。旧契约 `waiting_input` / `waiting_approval` run 仅在当前 pending tool 未启动、无活动供应商任务、无未决账务且不存在 `queued` / `running` 生产 Artifact 时事务化退休；当前 `planned` / `awaiting_approval` Artifact 会收口为失败，同一 run 中早已 `succeeded` / `failed` / `committed` 的历史 Artifact 与早已 `succeeded` / `failed` 的历史工具调用均保留原始事实，不构成活动执行。已经运行、等待工具、商业事实不一致或来自未来版本的非终态 run 不自动接管并会阻止启动；终态历史 run 继续保留审计证据。版本字段引入前已终结、工具 schema v1 且 Run/最终 Checkpoint 完整一致的历史记录，会通过一次性审计迁移明确标记为首代 Runtime/Policy 契约；混合零值、活动状态或事实不完整记录拒绝迁移，事件、Checkpoint、Task 与账单事实不改写。
-- Agent 模型调用统一声明 Chat Completions 的 `response_format=json_object`，使 DeepSeek 与 GPT 共用同一结构化决策契约；模型仍必须通过 Runtime 的严格单 JSON 校验。决策结构无效时，Runtime 记录受控的 `model_decision_invalid` 事实并在同一有界 run 内回灌下一模型步骤自修，绝不提取文本、伪造默认决策或切换模型；达到步骤上限仍显式失败。
-- 参考图片只接受当前账号已就绪的图片 Resource；服务端冻结资源 ID、显示名称、MIME 与尺寸，拒绝浏览器 Blob URL、跨账号资源和失效资源。执行模式是必填运行事实，幂等重放若更换模型、Skill、附件或模式会显式冲突，禁止静默采用新配置。
-- 正式传输入口为 `GET /api/agent/threads?canvasId=...&limit=...`、`POST /api/agent/threads`、`POST /api/agent/threads/:threadId/runs`、`GET /api/agent/runs/:runId`、`GET /api/agent/runs/:runId/events?afterSequence=N`、`POST /api/agent/runs/:runId/steer`、`POST /api/agent/runs/:runId/interrupt`、`POST /api/agent/runs/:runId/clarifications/:requestId/responses` 和工具审批。追加指令严格接收 `clientRequestId/message/expectedStateVersion`，停止严格接收 `expectedStateVersion`，所有请求的未知字段与尾随 JSON 都直接拒绝。全部工具结果仍只由服务端执行器写入，浏览器不提交选区或工具结果事实。历史查询按当前用户、租户与画布返回最近 20 个 Thread，在校验每个 Run 最新 Checkpoint 与 Run 状态一致后，为每个 Thread 返回按创建时间排列的完整 Turn 与 Item；缺 Item 的旧终态 Run 只能从不可变事件日志构造只读投影，旧活动 Run 缺投影时显式失败。旧终态 Checkpoint 缺少当前传输必需的结构化询问或 Composer 集合字段时，传输层只读投影会补为空集合；仅当执行模式本身缺失时才明确返回 `executionMode: historical`，已有模型、Skill 与 guided/automatic 事实原样保留，也不回写 Checkpoint。SSE 只把已持久化领域事件纯投影为协议版本 `2` 的 `AgentUIEvent`，以持久 sequence 断线补发；工具、审批和澄清等会持续更新同一 Item 的生命周期事件，补发时必须根据不可变事件 payload 与上一版本 Checkpoint 重建该事件发生时的 Item 快照，再与当前材料化 Item 的身份、作用域和序号单调性核验，禁止用 Item 最新状态覆盖历史事件。未来游标、未知事件、Item 作用域冲突、非法 payload 或投影失败均返回稳定协议错误，不保留旧 RuntimeState 事件形态。
-- 服务端历史是会话发现与跨设备恢复的权威来源；浏览器 `localForage` 只保存当前 Thread、活动 Run、事件游标或尚未确认的 `clientRequestId`，用于快速恢复和启动幂等，不构成会话事实。没有本地句柄时采用服务端最近活动会话；选择旧会话只切换观察和恢复目标，不取消服务端仍在运行的 Run。
-- 浏览器不再调用 Agent 模型、不拼 system prompt、不维护 tool loop，也不再创建固定影视 Session。旧会话事实仅保留在历史项目数据中用于审计，不进入新运行链。
+#### 当前云能力状态机（Runtime v5）
+
+当前唯一可创建的新 Run 契约是 Runtime v5 / Policy v5 / Tool schema v8 / UI protocol v5。模型在单一循环中依据真实项目上下文、动态模型目录、工具结果和按需加载的 Skills 自主决策；后端只注入权限、协议、计费、幂等与交付验收硬约束，不维护固定意图路由、Specialist 顺序或 Production Graph。
+
+Tool schema v8 只提供七个原子能力：
+
+- `canvas.read`、`assets.read`、`skills.load`：只读并立即执行。
+- `canvas.apply_ops`、`assets.publish`：写入能力，执行前必须获得对精确不可变提案的批准。
+- `media.generate`：复用现有 Task、BillingOrder、积分和 Resource 商业链路的付费能力，批准前不创建任务或预留积分。
+- `vision.analyze`：主 Agent 自主决定是否使用管理员默认视觉模型理解 1–12 张已授权图片；每次调用都冻结模型、价格、Resource 集合、提示和 `low/original` 细节等级，经过独立 L2 审批后才创建一次 Task 与一次 Token BillingOrder。
+- `media.generate` 的 `clientRequestId + targetCanvasNodeId` 在同一用户、项目、画布与 Agent 线程内定义一次商业生成意图。首个未结束或已成功的调用独占该身份；断线后的完全相同请求会校验原始 Task、已结算 BillingOrder 与 ready Resource 后直接回放权威结果，不再询价、审批或扣费。原任务仍在执行时会显式拒绝重复生成；复用同一身份但修改模型、提示词或参数会返回冲突。失败调用释放该身份，回放记录仅保存来源引用，不冒充新的商业调用。
+
+工具身份固定为 `runId + toolCallId + actionVersion`；写入与付费提案额外冻结小写 SHA-256 `proposalHash`。已完成工具只重放持久结果，拒绝、过期、哈希不匹配、模型/价格/输入变化和结算不确定都作为显式事实返回，不会自动换模型、降低交付目标或伪造成功。
+
+写入批准与付费批准相互独立，批准只对当前不可变提案在有效期内生效；一次批准不能授权后续新价格、新输入或另一类副作用。用户界面只展示简洁且可操作的错误说明，完整运维证据则通过 `runId`、`toolCallId`、`actionVersion`、`taskId`、`billingOrderId` 与供应商请求身份关联，既能定位真实失败，也不会向用户暴露供应商原始响应、内部堆栈或密钥。
+
+首个模型决策必须声明 `expectedDelivery`，Runtime 将其冻结为整条 Run 的最终交付合同，而不是当前原子工具调用的局部结果。每轮基于真实 ToolCall、Task、BillingOrder、ready Resource、资产发布和当前画布 revision 构造 `deliveryEvidence`，再生成 `deliveryVerification`；只有全部 completion criteria 已满足时才允许 final。已验证的 `canvas.apply_ops` 回执证明 Agent 写入确实发生；若当前画布 revision 随后因同一页面的正常同步或元数据补充继续前进，交付证据采用当前 revision 复核，不会仅因 revision 大于回执值而把已完成交付误判为过期，但 revision 倒退、作用域冲突或当前资源绑定缺失仍显式失败。文本交付只接受本 Run 已批准且成功新增、当前画布仍存在、正文非空且未处于 loading/error 的 `text` 或 `script` 节点，并绑定当前 canvas revision；最终回复文本不能替代画布文本产物，也不要求文本节点伪造媒体 `resourceId`/URL。媒体落画布采用单一路径：先以 `canvas.apply_ops` 创建目标媒体占位节点，再以该节点的非空 ID 调用 `media.generate`，成功后再次以 `canvas.apply_ops` 将权威 Resource URL、`resource:<resourceId>` 存储身份和 `success` 状态写入同一节点。`canvas_bound_resource` 只有在当前画布修订中能精确重读该节点与该 ready Resource 的绑定时才成立；只有文本、计划、Task 已提交、ready Resource 单独存在或节点占位均不构成交付完成。
+
+#### 当前 Web 与传输投影
+
+Web 只提交用户目标、真实画布/选区事实和显式配置，展示服务端持久化 Turn/Item、结构化追问、审批提案与结果。SSE 使用 UI protocol v5 和连续持久 sequence 断线补发；旧 `stage_review_resolution`、`artifact_review`、`media_assembly` 等事件不会映射成当前交互卡。
+
+刷新、断线重连或服务进程重启后，客户端都从持久化 Run、审批提案、连续事件序列和权威工具结果恢复；内存状态、浏览器计时器和前端乐观文案均不构成完成事实。同一批准或恢复请求重复到达时只复用原身份与结果，不重复修改画布、创建媒体任务或扣减积分。
+
+`canvas.apply_ops` 成功后由服务端权威 revision/CAS 和协作通道传播画布变化，浏览器不自行执行 Agent 写入。`media.generate` 与 `vision.analyze` 的终态都由耐久 Outbox 唤醒同一 Run；媒体成功必须能重读 succeeded Task、settled BillingOrder 与归属正确的 ready Resource，视觉成功必须能重读 succeeded Task、settled Token BillingOrder、严格结果和供应商响应 usage。调用前失败退款；供应商请求已发出但 usage 缺失、响应截断或本地结果事实不完整时进入 `uncertain`，保留预留款等待核对且禁止自动重发供应商请求。用户可见时间线只投影经过能力契约严格解码的结果和简洁状态；`vision.analyze` 成功时持久化可公开的分析文本、来源 Resource、细节等级与 Token usage，聊天面板只渲染分析和用量，不展示 Task、BillingOrder、toolCall 或供应商请求身份。管理员 Agent 运行诊断单列文本、图片理解和媒体 Task 状态，并聚合对应 BillingOrder 与供应商发送边界，管理员终止会在同一事务内处理仍活动的图片理解 Task，已发出的请求进入账务核对。这些内部关联事实不进入聊天面板。媒体预览地址只接受与同一 `resourceId` 精确匹配的稳定站内 `/api/resources/{resourceId}/file` 路径，外部地址、签名地址及资源身份错配均显式拒绝，刷新后仍可从持久化时间线恢复真实媒体预览。已经由供应商成功产出的 Resource 不因后续步骤失败被删除、覆盖或回滚。
+
+Agent 通过 `add_node` 创建或通过 `update_node` 转入 `loading` 的节点，必须在冻结审批提案中携带服务端校准的 `metadata.agentRunId`，其生命周期只由对应 Agent Run 的后续 `canvas.apply_ops` 推进。浏览器任务中心恢复逻辑只接管浏览器自身创建的生成节点，不得查询、报错或改写带有 `agentRunId` 的 Agent 占位节点；这样页面刷新不会把 Agent 正在等待审批或等待媒体完成的占位节点误判为“找不到对应任务”。
+
+`media.generate.sourceResourceIds` 的授权事实由两类来源组成：当前项目已确认并链接的资产资源，或当前画布中以精确 `content + storageKey + success` 三元组绑定的租户自有 ready Resource。后一类使独立画布及尚未发布到资产库的 Agent 中间产物可以继续作为图生视频等下游输入，同时拒绝仅知道 ID、未落当前画布、跨租户或非 ready 的资源；媒体输入授权不要求用户把每个中间产物发布到资产库。
+
+#### Skills 与模型事实
+
+Skill 目录、版本和 SHA-256 在 Run 创建时冻结，`skills.load` 只能按需加载本轮已授权且仍发布的精确版本。`docs/`、`assets/`、`ai-metadata/`、固定工作流和固定子代理顺序不进入运行时知识装配。所有可选模型来自系统模型目录中当前用户真实可调用、已定价且凭据健康的动态事实；缺失能力或参数时显式失败，不使用默认模型或隐式回退。
+
+#### 历史审计边界
+
+Runtime v4/v5 的 Production Graph、Stage、Specialist、Artifact Ledger 和媒体装配模型、仓储及数据库表只为读取既有终态审计事实保留。当前 `vision.analyze` 是 Tool schema v8 的新原子能力，与历史 Production Graph 视觉阶段没有执行兼容层或数据回退；非终态旧 Run 只能通过既有原子退役审计收口，历史记录不会删除、迁移成新决策或恢复执行。
 
 ### Agent 模型计费链路
 
@@ -53,6 +94,7 @@ HMaigc 是面向 AI 影视与短剧生产的商业化创作平台，覆盖项目
 - Agent 模型任务创建前若确认账号余额不足或团队月额度耗尽，运行会以 `insufficient_credits` 或 `team_credit_limit_reached` 明确终结，不创建下一任务或账单，也不会由后台驱动器无限重试；并发与暂时性额度错误仍保持原有显式错误语义。
 - 托管的筷子 DeepSeek 模型使用 `token_usage`：系统代理和服务端 Agent Runtime 共用同一预留/结算内核；`expectedOutputTokens` 只表达运营成本估算中的平均输出量，`maxOutputTokens` 独立承担单次请求硬上限和最坏成本预留。请求发出前按后台发布的输入/缓存命中/输出单价和最大输出 Token 原子预留积分，并把同一最大输出值写入真实请求，同时冻结当时的服务地址版本和凭据版本；首版倍率固定为 1.0。升级迁移只会把历史 `expected_output_tokens` 一次性复制到新增上限字段，保留原估算事实，管理员随后可分别维护两者。
 - 筷子 Kling 3 Omni 的普通无声、普通有声和参考视频价格按后台能力目录分别配置：`std/pro` 可发布同步音频档位，`4k` 只允许无声普通生成，参考视频只允许 `std/pro` 且禁止同步音频。画布参数规范化、Agent 渲染门禁、供应商请求和计费档位消费同一份分辨率能力事实，不会把不受支持的组合发送到上游或隐式改用其他档位。
+- 筷子 GPT Image 2 的后台价格矩阵由模型动态能力目录展开为 `1K/2K/4K × low/medium/high` 九个必配档位。普通画布询价、Agent `media.generate` 冻结报价、Task/BillingOrder 预留与结算、供应商调用审计和成本统计都使用同一个 `resolution + quality` 规格身份；任一参数缺失、组合未发布或价格未配置都会在供应商请求前显式失败，不再把画质映射成分辨率，也不使用默认档位。
 - Agent 流式请求强制开启 `stream=true` 与 `stream_options.include_usage=true`，响应 usage、Chat Completion request ID、finish reason 和断流事实会在 Task 终结前保留；缺失或无效 usage 分别标记为 `missing` / `invalid`，但资金结算仍以筷子账单的订单号、任务状态、总 Token 和实扣金额为准。账单 pending 时只异步核对，不重复调用模型。
 - 筷子图片、视频与 Token 任务共用同一条账单核对 worker。新建付费任务会把供应商服务地址版本和凭据版本同时冻结到任务与账单；已取得上游任务号但本地结果不明确时，worker 只查询对应筷子账单：上游确认成功则结算本地冻结报价，明确失败且未扣费则退款，pending、矛盾或无法取得可复现运行时的账单继续保留人工核对，禁止猜测扣费结果。
 - Chat Completion 响应 ID 按筷子契约从 `chatcmpl-<task_id>` 提取唯一内部任务 ID，写入计费订单后再通过任务账单接口取得真实扣费金额。成功账单原子消费实际积分并释放差额；待生成、缺失、重复或不可判定账单进入有租约、有限次数的后台核对，绝不重复发送模型请求。
@@ -89,42 +131,13 @@ MiniMax 同步语音当前支持 MP3、WAV、FLAC，语速范围为 0.5–2.0。
 
 ## 生产部署
 
-生产服务器必须安装 Docker Engine 与 Docker Compose。先从私有仓库取得代码，然后创建生产配置：
+生产服务器必须安装 Docker Engine 与 Docker Compose。正式生产只有“受保护 Git 标签 → GitHub Actions → 严格 SSH 主机校验 → 版本化 bundle → `deploy/hmaigc.sh`”这一条发布写路径；服务器不执行 `git pull`、不现场编译，也不运行独立运维控制器。
 
-```bash
-cp .env.production.example .env.production
-chmod 600 .env.production
-openssl rand -hex 32
-```
+业务配置保存在部署根目录的 `shared/production.env`，动态版本和回滚事实保存在独立部署状态目录。GitHub `production` Environment 必须配置审批、专用部署用户、SSH 私钥、预置 `known_hosts` 行、端口和绝对部署根目录。Backend/Web 镜像只接受 `repository@sha256:<digest>`，不使用 `latest` 或其他可变标签。
 
-把生成结果写入 `.env.production` 的 `POSTGRES_PASSWORD`，并至少配置：
+发布由正式标签自动触发；Actions 完成测试、版本化 Web 程序资源上传与 CDN 验证、同一 `dist` 的镜像构建和摘要解析后，把经过 SHA-256 校验的 bundle 上传到服务器，并由脱离 SSH 会话的主机 release runner 执行。日常升级不在管理后台或服务器命令行创建第二条任务；手工命令只用于基于已验证 bundle 的受控应急。生产入口应由 Caddy、Nginx 或云负载均衡器提供 HTTPS，后端、PostgreSQL 和 Redis 不得直接暴露公网。
 
-- `HMAIGC_IMAGE_REGISTRY`：例如 `ghcr.io/ericqiandu`。
-- `HMAIGC_VERSION`：与 Git 标签一致的不可变版本，例如 `v1.0.14`。
-- `HMAIGC_OPS_VERSION`：独立运维控制器的不可变版本。
-- `HMAIGC_RELEASES_API_URL`：用于后台检查最新 GitHub Release。
-- `CANVAS_CORS_ORIGINS`：实际 HTTPS 站点 Origin。
-- `CANVAS_HTTP_HOST`：有反向代理时保持 `127.0.0.1`。
-- `CANVAS_HTTP_PORT`：反向代理连接的本机端口。
-
-首次安装：
-
-```bash
-bash deploy/hmaigc-ops.sh install v1.0.14
-```
-
-生产环境应由 Caddy、Nginx 或云负载均衡器提供 HTTPS。不要直接把后端、PostgreSQL 或 Redis 暴露到公网。
-
-后续升级与回滚：
-
-```bash
-bash deploy/hmaigc-ops.sh upgrade v1.0.14
-bash deploy/hmaigc-ops.sh rollback
-```
-
-业务后端不持有 Docker socket，也不会重启自己；后台运维升级中心和服务器命令行都把任务提交给独立控制器。完整契约见 [独立控制器与一键发布说明](deploy/README.md) 与 [生产运行手册](PRODUCTION.md)。
-
-升级执行器拉取目标后端镜像后，会在当前服务仍在线与停止 Web/后端写入后各运行一次目标镜像自带的只读 Agent Runtime 升级审计。审计一次返回全部不兼容活跃 Run 及其 checkpoint、event、ToolCall、Task、Billing 与 Plan/Artifact blocker；首次失败不停止当前服务、不创建新备份，第二次失败会恢复当前版本且不启动目标后端。两次均通过后才允许创建升级恢复点、执行正式原子迁移并启动目标版本；只读审计不等于迁移成功，也不替代隔离恢复演练。
+业务后端不持有 Docker socket，也不能重启自己。主机事务脚本在在线态与停写态分别运行目标后端镜像自带的只读 Agent Runtime 升级审计；审计失败不会带病迁移。审计、同一恢复点备份和目标版本验活全部通过后才原子提交新版本状态，失败则按升级前镜像摘要与已校验恢复点恢复。完整安装、首次硬切、发布与应急契约见 [源码驱动生产发布说明](deploy/README.md) 与 [生产运行手册](PRODUCTION.md)。
 
 ## 上线门禁
 

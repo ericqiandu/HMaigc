@@ -1,59 +1,39 @@
-import { getSystemChannels, type AuthSessionPayload } from "@/services/api/auth";
-import { localForageStorage } from "@/lib/localforage-storage";
-import { scopedLocalStorage, setActiveUserScope } from "@/lib/user-scope";
-import { CANVAS_STORE_KEY, flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { ASSET_STORE_KEY, useAssetStore } from "@/stores/use-asset-store";
-import { CONFIG_STORE_KEY, defaultConfig, normalizeConfigSnapshot, useConfigStore } from "@/stores/use-config-store";
+import type { AuthSessionPayload } from "@/services/api/auth";
+import { needsWorkspaceSession, transitionUserSession } from "@/lib/user-session-startup";
+import { setActiveUserScope } from "@/lib/user-scope";
 import { useUserStore } from "@/stores/use-user-store";
-import { installRemoteUserDataAutoSync, resetRemoteUserDataSync, syncRemoteUserData } from "@/services/user-data-sync";
-import { startUserSession } from "@/lib/user-session-startup";
 
 export async function applyUserSession(payload: AuthSessionPayload) {
-    const remoteUserId = payload.user?.id || "";
-    await startUserSession({
-        restoreLocalSession: async () => {
-            useUserStore.getState().setHydrated(false);
+    const userStore = useUserStore.getState();
+    const previousUserId = userStore.user?.id ?? null;
+    const nextUserId = payload.user?.id ?? null;
+
+    await transitionUserSession({
+        needsWorkspace: needsWorkspaceSession(previousUserId, nextUserId),
+        restoreWorkspace: async () => {
+            const { applyWorkspaceSession } = await import("@/lib/user-workspace-session");
+            await applyWorkspaceSession(payload);
+        },
+        prepareAnonymousScope: () => setActiveUserScope(null),
+        commitIdentity: () => useUserStore.getState().setUser(payload.user),
+        commitRuntimeLimits: () => useUserStore.getState().setRuntimeLimits(payload.runtimeLimits),
+        onFailure: async (sessionError) => {
+            setActiveUserScope(null);
+            useUserStore.getState().clearSession();
             try {
-                resetRemoteUserDataSync();
-                await flushCanvasStorePersistence();
-                setActiveUserScope(payload.user?.id);
-                const [persistedCanvas, persistedAssets] = await Promise.all([localForageStorage.getItem(CANVAS_STORE_KEY), localForageStorage.getItem(ASSET_STORE_KEY)]);
-                const persistedConfig = scopedLocalStorage.getItem(CONFIG_STORE_KEY);
-                useUserStore.getState().setUser(payload.user);
-                useUserStore.getState().setRuntimeLimits(payload.runtimeLimits);
-                await Promise.all([useCanvasStore.persist.rehydrate(), useAssetStore.persist.rehydrate(), useConfigStore.persist.rehydrate()]);
-                // Zustand 在目标 scope 没有快照时会保留旧内存，必须显式恢复该 scope 的空状态。
-                if (!persistedCanvas) useCanvasStore.setState({ projects: [], pendingDeletionIds: [] });
-                if (!persistedAssets) useAssetStore.setState({ assets: [] });
-                if (!persistedConfig) {
-                    // 只有首次配置缺失时才生成能力推荐；已有配置中的空数组代表用户明确清空。
-                    const initialSystemConfig = {
-                        ...defaultConfig,
-                        channels: payload.systemChannels || [],
-                        imageModels: undefined,
-                        videoModels: undefined,
-                        textModels: undefined,
-                        audioModels: undefined,
-                    };
-                    useConfigStore.getState().replaceConfig(normalizeConfigSnapshot({ config: initialSystemConfig }).config);
-                    useConfigStore.getState().mergeSystemChannels(payload.systemChannels || [], payload.agentDefaultModel);
-                } else {
-                    useConfigStore.getState().mergeSystemChannels(payload.systemChannels || [], payload.agentDefaultModel);
-                }
-                installRemoteUserDataAutoSync();
-            } finally {
-                useUserStore.getState().setHydrated(true);
+                const { clearWorkspaceSessionMemory } = await import("@/lib/user-workspace-session");
+                clearWorkspaceSessionMemory();
+            } catch (cleanupError: unknown) {
+                throw new AggregateError([sessionError, cleanupError], "用户工作区会话恢复及隔离清理失败");
             }
         },
-        startRemoteSync: remoteUserId ? () => syncRemoteUserData(remoteUserId) : undefined,
-        onRemoteSyncError: (error) => {
-            console.error("云端用户数据同步失败", { userId: remoteUserId, error });
-        },
+        setHydrated: (hydrated) => useUserStore.getState().setHydrated(hydrated),
     });
 }
 
 export async function refreshSystemChannels() {
     // 系统模型由后端统一维护，后台变更后只刷新这一层，避免重跑整套用户数据同步。
+    const [{ getSystemChannels }, { useConfigStore }] = await Promise.all([import("@/services/api/auth"), import("@/stores/use-config-store")]);
     const payload = await getSystemChannels();
     useConfigStore.getState().mergeSystemChannels(payload.channels || [], payload.agentDefaultModel);
 }

@@ -20,8 +20,11 @@ func TestCommitRejectedAgentToolDecisionPersistsOneFailedCallAndCheckpoint(t *te
 	createAgentRunForTest(t, repo, scope)
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "生成视频",
-		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		UserMessage:       "生成视频",
+		Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -30,8 +33,9 @@ func TestCommitRejectedAgentToolDecisionPersistsOneFailedCallAndCheckpoint(t *te
 		t.Fatal(err)
 	}
 	call := agentruntime.ToolCallDecision{
-		ToolCallID: "render-invalid", ToolName: agentruntime.ToolProductionRender, ActionVersion: 1,
-		Arguments: json.RawMessage(`{"artifactId":"artifact-video"}`), ExpectedDelivery: repositoryTestImageDelivery(),
+		ToolCallID: "render-invalid", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
+		Arguments:        json.RawMessage(`{"mediaKind":"video","modelRecordId":"model-video-1","modelKey":"seedance-2.0","parameters":{"durationSeconds":15},"sourceResourceIds":[],"targetCanvasNodeId":"video-node-1","clientRequestId":"render-invalid"}`),
+		ExpectedDelivery: repositoryTestImageDelivery(),
 	}
 	transition, err := agentruntime.RejectToolDecision(current, agentruntime.ToolDecisionFailure{
 		Call: call, Class: agentruntime.ToolFailureAgentRepairable,
@@ -88,6 +92,9 @@ func TestInitializeAgentRunFreezesModelAndCreatesCheckpointOnce(t *testing.T) {
 		Scope: scope, ModelRecordID: "model-record-1", ModelKey: "gpt-5.5",
 		MaxSteps: 4, ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "请根据当前画布继续完成任务",
 		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
+		Limits: &agentruntime.RuntimeLimits{
+			MaxToolCalls: 8, StartedAt: now, DeadlineAt: now.Add(30 * time.Minute),
+		},
 	}
 	initialized, err := repo.InitializeAgentRun(input)
 	if err != nil {
@@ -102,6 +109,10 @@ func TestInitializeAgentRunFreezesModelAndCreatesCheckpointOnce(t *testing.T) {
 	}
 	if loaded.StateVersion != 1 || loaded.StepNumber != 0 || loaded.Status != agentruntime.RunQueued || loaded.UserMessage != input.UserMessage {
 		t.Fatalf("initial checkpoint = %#v", loaded)
+	}
+	if loaded.Limits == nil || loaded.Limits.MaxToolCalls != 8 || loaded.Limits.ToolCallsUsed != 0 ||
+		!loaded.Limits.StartedAt.Equal(now) || !loaded.Limits.DeadlineAt.Equal(now.Add(30*time.Minute)) {
+		t.Fatalf("initial checkpoint limits = %#v", loaded.Limits)
 	}
 	if loaded.ClarificationHistory == nil {
 		t.Fatal("clarification history must serialize as an explicit empty array")
@@ -169,6 +180,137 @@ func TestInitializeAgentRunFreezesModelAndCreatesCheckpointOnce(t *testing.T) {
 	}
 }
 
+func TestCreateInitializedExternalAgentRunAllowsEmptyCloudModelIdentity(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLiteFile(t)
+	scope := repositoryAgentScope()
+	now := time.Now().UTC()
+	input := CreateInitializedExternalAgentRunInput{
+		Create: CreateLocalAgentRunInput{
+			Scope: scope, ExternalThreadID: "codex-thread-1", ClientRequestID: "codex-turn-1", Now: now,
+		},
+		Initialize: InitializeAgentRunInput{
+			Scope: scope, MaxSteps: 8,
+			ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+			RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+			PolicyVersion:     agentruntime.CurrentPolicyVersion,
+			UserMessage:       "读取当前画布",
+			Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+			Now:               now,
+		},
+	}
+	initialized, err := repo.CreateInitializedExternalAgentRun(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !initialized.Created || initialized.Run.ReasoningHost != agentruntime.ReasoningHostLocalCodex ||
+		initialized.Run.ModelRecordID != "" || initialized.Run.ModelKey != "" || initialized.Run.StateVersion != 1 {
+		t.Fatalf("initialized external run = %#v", initialized)
+	}
+	input.Initialize.Scope.ThreadID = initialized.Run.ThreadID
+	input.Initialize.Scope.RunID = initialized.Run.ID
+	state, err := repo.LoadAgentCheckpoint(input.Initialize.Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != agentruntime.RunQueued || state.StateVersion != 1 || state.UserMessage != input.Initialize.UserMessage {
+		t.Fatalf("external initial checkpoint = %#v", state)
+	}
+	var taskCount int64
+	if err := db.Model(&model.Task{}).Where("type = ?", "agent_runtime_model").Count(&taskCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if taskCount != 0 {
+		t.Fatalf("external initialization created %d cloud model tasks", taskCount)
+	}
+
+	replayed, err := repo.CreateInitializedExternalAgentRun(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Created || replayed.Run.ID != initialized.Run.ID || replayed.Run.ThreadID != initialized.Run.ThreadID {
+		t.Fatalf("external initialization replay = %#v", replayed)
+	}
+}
+
+func TestCommitExternalAgentDecisionReplaysIdenticalRequest(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLiteFile(t)
+	seedScope := repositoryAgentScope()
+	now := time.Now().UTC()
+	initialized, err := repo.CreateInitializedExternalAgentRun(CreateInitializedExternalAgentRunInput{
+		Create: CreateLocalAgentRunInput{
+			Scope: seedScope, ExternalThreadID: "codex-thread-concurrent", ClientRequestID: "codex-run-concurrent", Now: now,
+		},
+		Initialize: InitializeAgentRunInput{
+			Scope: seedScope, MaxSteps: 8,
+			ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+			RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+			PolicyVersion:     agentruntime.CurrentPolicyVersion,
+			UserMessage:       "需要补充创作风格",
+			Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+			Now:               now,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := seedScope
+	scope.ThreadID = initialized.Run.ThreadID
+	scope.RunID = initialized.Run.ID
+	queued, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := agentruntime.BeginModelRequest(queued)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, queued, started, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	decision := agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionClarificationRequest,
+		Clarification: &agentruntime.ClarificationDecision{
+			RequestID: "clarify-concurrent",
+			Questions: []agentruntime.ClarificationQuestion{{
+				ID: "style", Prompt: "请选择创作风格", Type: agentruntime.ClarificationFreeText,
+			}},
+			ExpectedDelivery: repositoryTestAnswerDelivery(),
+		},
+	}
+	transition, err := agentruntime.AdvanceExternalDecision(started.State, agentruntime.ExternalDecisionInput{
+		ExpectedStateVersion: started.State.StateVersion,
+		Decision:             decision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := CommitExternalAgentDecisionInput{
+		Scope: scope, ClientRequestID: "external-decision-concurrent", RequestHash: strings.Repeat("a", 64),
+		ExpectedStateVersion: started.State.StateVersion, Previous: started.State, Transition: transition, Now: now.Add(2 * time.Second),
+	}
+	firstReplayed, err := repo.CommitExternalAgentDecision(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstReplayed {
+		t.Fatal("first external decision unexpectedly reported a replay")
+	}
+	secondReplayed, err := repo.CommitExternalAgentDecision(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !secondReplayed {
+		t.Fatal("identical external decision did not replay its committed receipt")
+	}
+	var receiptCount int64
+	if err := db.Model(&model.AgentExternalDecision{}).Where("run_id = ?", scope.RunID).Count(&receiptCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if receiptCount != 1 {
+		t.Fatalf("external decision receipt count = %d, want 1", receiptCount)
+	}
+}
+
 func TestCreateInitializedAgentRunRollsBackIdentityWhenInitializationFails(t *testing.T) {
 	repo, db := openAgentRuntimeRepositorySQLiteFile(t)
 	scope := repositoryAgentScope()
@@ -203,8 +345,11 @@ func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *test
 	createAgentRunForTest(t, repo, scope)
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "读取当前画布",
-		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		UserMessage:       "读取当前画布",
+		Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -213,8 +358,8 @@ func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *test
 		t.Fatal(err)
 	}
 	decision := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
-		ToolCallID: "call-read-state", ToolName: agentruntime.ToolCanvasCommit,
-		ActionVersion: 1, Arguments: []byte(`{"expectedRevision":7}`), ExpectedDelivery: repositoryTestAnswerDelivery(),
+		ToolCallID: "call-read-state", ToolName: agentruntime.ToolCanvasRead,
+		ActionVersion: 1, Arguments: []byte(`{"canvasId":"agent-canvas-1","selectedNodeIds":[],"includeViewport":true}`), ExpectedDelivery: repositoryTestAnswerDelivery(),
 	}}
 	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: decision})
 	if err != nil {
@@ -227,7 +372,7 @@ func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *test
 	if err := db.First(&call, "run_id = ? AND tool_call_id = ? AND action_version = ?", scope.RunID, "call-read-state", 1).Error; err != nil {
 		t.Fatal(err)
 	}
-	if call.Status != agentruntime.ToolCallPending || call.RiskLevel != agentruntime.ToolRiskWrite || call.RequiredAccess != agentruntime.AccessEditor || call.ApprovalRequired || call.IdempotencyKey != scope.RunID+":call-read-state:1" || call.InputJSON != `{"expectedRevision":7}` {
+	if call.Status != agentruntime.ToolCallPending || call.RiskLevel != agentruntime.ToolRiskRead || call.RequiredAccess != agentruntime.AccessViewer || call.ApprovalRequired || call.IdempotencyKey != scope.RunID+":call-read-state:1" || call.InputJSON != `{"canvasId":"agent-canvas-1","selectedNodeIds":[],"includeViewport":true}` {
 		t.Fatalf("registered call = %#v", call)
 	}
 	resolved, err := agentruntime.ResolveTool(requested.State, agentruntime.ToolResolution{
@@ -259,8 +404,8 @@ func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *test
 	}
 	if len(timelineItems) != 1 || timelineItems[0].Status != model.AgentTimelineItemCompleted ||
 		timelineItems[0].SourceEventSequence != 5 || !strings.Contains(timelineItems[0].ContentJSON, `"succeeded":true`) ||
-		!strings.Contains(timelineItems[0].ContentJSON, `"toolName":"canvas.commit"`) ||
-		!strings.Contains(timelineItems[0].ContentJSON, `"output":{"canvasId":"canvas-1","committedRevision":8}`) {
+		!strings.Contains(timelineItems[0].ContentJSON, `"toolName":"canvas.read"`) ||
+		strings.Contains(timelineItems[0].ContentJSON, `"output"`) {
 		t.Fatalf("completed tool timeline lifecycle = %#v", timelineItems)
 	}
 	var activeTimelineCount int64
@@ -272,14 +417,230 @@ func TestCommitAgentRuntimeTransitionRegistersAndCompletesToolAtomically(t *test
 	}
 }
 
-func TestCommitAgentRuntimeTransitionPersistsToolExecutionStartAtomically(t *testing.T) {
+func TestCommitAgentRuntimeTransitionPersistsImmutableApprovalProposal(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	now := time.Date(2026, time.September, 1, 8, 0, 0, 0, time.UTC)
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		UserMessage:       "选择当前画布中的角色节点",
+		Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision := agentruntime.ToolCallDecision{
+		ToolCallID: "call-apply-v6", ToolName: agentruntime.ToolCanvasApplyOps, ActionVersion: 1,
+		Arguments:        json.RawMessage(`{"canvasId":"canvas-1","baseRevision":3,"clientMutationId":"mutation-1","operations":[{"operationId":"op-1","type":"select_nodes","nodeIds":[]}]}`),
+		ExpectedDelivery: repositoryTestCanvasDelivery(),
+	}
+	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall, ToolCall: &decision,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requested.State.Status != agentruntime.RunWaitingApproval {
+		t.Fatalf("requested status = %q, want waiting approval", requested.State.Status)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, now); err != nil {
+		t.Fatal(err)
+	}
+
+	record, err := repo.AgentToolCallForScope(scope, decision.ToolCallID, decision.ActionVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.ApprovalProposalJSON == "" || len(record.ApprovalProposalHash) != 64 || record.ApprovalExpiresAt == nil {
+		t.Fatalf("approval proposal facts = %#v", record)
+	}
+	proposal, err := agentruntime.DecodeApprovalProposal(json.RawMessage(record.ApprovalProposalJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proposal.RunID != scope.RunID || proposal.ToolCallID != decision.ToolCallID || proposal.ToolName != decision.ToolName ||
+		proposal.Scope.TenantID != scope.TenantID || proposal.Scope.ActorUserID != scope.ActorUserID ||
+		proposal.Scope.DomainProjectID != scope.DomainProjectID || proposal.Scope.CanvasID != scope.CanvasID ||
+		proposal.Scope.ThreadID != scope.ThreadID || proposal.Effect.Kind != agentruntime.ApprovalEffectCanvasMutation ||
+		proposal.Quote != nil || !proposal.ExpiresAt.Equal(now.Add(agentruntime.DefaultApprovalProposalTTL)) {
+		t.Fatalf("persisted proposal = %#v", proposal)
+	}
+	hash, err := proposal.Hash()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hash != record.ApprovalProposalHash || !record.ApprovalExpiresAt.Equal(proposal.ExpiresAt) {
+		t.Fatalf("proposal hash/expiry mismatch: record=%#v proposal=%#v", record, proposal)
+	}
+
+	wrongApproval, err := agentruntime.ReviewToolApproval(requested.State, agentruntime.ToolApproval{
+		ToolCallID: decision.ToolCallID, ActionVersion: decision.ActionVersion,
+		Decision: agentruntime.ToolApprovalApproved, ProposalHash: strings.Repeat("a", 64),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, requested.State, wrongApproval, now.Add(time.Minute)); !errors.Is(err, ErrAgentRuntimeStepConflict) {
+		t.Fatalf("mismatched proposal hash error = %v", err)
+	}
+
+	approved, err := agentruntime.ReviewToolApproval(requested.State, agentruntime.ToolApproval{
+		ToolCallID: decision.ToolCallID, ActionVersion: decision.ActionVersion,
+		Decision: agentruntime.ToolApprovalApproved, ProposalHash: record.ApprovalProposalHash,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, requested.State, approved, now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(record, "id = ?", record.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != agentruntime.ToolCallPending || record.ApprovalDecision != agentruntime.ToolApprovalApproved || record.ApprovalByUserID != scope.ActorUserID {
+		t.Fatalf("approved proposal record = %#v", record)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, requested.State, approved, now.Add(3*time.Minute)); !errors.Is(err, ErrAgentRuntimeStepConflict) {
+		t.Fatalf("duplicate approval transition error = %v", err)
+	}
+
+	duplicate := *record
+	duplicate.ID = "tool-duplicate-proposal"
+	duplicate.ToolCallID = "another-call"
+	duplicate.ActionVersion = 2
+	if err := db.Create(&duplicate).Error; err == nil {
+		t.Fatal("duplicate approval proposal hash was accepted for the same run")
+	}
+}
+
+func TestCommitAgentRuntimeTransitionInvalidatesExpiredApprovalWithoutRecordingUserDecision(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	now := time.Date(2026, time.September, 1, 8, 0, 0, 0, time.UTC)
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		UserMessage:       "发布已确认的角色图",
+		Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision := agentruntime.ToolCallDecision{
+		ToolCallID: "call-publish-v6", ToolName: agentruntime.ToolAssetsPublish, ActionVersion: 1,
+		Arguments:        json.RawMessage(`{"resourceId":"resource-1","domainProjectId":"agent-project-1","displayName":"角色图","clientMutationId":"publish-1"}`),
+		ExpectedDelivery: repositoryTestImageDelivery(),
+	}
+	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall, ToolCall: &decision,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, now); err != nil {
+		t.Fatal(err)
+	}
+	record, err := repo.AgentToolCallForScope(scope, decision.ToolCallID, decision.ActionVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidated, err := agentruntime.InvalidateToolApproval(requested.State, agentruntime.ToolApprovalInvalidation{
+		ToolCallID: decision.ToolCallID, ActionVersion: decision.ActionVersion,
+		ProposalHash: record.ApprovalProposalHash, ErrorCode: agentruntime.ApprovalProposalExpired,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, requested.State, invalidated, record.ApprovalExpiresAt.Add(time.Second)); err != nil {
+		t.Fatalf("expired approval invalidation failed: %v", err)
+	}
+	if err := db.First(record, "id = ?", record.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != agentruntime.ToolCallFailed || record.ErrorCode != agentruntime.ApprovalProposalExpired ||
+		record.ApprovalDecision != "" || record.ApprovalByUserID != "" || record.ApprovalDecidedAt != nil {
+		t.Fatalf("invalidated approval record = %#v", record)
+	}
+}
+
+func TestCommitAgentRuntimeTransitionRequiresFrozenMediaQuote(t *testing.T) {
 	repo, _ := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	createAgentRunForTest(t, repo, scope)
+	now := time.Date(2026, time.September, 1, 9, 0, 0, 0, time.UTC)
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		UserMessage:       "生成视频",
+		Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision := agentruntime.ToolCallDecision{
+		ToolCallID: "call-media-v6", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
+		Arguments:        json.RawMessage(`{"mediaKind":"image","modelRecordId":"model-record-1","modelKey":"gpt-image-2","parameters":{"prompt":"雨夜城市"},"sourceResourceIds":[],"targetCanvasNodeId":"node-1","clientRequestId":"request-1"}`),
+		ExpectedDelivery: repositoryTestImageDelivery(),
+	}
+	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionToolCall, ToolCall: &decision,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, now); err == nil {
+		t.Fatal("media approval proposal without a frozen quote was persisted")
+	}
+
+	requested.ApprovalCostQuote = &agentruntime.ApprovalCostQuote{
+		ModelRecordID: "model-record-1", ModelKey: "gpt-image-2", PriceVersion: 7, AmountMicrocredits: 1_250_000,
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, now); err != nil {
+		t.Fatal(err)
+	}
+	record, err := repo.AgentToolCallForScope(scope, decision.ToolCallID, decision.ActionVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := agentruntime.DecodeApprovalProposal(json.RawMessage(record.ApprovalProposalJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proposal.Quote == nil || proposal.Quote.ModelRecordID != "model-record-1" || proposal.Quote.ModelKey != "gpt-image-2" ||
+		proposal.Quote.PriceVersion != 7 || proposal.Quote.AmountMicrocredits != 1_250_000 {
+		t.Fatalf("persisted media quote = %#v", proposal.Quote)
+	}
+}
+
+func TestCommitAgentRuntimeTransitionPersistsToolExecutionStartAtomically(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
 	scope := repositoryAgentScope()
 	createAgentRunForTest(t, repo, scope)
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "修改当前画布",
-		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		UserMessage:       "修改当前画布",
+		Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -290,8 +651,8 @@ func TestCommitAgentRuntimeTransitionPersistsToolExecutionStartAtomically(t *tes
 	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
 		Kind: agentruntime.DecisionToolCall,
 		ToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "call-apply", ToolName: agentruntime.ToolCanvasCommit, ActionVersion: 1,
-			Arguments: []byte(`{"baseRevision":7,"patch":{"deleteNodeIds":["obsolete"]}}`), ExpectedDelivery: repositoryTestCanvasDelivery(),
+			ToolCallID: "call-apply", ToolName: agentruntime.ToolCanvasApplyOps, ActionVersion: 1,
+			Arguments: []byte(`{"canvasId":"agent-canvas-1","baseRevision":7,"clientMutationId":"call-apply","operations":[{"operationId":"delete-obsolete","type":"delete_node","nodeId":"obsolete"}]}`), ExpectedDelivery: repositoryTestCanvasDelivery(),
 		},
 	}})
 	if err != nil {
@@ -300,16 +661,30 @@ func TestCommitAgentRuntimeTransitionPersistsToolExecutionStartAtomically(t *tes
 	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	started, err := agentruntime.BeginToolExecution(requested.State, agentruntime.ToolExecution{
+	record, err := repo.AgentToolCallForScope(scope, "call-apply", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved, err := agentruntime.ReviewToolApproval(requested.State, agentruntime.ToolApproval{
+		ToolCallID: "call-apply", ActionVersion: 1, Decision: agentruntime.ToolApprovalApproved,
+		ProposalHash: record.ApprovalProposalHash,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, requested.State, approved, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	started, err := agentruntime.BeginToolExecution(approved.State, agentruntime.ToolExecution{
 		ToolCallID: "call-apply", ActionVersion: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.CommitAgentRuntimeTransition(scope, requested.State, started, time.Now().UTC()); err != nil {
+	if err := repo.CommitAgentRuntimeTransition(scope, approved.State, started, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	record, err := repo.AgentToolCallForScope(scope, "call-apply", 1)
+	record, err = repo.AgentToolCallForScope(scope, "call-apply", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,16 +698,46 @@ func TestCommitAgentRuntimeTransitionPersistsToolExecutionStartAtomically(t *tes
 	if !loaded.PendingToolStarted || loaded.StateVersion != started.State.StateVersion || loaded.StepNumber != requested.State.StepNumber {
 		t.Fatalf("started checkpoint = %#v", loaded)
 	}
+
+	// canvas.apply_ops persists its successful receipt atomically with the
+	// canvas revision. A worker crash before checkpoint advancement must resume
+	// from that exact receipt instead of treating the terminal tool row as a
+	// transition conflict.
+	receipt := []byte(`{"canvasId":"agent-canvas-1","baseRevision":7,"committedRevision":8,"clientMutationId":"call-apply","proposalHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","appliedOperationIds":["delete-obsolete"],"evidence":{"addedNodeIds":[],"updatedNodeIds":[],"deletedNodeIds":["obsolete"],"upsertedConnectionIds":[],"deletedConnectionIds":[],"selectedNodeIds":[],"viewportApplied":false}}`)
+	if err := db.Model(&model.AgentToolCall{}).Where("id = ?", record.ID).
+		Updates(agentToolCompletionUpdates{Status: agentruntime.ToolCallSucceeded, OutputJSON: string(receipt), UpdatedAt: time.Now().UTC()}).Error; err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := agentruntime.ResolveTool(started.State, agentruntime.ToolResolution{
+		ToolCallID: "call-apply", ActionVersion: 1, Succeeded: true, Output: receipt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, started.State, resolved, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.LastToolResult == nil || !loaded.LastToolResult.Succeeded || string(loaded.LastToolResult.Output) != string(receipt) {
+		t.Fatalf("resumed completed tool checkpoint = %#v", loaded)
+	}
 }
 
-func TestCommitAgentRuntimeTransitionPersistsApprovalDecisionAtomically(t *testing.T) {
+func TestLegacyV3CommitAgentRuntimeTransitionPersistsApprovalDecisionAtomically(t *testing.T) {
+	t.Skip("tool schema v3 is terminal-history-only; v4 approval persistence is covered by media.generate service and repository tests")
 	repo, db := openAgentRuntimeRepositorySQLite(t)
 	scope := repositoryAgentScope()
 	createAgentRunForTest(t, repo, scope)
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "生成一张图片",
-		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		UserMessage:       "生成一张图片",
+		Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +760,7 @@ func TestCommitAgentRuntimeTransitionPersistsApprovalDecisionAtomically(t *testi
 	rawArguments, err := json.Marshal(agentruntime.ProductionRenderArguments{
 		PlanKey: plan.Plan.PlanKey, PlanVersion: plan.Plan.Version, ArtifactID: artifact.ID, Attempt: artifact.Attempt,
 		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: "image-channel", Model: "image-model"},
-		ImageConfig:     &agentruntime.ImageRenderConfig{Size: "1:1", Quality: "medium", Count: 1},
+		ImageConfig:     &agentruntime.ImageRenderConfig{Size: "1:1", Resolution: "1K", Quality: "medium", Count: 1},
 		FrozenRenderQuote: agentruntime.FrozenRenderQuote{
 			AmountMicrocredits: 100, PerTaskAmountMicrocredits: 100, PriceVersion: 1,
 			BillingMode: "fixed_request", Quantity: 1, QuoteFingerprint: "approval-quote",
@@ -409,7 +814,8 @@ func TestCommitAgentRuntimeTransitionPersistsApprovalDecisionAtomically(t *testi
 	}
 }
 
-func TestCommitProductionRetryApprovalClearsRefundedAttemptBindingsAtomically(t *testing.T) {
+func TestLegacyV3CommitProductionRetryApprovalClearsRefundedAttemptBindingsAtomically(t *testing.T) {
+	t.Skip("tool schema v3 is terminal-history-only; v4 media recovery preserves commercial facts in agent production recovery tests")
 	repo, db := openAgentRuntimeRepositorySQLite(t)
 	if err := db.AutoMigrate(&model.Task{}, &model.BillingOrder{}); err != nil {
 		t.Fatal(err)
@@ -419,8 +825,11 @@ func TestCommitProductionRetryApprovalClearsRefundedAttemptBindingsAtomically(t 
 	now := time.Now().UTC()
 	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "model-1", ModelKey: "gpt-5.5", MaxSteps: 4,
-		ToolSchemaVersion: 1, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "重试失败镜头",
-		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+		PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		UserMessage:       "重试失败镜头",
+		Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -457,16 +866,16 @@ func TestCommitProductionRetryApprovalClearsRefundedAttemptBindingsAtomically(t 
 		t.Fatal(err)
 	}
 	if err := db.Model(&model.AgentProductionArtifact{}).Where("id = ?", artifact.ID).
-		Updates(map[string]any{
-			"status": model.AgentProductionArtifactFailed, "attempt": 1,
-			"task_id": task.ID, "billing_order_id": order.ID, "last_error_code": "production_generation_failed",
+		Updates(model.AgentProductionArtifact{
+			Status: model.AgentProductionArtifactFailed, Attempt: 1,
+			TaskID: task.ID, BillingOrderID: order.ID, LastErrorCode: "production_generation_failed",
 		}).Error; err != nil {
 		t.Fatal(err)
 	}
 	rawArguments, err := json.Marshal(agentruntime.ProductionRenderArguments{
 		PlanKey: plan.Plan.PlanKey, PlanVersion: plan.Plan.Version, ArtifactID: artifact.ID, Attempt: 1,
 		GenerationModel: agentruntime.GenerationModelSelection{ChannelID: "image-channel", Model: "image-model"},
-		ImageConfig:     &agentruntime.ImageRenderConfig{Size: "1:1", Quality: "medium", Count: 1},
+		ImageConfig:     &agentruntime.ImageRenderConfig{Size: "1:1", Resolution: "1K", Quality: "medium", Count: 1},
 		FrozenRenderQuote: agentruntime.FrozenRenderQuote{
 			AmountMicrocredits: 100, PerTaskAmountMicrocredits: 100, PriceVersion: 1,
 			BillingMode: "fixed_request", Quantity: 1, QuoteFingerprint: "refunded-retry-quote",
@@ -688,14 +1097,14 @@ func TestInterruptAgentRunUsesCASAndPersistsInterruptedTimeline(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	state, err := repo.InterruptAgentRun(scope, 1, now.Add(time.Second))
+	state, err := repo.CancelAgentRunTree(scope, 1, now.Add(time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if state.Status != agentruntime.RunCancelled || state.StateVersion != 2 {
 		t.Fatalf("interrupted state = %#v", state)
 	}
-	if _, err := repo.InterruptAgentRun(scope, 1, now.Add(2*time.Second)); !errors.Is(err, agentruntime.ErrInterruptConflict) {
+	if _, err := repo.CancelAgentRunTree(scope, 1, now.Add(2*time.Second)); !errors.Is(err, agentruntime.ErrInterruptConflict) {
 		t.Fatalf("replayed interrupt error = %v", err)
 	}
 	var run model.AgentRun
@@ -734,8 +1143,8 @@ func TestInterruptAgentRunClosesPendingTimelineLifecycle(t *testing.T) {
 		{
 			name: "tool awaiting approval",
 			decision: agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
-				ToolCallID: "call-interrupt", ToolName: agentruntime.ToolCanvasCommit, ActionVersion: 1,
-				Arguments: []byte(`{"expectedRevision":7}`), ExpectedDelivery: repositoryTestCanvasDelivery(),
+				ToolCallID: "call-interrupt", ToolName: agentruntime.ToolCanvasApplyOps, ActionVersion: 1,
+				Arguments: []byte(`{"canvasId":"agent-canvas-1","baseRevision":7,"clientMutationId":"call-interrupt","operations":[{"operationId":"select-artifact","type":"select_nodes","nodeIds":["artifact-1"]}]}`), ExpectedDelivery: repositoryTestCanvasDelivery(),
 			}},
 			kind: model.AgentTimelineItemToolCall,
 		},
@@ -766,7 +1175,7 @@ func TestInterruptAgentRunClosesPendingTimelineLifecycle(t *testing.T) {
 			if err := repo.CommitAgentRuntimeTransition(scope, current, requested, now.Add(time.Second)); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := repo.InterruptAgentRun(scope, requested.State.StateVersion, now.Add(2*time.Second)); err != nil {
+			if _, err := repo.CancelAgentRunTree(scope, requested.State.StateVersion, now.Add(2*time.Second)); err != nil {
 				t.Fatal(err)
 			}
 			var item model.AgentTimelineItem
@@ -805,8 +1214,8 @@ func TestTerminateAgentRunClosesPendingTimelineLifecycle(t *testing.T) {
 		{
 			name: "tool",
 			decision: agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
-				ToolCallID: "call-terminate", ToolName: agentruntime.ToolCanvasCommit, ActionVersion: 1,
-				Arguments: []byte(`{"expectedRevision":7}`), ExpectedDelivery: repositoryTestCanvasDelivery(),
+				ToolCallID: "call-terminate", ToolName: agentruntime.ToolCanvasRead, ActionVersion: 1,
+				Arguments: []byte(`{"canvasId":"agent-canvas-1","selectedNodeIds":["artifact-1"],"includeViewport":true}`), ExpectedDelivery: repositoryTestCanvasDelivery(),
 			}},
 			kind: model.AgentTimelineItemToolCall,
 		},

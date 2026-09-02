@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/gorm"
@@ -49,12 +50,75 @@ type CanvasChangeCommit struct {
 
 type CanvasChangeApply func(current *model.CanvasProject) (payloadJSON string, title string, err error)
 
+type canvasProjectRevisionUpdates struct {
+	PayloadJSON     string
+	Title           string
+	Revision        int64
+	UpdatedByUserID string
+	UpdatedAt       time.Time
+}
+
+type AgentCanvasChangeInput struct {
+	Scope             agentruntime.Scope
+	ToolCallID        string
+	ActionVersion     int
+	ProposalHash      string
+	CanvasID          string
+	ChangeID          string
+	ActorUserID       string
+	BaseRevision      int64
+	ClientMutationID  string
+	ChangePayloadJSON string
+	ToolReceiptJSON   string
+	Now               time.Time
+	Apply             CanvasChangeApply
+}
+
 func (r *Repository) CanvasProject(id string) (*model.CanvasProject, error) {
 	var project model.CanvasProject
 	if err := r.db.First(&project, "id = ?", id).Error; err != nil {
 		return nil, err
 	}
 	return &project, nil
+}
+
+func (r *Repository) CanvasProjectDeletion(canvasID string) (*model.CanvasProjectDeletion, error) {
+	var deletion model.CanvasProjectDeletion
+	if err := r.db.First(&deletion, "canvas_id = ?", canvasID).Error; err != nil {
+		return nil, err
+	}
+	return &deletion, nil
+}
+
+func (r *Repository) CanvasProjectDeletionsForActor(userID string) ([]model.CanvasProjectDeletion, error) {
+	var deletions []model.CanvasProjectDeletion
+	err := r.canvasProjectDeletionsForActorQuery(userID).
+		Order("canvas_project_deletions.deleted_at DESC").
+		Find(&deletions).Error
+	return deletions, err
+}
+
+func (r *Repository) CanvasProjectDeletionForActor(userID string, canvasID string) (*model.CanvasProjectDeletion, error) {
+	var deletion model.CanvasProjectDeletion
+	if err := r.canvasProjectDeletionsForActorQuery(userID).
+		Where("canvas_project_deletions.canvas_id = ?", canvasID).
+		First(&deletion).Error; err != nil {
+		return nil, err
+	}
+	return &deletion, nil
+}
+
+func (r *Repository) canvasProjectDeletionsForActorQuery(userID string) *gorm.DB {
+	return r.db.Model(&model.CanvasProjectDeletion{}).Where(`
+		(canvas_project_deletions.team_id = '' AND canvas_project_deletions.user_id = ?)
+		OR (canvas_project_deletions.team_id <> '' AND EXISTS (
+			SELECT 1
+			FROM team_members
+			WHERE team_members.team_id = canvas_project_deletions.team_id
+			  AND team_members.user_id = ?
+			  AND team_members.status = ?
+		))
+	`, userID, userID, model.TeamMemberStatusActive)
 }
 
 func (r *Repository) CanvasProjectSummariesForActor(userID string) ([]CanvasProjectSummaryRecord, error) {
@@ -216,69 +280,159 @@ func (r *Repository) CommitCanvasChange(
 ) (*CanvasChangeCommit, error) {
 	var committed CanvasChangeCommit
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		var current model.CanvasProject
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, "id = ?", canvasID).Error; err != nil {
+		var err error
+		committed, err = commitCanvasChangeTx(tx, canvasID, changeID, actorUserID, baseRevision, clientMutationID, changePayloadJSON, now, apply)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &committed, nil
+}
+
+// CommitAgentCanvasChange persists the authoritative canvas mutation and its
+// successful tool receipt in one transaction. This closes the crash window in
+// which the canvas could advance while the runtime still considered the tool
+// running.
+func (r *Repository) CommitAgentCanvasChange(input AgentCanvasChangeInput) (*CanvasChangeCommit, error) {
+	if err := validateAgentCanvasChangeInput(input); err != nil {
+		return nil, err
+	}
+	var committed CanvasChangeCommit
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := agentRunForScopeDB(tx, input.Scope); err != nil {
 			return err
 		}
-		if err := authorizeCanvasWrite(tx, &current, actorUserID, now); err != nil {
+		var toolCall model.AgentToolCall
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("run_id = ? AND tool_call_id = ? AND action_version = ?", input.Scope.RunID, input.ToolCallID, input.ActionVersion).
+			Take(&toolCall).Error; err != nil {
 			return err
 		}
-		var duplicate model.CanvasChange
-		duplicateErr := tx.First(&duplicate, "canvas_id = ? AND client_mutation_id = ?", canvasID, clientMutationID).Error
-		if duplicateErr == nil {
-			if duplicate.ActorUserID != actorUserID || duplicate.PayloadJSON != changePayloadJSON {
-				return ErrCanvasMutationMismatch
-			}
-			committed = CanvasChangeCommit{Project: &current, Change: &duplicate}
-			return nil
+		if toolCall.ToolName != string(agentruntime.ToolCanvasApplyOps) || toolCall.ApprovalDecision != agentruntime.ToolApprovalApproved ||
+			toolCall.ApprovalByUserID != input.Scope.ActorUserID || toolCall.ApprovalProposalHash != input.ProposalHash || toolCall.ApprovalDecidedAt == nil {
+			return ErrAgentRuntimeStepConflict
 		}
-		if !errors.Is(duplicateErr, gorm.ErrRecordNotFound) {
-			return duplicateErr
+		if toolCall.Status != agentruntime.ToolCallPending && toolCall.Status != agentruntime.ToolCallRunning && toolCall.Status != agentruntime.ToolCallSucceeded {
+			return ErrAgentRuntimeStepConflict
+		}
+		if toolCall.Status == agentruntime.ToolCallSucceeded && toolCall.OutputJSON != input.ToolReceiptJSON {
+			return ErrAgentRuntimeStepConflict
 		}
 
-		if current.Revision != baseRevision {
-			return ErrCanvasRevisionConflict
-		}
-		payloadJSON, title, err := apply(&current)
+		var err error
+		committed, err = commitCanvasChangeTx(tx, input.CanvasID, input.ChangeID, input.ActorUserID, input.BaseRevision,
+			input.ClientMutationID, input.ChangePayloadJSON, input.Now, input.Apply)
 		if err != nil {
 			return err
 		}
-		nextRevision := current.Revision + 1
-		result := tx.Model(&model.CanvasProject{}).
-			Where("id = ? AND revision = ?", current.ID, current.Revision).
-			Updates(map[string]any{
-				"payload_json":       payloadJSON,
-				"title":              title,
-				"revision":           nextRevision,
-				"updated_by_user_id": actorUserID,
-				"updated_at":         now,
+		if committed.Change.Revision != input.BaseRevision+1 {
+			return ErrCanvasMutationMismatch
+		}
+		if toolCall.Status == agentruntime.ToolCallSucceeded {
+			return nil
+		}
+		result := tx.Model(&model.AgentToolCall{}).
+			Where("id = ? AND status IN ?", toolCall.ID, []agentruntime.ToolCallStatus{agentruntime.ToolCallPending, agentruntime.ToolCallRunning}).
+			Updates(agentToolCompletionUpdates{
+				Status: agentruntime.ToolCallSucceeded, OutputJSON: input.ToolReceiptJSON, UpdatedAt: input.Now,
 			})
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
-			return ErrCanvasRevisionConflict
+			return ErrAgentRuntimeStepConflict
 		}
-		change := &model.CanvasChange{
-			ID: changeID, CanvasID: current.ID, Revision: nextRevision,
-			ActorUserID: actorUserID, ClientMutationID: clientMutationID,
-			PayloadJSON: changePayloadJSON, CreatedAt: now,
-		}
-		if err := tx.Create(change).Error; err != nil {
-			return err
-		}
-		current.PayloadJSON = payloadJSON
-		current.Title = title
-		current.Revision = nextRevision
-		current.UpdatedByUserID = actorUserID
-		current.UpdatedAt = now
-		committed = CanvasChangeCommit{Project: &current, Change: change}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &committed, nil
+}
+
+func validateAgentCanvasChangeInput(input AgentCanvasChangeInput) error {
+	if err := input.Scope.Validate(); err != nil {
+		return err
+	}
+	if input.CanvasID != input.Scope.CanvasID || input.ActorUserID != input.Scope.ActorUserID || input.ToolCallID == "" ||
+		input.ActionVersion < 1 || input.ChangeID == "" || input.ClientMutationID == "" || input.Now.IsZero() || input.Apply == nil {
+		return ErrAgentRuntimeStepConflict
+	}
+	decoded, err := agentruntime.DecodeCapabilityResult(agentruntime.ToolCanvasApplyOps, []byte(input.ToolReceiptJSON))
+	receipt, ok := decoded.(agentruntime.CanvasApplyOpsResult)
+	if err != nil || !ok || receipt.CanvasID != input.CanvasID || receipt.BaseRevision != input.BaseRevision ||
+		receipt.CommittedRevision != input.BaseRevision+1 || receipt.ClientMutationID != input.ClientMutationID ||
+		receipt.ProposalHash != input.ProposalHash {
+		return ErrAgentRuntimeStepConflict
+	}
+	return nil
+}
+
+func commitCanvasChangeTx(
+	tx *gorm.DB,
+	canvasID string,
+	changeID string,
+	actorUserID string,
+	baseRevision int64,
+	clientMutationID string,
+	changePayloadJSON string,
+	now time.Time,
+	apply CanvasChangeApply,
+) (CanvasChangeCommit, error) {
+	var current model.CanvasProject
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, "id = ?", canvasID).Error; err != nil {
+		return CanvasChangeCommit{}, err
+	}
+	if err := authorizeCanvasWrite(tx, &current, actorUserID, now); err != nil {
+		return CanvasChangeCommit{}, err
+	}
+	var duplicate model.CanvasChange
+	duplicateErr := tx.First(&duplicate, "canvas_id = ? AND client_mutation_id = ?", canvasID, clientMutationID).Error
+	if duplicateErr == nil {
+		if duplicate.ActorUserID != actorUserID || duplicate.PayloadJSON != changePayloadJSON {
+			return CanvasChangeCommit{}, ErrCanvasMutationMismatch
+		}
+		return CanvasChangeCommit{Project: &current, Change: &duplicate}, nil
+	}
+	if !errors.Is(duplicateErr, gorm.ErrRecordNotFound) {
+		return CanvasChangeCommit{}, duplicateErr
+	}
+	if current.Revision != baseRevision {
+		return CanvasChangeCommit{}, ErrCanvasRevisionConflict
+	}
+	payloadJSON, title, err := apply(&current)
+	if err != nil {
+		return CanvasChangeCommit{}, err
+	}
+	nextRevision := current.Revision + 1
+	result := tx.Model(&model.CanvasProject{}).
+		Where("id = ? AND revision = ?", current.ID, current.Revision).
+		Select("payload_json", "title", "revision", "updated_by_user_id", "updated_at").
+		Updates(canvasProjectRevisionUpdates{
+			PayloadJSON: payloadJSON, Title: title, Revision: nextRevision,
+			UpdatedByUserID: actorUserID, UpdatedAt: now,
+		})
+	if result.Error != nil {
+		return CanvasChangeCommit{}, result.Error
+	}
+	if result.RowsAffected != 1 {
+		return CanvasChangeCommit{}, ErrCanvasRevisionConflict
+	}
+	change := &model.CanvasChange{
+		ID: changeID, CanvasID: current.ID, Revision: nextRevision,
+		ActorUserID: actorUserID, ClientMutationID: clientMutationID,
+		PayloadJSON: changePayloadJSON, CreatedAt: now,
+	}
+	if err := tx.Create(change).Error; err != nil {
+		return CanvasChangeCommit{}, err
+	}
+	current.PayloadJSON = payloadJSON
+	current.Title = title
+	current.Revision = nextRevision
+	current.UpdatedByUserID = actorUserID
+	current.UpdatedAt = now
+	return CanvasChangeCommit{Project: &current, Change: change}, nil
 }
 
 func authorizeCanvasWrite(tx *gorm.DB, canvas *model.CanvasProject, actorUserID string, now time.Time) error {
@@ -325,23 +479,42 @@ func authorizeCanvasWrite(tx *gorm.DB, canvas *model.CanvasProject, actorUserID 
 	return nil
 }
 
-func (r *Repository) DeleteCanvasProjectWithCollaboration(canvasID string) error {
+func (r *Repository) DeleteCanvasProjectWithCollaboration(project *model.CanvasProject, deletedByUserID string, deletedAt time.Time) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("canvas_id = ?", canvasID).Delete(&model.CanvasChange{}).Error; err != nil {
+		deletion := model.CanvasProjectDeletion{
+			CanvasID:        project.ID,
+			UserID:          project.UserID,
+			TeamID:          project.TeamID,
+			DeletedByUserID: deletedByUserID,
+			DeletedAt:       deletedAt,
+		}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "canvas_id"}},
+			DoNothing: true,
+		}).Create(&deletion).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("canvas_id = ?", canvasID).Delete(&model.CanvasCollaborator{}).Error; err != nil {
+		if err := tx.Where("canvas_id = ?", project.ID).Delete(&model.CanvasChange{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("project_id = ?", canvasID).Delete(&model.CanvasShare{}).Error; err != nil {
+		if err := tx.Where("canvas_id = ?", project.ID).Delete(&model.CanvasCollaborator{}).Error; err != nil {
 			return err
 		}
-		result := tx.Delete(&model.CanvasProject{}, "id = ?", canvasID)
+		if err := tx.Where("project_id = ?", project.ID).Delete(&model.CanvasShare{}).Error; err != nil {
+			return err
+		}
+		result := tx.Delete(&model.CanvasProject{}, "id = ? AND user_id = ? AND team_id = ?", project.ID, project.UserID, project.TeamID)
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
-			return gorm.ErrRecordNotFound
+			var existing model.CanvasProjectDeletion
+			if err := tx.First(&existing, "canvas_id = ?", project.ID).Error; err != nil {
+				return err
+			}
+			if existing.UserID != project.UserID || existing.TeamID != project.TeamID {
+				return errors.New("canvas deletion scope mismatch")
+			}
 		}
 		return nil
 	})

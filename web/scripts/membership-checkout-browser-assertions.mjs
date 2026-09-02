@@ -3,14 +3,12 @@ import assert from "node:assert/strict";
 const REQUIRED_CSP_DIRECTIVES = new Map([
     ["default-src", ["'self'"]],
     ["base-uri", ["'self'"]],
-    ["connect-src", ["'self'", "https:", "wss:", "blob:", "data:"]],
+    ["connect-src", ["'self'", "https:", "wss:", "blob:", "data:", "http://127.0.0.1:*"]],
     ["form-action", ["'self'"]],
     ["frame-ancestors", ["'self'"]],
     ["object-src", ["'none'"]],
 ]);
-
-const staticAssetBaseURL = (process.env.HMAIGC_STATIC_ASSET_BASE_URL ?? "").trim() || "https://static.hm.kunagent.com/hmaigc/web";
-const staticAssetOrigin = new URL(staticAssetBaseURL).origin;
+const PROGRAM_ASSET_ORIGIN = "https://static.hm.kunagent.com";
 
 function parseCSP(value) {
     return new Map(
@@ -39,7 +37,7 @@ export function assertCheckoutSecurityHeaders(headers, label) {
 
     const scripts = directives.get("script-src") ?? [];
     assert.ok(scripts.includes("'self'"), `${label}: script-src 必须允许同源构建产物`);
-    assert.ok(scripts.includes(staticAssetOrigin), `${label}: script-src 必须允许实际发布静态资源 Origin`);
+    assert.ok(scripts.includes(PROGRAM_ASSET_ORIGIN), `${label}: script-src 必须允许固定程序资源 CDN`);
     assert.ok(scripts.includes("'wasm-unsafe-eval'"), `${label}: script-src 必须显式允许 WebAssembly 编译`);
     assert.ok(
         scripts.some((source) => source.startsWith("'sha256-")),
@@ -52,7 +50,9 @@ export function assertCheckoutSecurityHeaders(headers, label) {
 
     for (const directive of ["font-src", "style-src", "worker-src"]) {
         const sources = directives.get(directive) ?? [];
-        assert.ok(sources.includes(staticAssetOrigin), `${label}: ${directive} 必须允许实际发布静态资源 Origin`);
+        assert.ok(sources.includes("'self'"), `${label}: ${directive} 必须允许同源程序资源`);
+        assert.ok(sources.includes(PROGRAM_ASSET_ORIGIN), `${label}: ${directive} 必须允许固定程序资源 CDN`);
+        assert.ok(!sources.some((source) => (source.startsWith("http://") || source.startsWith("https://")) && source !== PROGRAM_ASSET_ORIGIN), `${label}: ${directive} 禁止未授权外部程序资源 Origin`);
     }
 }
 

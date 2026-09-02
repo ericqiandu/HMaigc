@@ -79,13 +79,26 @@ export type ProviderModelCapabilities = {
     ratios: string[];
     qualities: string[];
     outputCounts: number[];
+    durations: number[];
     durationMin: number;
     durationMax: number;
     supportsSmartDuration: boolean;
+    supportsTextToVideo: boolean;
+    supportsImageToVideo: boolean;
+    supportsReferenceVideo: boolean;
+    supportsNativeAudio: boolean;
+    supportsDialogue: boolean;
+    supportsVoiceReference: boolean;
+    supportsLipSync: boolean;
+    supportsIndependentAudio: boolean;
     supportsGeneratedAudio: boolean;
+    supportsGeneratedAudioWithReferenceVideo: boolean;
     watermarkCapability: WatermarkCapability;
     supportsAudioOnly: boolean;
     requiresAdaptiveFrames: boolean;
+    generationModes: string[];
+    adaptiveRatioModes: string[];
+    requiredAdaptiveRatioModes: string[];
     maxImages: number;
     maxImagesWithVideo: number;
     maxVideos: number;
@@ -93,6 +106,7 @@ export type ProviderModelCapabilities = {
     maxVideoDurationSeconds: number;
     maxAudioDurationSeconds: number;
     tools: string[];
+    supportsTokenUsageBilling: boolean;
 };
 
 export type WatermarkCapability = "controlled" | "unsupported" | "not_applicable";
@@ -141,7 +155,7 @@ export type AiConfig = {
 };
 
 export const CONFIG_STORE_KEY = "open_ai_canvas:ai_config_store";
-export type ModelCapability = "image" | "video" | "text" | "audio";
+export type ModelCapability = "image" | "video" | "text" | "audio" | "vision";
 const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
@@ -239,7 +253,8 @@ export function modelMatchesCapability(model: string, capability?: ModelCapabili
     if (capability === "image") return isImageModelName(model);
     if (capability === "video") return isVideoModelName(model);
     if (capability === "audio") return isAudioModelName(model);
-    return isTextModelName(model);
+    if (capability === "text") return isTextModelName(model);
+    return false;
 }
 
 export function filterModelsByCapability(models: string[], capability?: ModelCapability, channels?: ModelChannel[]) {

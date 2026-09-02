@@ -8,7 +8,7 @@ import { useCanvasTaskBillingQuote } from "@/hooks/use-canvas-task-billing-quote
 import type { TaskBillingQuote } from "@/services/api/task-center";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { hasPublishedVideoModel, normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoModelMetadataPatch } from "@/lib/video-model-capabilities";
-import { resolveVideoGenerationMode } from "@/lib/canvas/canvas-video-generation-mode";
+import { resolveVideoGenerationMode, videoGenerationModeConflictReason } from "@/lib/canvas/canvas-video-generation-mode";
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
@@ -23,7 +23,7 @@ import { CanvasVideoSuperResolutionPopover } from "./canvas-video-super-resoluti
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
-import { canvasResourceMentionToken, selectVideoReferenceCandidates, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { mergeCanvasResourceReferenceCandidates, reconcileCanvasResourceMentions, selectVideoReferenceCandidates, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import "./canvas-audio-composer.css";
 import "./canvas-video-composer.css";
 import "./canvas-media-composer.css";
@@ -43,6 +43,7 @@ type CanvasNodePromptPanelProps = {
     mentionReferences?: CanvasResourceReference[];
     availableReferences: CanvasResourceReference[];
     onReferenceConnect: (sourceNodeId: string, targetNodeId: string) => boolean;
+    canReferenceConnect: (sourceNodeId: string, targetNodeId: string) => boolean;
     onImageSettingsOpenChange?: (open: boolean) => void;
     workspaceMode?: CanvasWorkspaceMode;
 };
@@ -60,6 +61,7 @@ export function CanvasNodePromptPanel({
     mentionReferences = [],
     availableReferences,
     onReferenceConnect,
+    canReferenceConnect,
     onImageSettingsOpenChange,
     workspaceMode = "professional",
 }: CanvasNodePromptPanelProps) {
@@ -103,6 +105,7 @@ export function CanvasNodePromptPanel({
         }),
         [mentionReferences],
     );
+    const videoModeConflictReason = isVideoMode ? videoGenerationModeConflictReason(node.metadata, activeVideoReferenceCounts) : undefined;
     const activeVideoImageNodeIds = useMemo(() => new Set(mentionReferences.filter((item) => item.active && item.kind === "image").map((item) => item.nodeId)), [mentionReferences]);
     const activeVideoReferenceNodeIds = useMemo(() => new Set(mentionReferences.filter((item) => item.active && (item.kind === "image" || item.kind === "video" || item.kind === "audio")).map((item) => item.nodeId)), [mentionReferences]);
     const availableVideoReferences = useMemo(
@@ -129,7 +132,7 @@ export function CanvasNodePromptPanel({
     const referenceShelfHeight = referenceShelfRows * 42;
     const composerMinHeight = activeReferenceCount ? (isImageMode ? 116 : isAudioMode ? 106 : 82) : isImageMode || isAudioMode ? 76 : 58;
     const composerHeight = Math.min(isImageMode || isAudioMode ? 180 : 144, Math.max(composerMinHeight, Math.ceil(promptContentHeight + referenceShelfHeight)));
-    const isSubmitDisabled = !isRunning && (!prompt.trim() || ((isImageMode || isVideoMode) && quoteState.status !== "ready"));
+    const isSubmitDisabled = !isRunning && (!prompt.trim() || Boolean(videoModeConflictReason) || ((isImageMode || isVideoMode) && quoteState.status !== "ready"));
     const canExpandPrompt = mode === "image" || mode === "video" || mode === "audio";
     const updatePromptContentHeight = useCallback((height: number) => {
         setPromptContentHeight((current) => (Math.abs(current - height) < 1 ? current : height));
@@ -139,6 +142,13 @@ export function CanvasNodePromptPanel({
         setPrompt(node.metadata?.composerContent ?? node.metadata?.prompt ?? "");
     }, [node.id, node.metadata?.composerContent, node.metadata?.prompt]);
 
+    useEffect(() => {
+        const next = reconcileCanvasResourceMentions(prompt, mentionReferences);
+        if (next === prompt) return;
+        setPrompt(next);
+        onPromptChange(node.id, next);
+    }, [mentionReferences, node.id, onPromptChange, prompt]);
+
     useEffect(() => setPromptContentHeight(0), [node.id]);
 
     useEffect(() => {
@@ -147,6 +157,14 @@ export function CanvasNodePromptPanel({
     }, [node.id]);
 
     const skillReferences = useMemo(() => mentionReferences.filter((item) => item.kind === "skill"), [mentionReferences]);
+    const mentionCandidates = useMemo(
+        () => mergeCanvasResourceReferenceCandidates(availableReferences, mentionReferences).filter((reference) => reference.kind === "skill" || reference.active || (reference.nodeId !== node.id && canReferenceConnect(reference.nodeId, node.id))),
+        [availableReferences, canReferenceConnect, mentionReferences, node.id],
+    );
+    const selectMentionReference = useCallback(
+        (reference: CanvasResourceReference) => reference.kind === "skill" || reference.active || onReferenceConnect(reference.nodeId, node.id),
+        [node.id, onReferenceConnect],
+    );
 
     const updatePrompt = (value: string) => {
         setPrompt(value);
@@ -162,29 +180,19 @@ export function CanvasNodePromptPanel({
         updatePrompt(withoutSlash ? `${withoutSlash}\n${preset.prompt}` : preset.prompt);
     };
 
-    const insertPromptReference = (reference: CanvasResourceReference) => {
-        const insertText = `${canvasResourceMentionToken(reference)} `;
-        const pendingMentionMatch = /@[^\s@，。！？、,.!?;:]*\s*$/.exec(prompt);
-        if (pendingMentionMatch) {
-            const prefix = prompt.slice(0, pendingMentionMatch.index).replace(/\s*$/, "");
-            updatePrompt(prefix ? `${prefix} ${insertText}` : insertText);
-            return;
-        }
-        const basePrompt = prompt.replace(/\s*$/, "");
-        updatePrompt(basePrompt ? `${basePrompt} ${insertText}` : insertText);
-    };
-
     const appendAudioText = (fragment: string) => updatePrompt(prompt ? `${prompt}${fragment}` : fragment.trimStart());
 
-    const audioPromptEditor = (expanded: boolean) => {
+    const promptEditor = (expanded: boolean) => {
         const editor = expanded ? expandedPromptEditorRef.current : promptEditorRef.current;
-        if (!editor) throw new Error("音频文本编辑器尚未就绪");
+        if (!editor) throw new Error("提示词编辑器尚未就绪");
         return editor;
     };
 
-    const insertAudioPause = (expanded: boolean, fragment: string) => audioPromptEditor(expanded).replaceSelection(fragment);
+    const insertPromptReference = (expanded: boolean, reference: CanvasResourceReference) => promptEditor(expanded).insertReference(reference);
 
-    const replaceAudioPause = (expanded: boolean, range: { start: number; end: number }, fragment: string) => audioPromptEditor(expanded).replaceRange(range, fragment);
+    const insertAudioPause = (expanded: boolean, fragment: string) => promptEditor(expanded).replaceSelection(fragment);
+
+    const replaceAudioPause = (expanded: boolean, range: { start: number; end: number }, fragment: string) => promptEditor(expanded).replaceRange(range, fragment);
 
     const updateVideoFrameMetadata = useCallback(
         (patch: Partial<CanvasNodeMetadata>) => {
@@ -198,7 +206,7 @@ export function CanvasNodePromptPanel({
 
     const submit = () => {
         const text = prompt.trim();
-        if (!text || isRunning || ((isImageMode || isVideoMode) && quoteState.status !== "ready")) return false;
+        if (!text || isRunning || videoModeConflictReason || ((isImageMode || isVideoMode) && quoteState.status !== "ready")) return false;
         onGenerate(node.id, mode, text, quoteState.status === "ready" ? quoteState.quote : undefined);
         return true;
     };
@@ -216,13 +224,13 @@ export function CanvasNodePromptPanel({
         >
             {isImageMode ? (
                 <>
-                    <ReferenceInsertPicker label="+参考" references={mentionReferences} theme={theme} onInsert={insertPromptReference} />
-                    <ReferenceInsertPicker label="标记" references={mentionReferences} theme={theme} onInsert={insertPromptReference} icon={<AtSign className="canvas-reference-picker-icon size-3" />} />
+                    <ReferenceInsertPicker label="+参考" references={mentionReferences} theme={theme} onInsert={(reference) => insertPromptReference(expanded, reference)} />
+                    <ReferenceInsertPicker label="标记" references={mentionReferences} theme={theme} onInsert={(reference) => insertPromptReference(expanded, reference)} icon={<AtSign className="canvas-reference-picker-icon size-3" />} />
                 </>
             ) : mode === "video" ? (
                 <>
                     <ReferenceConnectPicker label="+参考" references={availableVideoReferences} theme={theme} targetNodeId={node.id} onConnect={onReferenceConnect} />
-                    <ReferenceInsertPicker label="标记" references={mentionReferences} theme={theme} onInsert={insertPromptReference} icon={<AtSign className="canvas-reference-picker-icon size-3" />} />
+                    <ReferenceInsertPicker label="标记" references={mentionReferences} theme={theme} onInsert={(reference) => insertPromptReference(expanded, reference)} icon={<AtSign className="canvas-reference-picker-icon size-3" />} />
                 </>
             ) : isAudioMode ? (
                 <CanvasAudioTextTools
@@ -367,11 +375,12 @@ export function CanvasNodePromptPanel({
                 style={{ height: composerHeight, background: isImageMode || isVideoMode || isAudioMode ? "transparent" : composerSurface, outlineColor: theme.accent.primary }}
             >
                 {isVideoMode && !simpleMode ? <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} /> : null}
-                <ConnectedReferenceShelf references={isVideoMode ? nonFrameMentionReferences : mentionReferences} theme={theme} onInsert={insertPromptReference} />
+                <ConnectedReferenceShelf references={isVideoMode ? nonFrameMentionReferences : mentionReferences} theme={theme} onInsert={(reference) => insertPromptReference(false, reference)} />
                 <CanvasResourceMentionTextarea
                     editorHandleRef={promptEditorRef}
                     value={prompt}
-                    references={mentionReferences}
+                    references={mentionCandidates}
+                    onReferenceSelect={selectMentionReference}
                     highlightAudioPauseTokens={isAudioMode}
                     onChange={updatePrompt}
                     containerClassName="min-h-0 flex-1"
@@ -403,11 +412,12 @@ export function CanvasNodePromptPanel({
                     <div className="shrink-0 pr-8">{renderComposerHeader(true)}</div>
                     <div className="flex min-h-[240px] flex-1 flex-col overflow-hidden rounded-lg border focus-within:outline focus-within:outline-1" style={{ borderColor: theme.toolbar.border, outlineColor: theme.accent.primary }}>
                         {isVideoMode && !simpleMode ? <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={updateVideoFrameMetadata} /> : null}
-                        <ConnectedReferenceShelf references={isVideoMode ? nonFrameMentionReferences : mentionReferences} theme={theme} onInsert={insertPromptReference} />
+                        <ConnectedReferenceShelf references={isVideoMode ? nonFrameMentionReferences : mentionReferences} theme={theme} onInsert={(reference) => insertPromptReference(true, reference)} />
                         <CanvasResourceMentionTextarea
                             editorHandleRef={expandedPromptEditorRef}
                             value={prompt}
-                            references={mentionReferences}
+                            references={mentionCandidates}
+                            onReferenceSelect={selectMentionReference}
                             highlightAudioPauseTokens={isAudioMode}
                             onChange={updatePrompt}
                             containerClassName="min-h-0 flex-1"

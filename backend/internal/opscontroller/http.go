@@ -49,6 +49,8 @@ func NewHTTPHandler(controller *Controller, secret []byte) (http.Handler, error)
 	mux.HandleFunc("POST /v1/operations", server.startOperation)
 	mux.HandleFunc("GET /v1/operations/{id}", server.operation)
 	mux.HandleFunc("GET /v1/operations/{id}/logs", server.operationLogs)
+	mux.HandleFunc("POST /v1/operations/{id}/cancel", server.cancelOperation)
+	mux.HandleFunc("POST /v1/operations/{id}/recover", server.recoverOperation)
 	return server.authenticate(mux), nil
 }
 
@@ -180,6 +182,59 @@ func (s *HTTPServer) operationLogs(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	writeOK(writer, result)
+}
+
+func (s *HTTPServer) cancelOperation(writer http.ResponseWriter, request *http.Request) {
+	var input opsprotocol.CancelOperationRequest
+	if !decodeControlRequest(writer, request, &input) {
+		return
+	}
+	result, err := s.controller.CancelOperation(request.PathValue("id"), input)
+	if err != nil {
+		writeControlError(writer, err)
+		return
+	}
+	writeOK(writer, result)
+}
+
+func (s *HTTPServer) recoverOperation(writer http.ResponseWriter, request *http.Request) {
+	var input opsprotocol.RecoverOperationRequest
+	if !decodeControlRequest(writer, request, &input) {
+		return
+	}
+	result, err := s.controller.RecoverOperation(request.Context(), request.PathValue("id"), input)
+	if err != nil {
+		writeControlError(writer, err)
+		return
+	}
+	writeOK(writer, result)
+}
+
+func decodeControlRequest(writer http.ResponseWriter, request *http.Request, destination interface{}) bool {
+	decoder := json.NewDecoder(request.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		writeError(writer, http.StatusBadRequest, "运维控制请求格式无效")
+		return false
+	}
+	return true
+}
+
+func writeControlError(writer http.ResponseWriter, err error) {
+	var requestError *RequestError
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		writeError(writer, http.StatusNotFound, "运维任务不存在")
+	case errors.Is(err, ErrIdempotencyConflict),
+		errors.Is(err, ErrCancellationNotAllowed),
+		errors.Is(err, ErrRecoveryNotAllowed),
+		errors.Is(err, opsprotocol.ErrInvalidStatusTransition):
+		writeError(writer, http.StatusConflict, err.Error())
+	case errors.As(err, &requestError):
+		writeError(writer, http.StatusBadRequest, requestError.Error())
+	default:
+		writeError(writer, http.StatusInternalServerError, err.Error())
+	}
 }
 
 func writeOK(writer http.ResponseWriter, data interface{}) {

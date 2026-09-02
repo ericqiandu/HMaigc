@@ -3,7 +3,7 @@ import { initialAgentConversationState, reduceAgentConversation } from "../src/c
 import type { AgentRuntimeEvent, AgentTimelineItemKind } from "../src/services/api/agent-runtime";
 
 const event = (sequence: number, kind: "item.started" | "item.delta" | "item.completed", payload: Record<string, unknown>, itemKind: AgentTimelineItemKind = "agent_message"): AgentRuntimeEvent => ({
-    protocolVersion: 2,
+    protocolVersion: 5,
     threadId: "thread",
     runId: "run",
     sequence,

@@ -36,12 +36,31 @@ const textChannel: ModelChannel = {
     ],
 };
 const agentDefaultModel = encodeChannelModel(textChannel.id, "gpt-5.5");
-const config: AiConfig = { ...defaultConfig, channels: [textChannel], models: [agentDefaultModel], textModels: [agentDefaultModel], textModel: "legacy-local-selection" };
+const visionChannel: ModelChannel = {
+    ...textChannel,
+    id: "deepseek-vision",
+    name: "DeepSeek Vision",
+    models: ["deepseek-v4-flash-vision-exp"],
+    modelCosts: [
+        {
+            ...textChannel.modelCosts![0],
+            model: "deepseek-v4-flash-vision-exp",
+            displayName: "视觉理解专用模型",
+            capability: "vision",
+            billingMode: "token_usage",
+            priceStrategy: "token",
+            unitPriceMicrocredits: 0,
+        },
+    ],
+};
+const visionModel = encodeChannelModel(visionChannel.id, "deepseek-v4-flash-vision-exp");
+const config: AiConfig = { ...defaultConfig, channels: [textChannel, visionChannel], models: [agentDefaultModel, visionModel], textModels: [agentDefaultModel], textModel: "legacy-local-selection" };
 
 describe("canvas Agent default model", () => {
     test("model picker contains only image and video capabilities", () => {
         const markup = renderToStaticMarkup(createElement(CanvasAgentModelMenu, { config, value: { image: "", video: "" }, onChange: () => undefined }));
         expect(markup).not.toContain("Agent");
+        expect(markup).not.toContain("视觉理解专用模型");
         expect(markup).toContain("图片");
         expect(markup).toContain("视频");
     });

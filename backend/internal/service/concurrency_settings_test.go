@@ -100,3 +100,23 @@ func TestSharedProviderCredentialUsesOneConcurrencyScopeAcrossChannels(t *testin
 		t.Fatal("second channel bypassed shared credential concurrency")
 	}
 }
+
+func TestVisionTaskUsesOtherConcurrencyClass(t *testing.T) {
+	class, err := taskConcurrencyCapability(agentVisionTaskType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if class != taskCapabilityOther {
+		t.Fatalf("vision concurrency class = %q, want %q", class, taskCapabilityOther)
+	}
+	found := false
+	for _, capability := range concurrencyClassCapabilities(class) {
+		if capability == "vision" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("other concurrency capabilities omit vision: %#v", concurrencyClassCapabilities(class))
+	}
+}

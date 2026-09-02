@@ -8,27 +8,31 @@ import { ListToolbar, TableSurface } from "@/components/layout/workspace-page";
 import { refreshSystemChannels } from "@/lib/user-session";
 import {
     createAdminModelPricing,
-    getAdminModelPricingOperationsSetting,
     getAdminAgentDefaultModelSetting,
+    getAdminAgentVisionModelSetting,
+    getAdminModelPricingOperationsSetting,
     listAdminModelPricings,
     updateAdminModelPricing,
     updateAdminModelPricingOperationsSetting,
     updateAdminAgentDefaultModelSetting,
+    updateAdminAgentVisionModelSetting,
     type AgentDefaultModelSetting,
+    type AgentVisionModelSetting,
     type ModelPricing,
     type ModelPricingInput,
     type ModelPricingOperationsSetting,
 } from "@/services/api/auth";
 import { listAdminChannelModels, updateAdminChannelModel, type ChannelModel } from "@/services/api/wallet";
+import type { ChannelInterfaceType } from "@/stores/use-config-store";
 import { useAdminContext } from "../admin-context";
 import { AdminContentSection, AdminDataLayout, AdminMetric, AdminMetricBand } from "../components/admin-data-layout";
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
-import { agentDefaultModelOptions, pricingContractForModel, supportsTokenUsageBilling } from "./agent-model-options";
+import { agentDefaultModelOptions, agentVisionModelOptions, pricingContractForModel, supportsTokenUsageBilling } from "./agent-model-options";
 import { buildInputImageUsagePricing, readInputImageUsagePricing } from "./media-input-usage-pricing";
-import { imagePricingSpecifications, normalizedPricingTierKey, specificationsForModel, type PricingSpecification } from "./pricing-specifications";
+import { normalizedPricingTierKey, specificationsForModel, type PricingSpecification } from "./pricing-specifications";
 
-type CommercialModel = ChannelModel & { channelName: string; pricing?: ModelPricing };
+type CommercialModel = ChannelModel & { channelName: string; channelInterfaceType?: ChannelInterfaceType; pricing?: ModelPricing };
 type PricingFormValues = {
     currency: string;
     billingMode: ChannelModel["billingMode"];
@@ -63,7 +67,16 @@ export default function ModelPricingPage() {
     const [setting, setSetting] = useState<ModelPricingOperationsSetting>(emptySetting);
     const [agentSetting, setAgentSetting] = useState<AgentDefaultModelSetting | null>(null);
     const [agentModelId, setAgentModelId] = useState("");
+    const [agentModelLoading, setAgentModelLoading] = useState(true);
+    const [agentModelLoadError, setAgentModelLoadError] = useState("");
+    const [agentModelSaveError, setAgentModelSaveError] = useState("");
     const [savingAgentModel, setSavingAgentModel] = useState(false);
+    const [agentVisionSetting, setAgentVisionSetting] = useState<AgentVisionModelSetting | null>(null);
+    const [agentVisionModelId, setAgentVisionModelId] = useState("");
+    const [agentVisionModelLoading, setAgentVisionModelLoading] = useState(true);
+    const [agentVisionModelLoadError, setAgentVisionModelLoadError] = useState("");
+    const [agentVisionModelSaveError, setAgentVisionModelSaveError] = useState("");
+    const [savingAgentVisionModel, setSavingAgentVisionModel] = useState(false);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState("");
     const [saving, setSaving] = useState(false);
@@ -81,25 +94,19 @@ export default function ModelPricingPage() {
     const reload = async () => {
         setLoading(true);
         try {
-            const [pricingResult, settingResult, agentSettingResult, ...channelResults] = await Promise.all([
-                listAdminModelPricings(),
-                getAdminModelPricingOperationsSetting(),
-                getAdminAgentDefaultModelSetting(),
-                ...references.channels.map((channel) => listAdminChannelModels(channel.id)),
-            ]);
+            const [pricingResult, settingResult, ...channelResults] = await Promise.all([listAdminModelPricings(), getAdminModelPricingOperationsSetting(), ...references.channels.map((channel) => listAdminChannelModels(channel.id))]);
             const pricingByModel = new Map(pricingResult.pricings.map((item) => [pricingScopeKey(item.channelId, item.model, item.capability), item]));
             const nextModels = channelResults.flatMap((result, index) => {
                 const channel = references.channels[index];
                 return result.models.map((model) => ({
                     ...model,
                     channelName: channel.name,
+                    channelInterfaceType: channel.interfaceType,
                     pricing: pricingByModel.get(pricingScopeKey(channel.id, model.modelKey, model.capability)) || pricingByModel.get(pricingScopeKey("", model.modelKey, model.capability)),
                 }));
             });
             setModels(nextModels);
             setSetting(settingResult.setting);
-            setAgentSetting(agentSettingResult.setting);
-            setAgentModelId(agentSettingResult.setting.configured ? agentSettingResult.setting.channelModelId : "");
             setLoadError("");
         } catch (error) {
             setLoadError(error instanceof Error ? error.message : "读取模型商业定价失败");
@@ -108,8 +115,38 @@ export default function ModelPricingPage() {
         }
     };
 
+    const reloadAgentModelSetting = async () => {
+        setAgentModelLoading(true);
+        try {
+            const result = await getAdminAgentDefaultModelSetting();
+            setAgentSetting(result.setting);
+            setAgentModelId(result.setting.configured ? result.setting.channelModelId : "");
+            setAgentModelLoadError("");
+        } catch (error) {
+            setAgentModelLoadError(error instanceof Error ? error.message : "读取文本 Agent 模型失败");
+        } finally {
+            setAgentModelLoading(false);
+        }
+    };
+
+    const reloadAgentVisionModelSetting = async () => {
+        setAgentVisionModelLoading(true);
+        try {
+            const result = await getAdminAgentVisionModelSetting();
+            setAgentVisionSetting(result.setting);
+            setAgentVisionModelId(result.setting.configured ? result.setting.channelModelId : "");
+            setAgentVisionModelLoadError("");
+        } catch (error) {
+            setAgentVisionModelLoadError(error instanceof Error ? error.message : "读取视觉理解模型失败");
+        } finally {
+            setAgentVisionModelLoading(false);
+        }
+    };
+
     useEffect(() => {
         void reload();
+        void reloadAgentModelSetting();
+        void reloadAgentVisionModelSetting();
     }, [references.channels]);
 
     const openPricing = (model: CommercialModel) => {
@@ -117,6 +154,7 @@ export default function ModelPricingPage() {
         const contract = pricingContractForModel(model, pricing);
         const inputImageUsage = readInputImageUsagePricing(pricing?.tiers || [], model.priceTiers);
         if (inputImageUsage.state === "incomplete") message.warning("参考图附加价只保存了一侧事实，请补全成本和积分后重新保存");
+        pricingForm.resetFields();
         setEditing(model);
         pricingForm.setFieldsValue({
             currency: pricing?.currency || setting.currency,
@@ -173,12 +211,14 @@ export default function ModelPricingPage() {
     };
 
     const agentModelOptions = useMemo(() => agentDefaultModelOptions(models), [models]);
+    const visionModelOptions = useMemo(() => agentVisionModelOptions(models), [models]);
 
     const saveAgentModel = async () => {
         if (!agentModelId) {
             message.error("请选择已启用、已完成定价的系统文本模型");
             return;
         }
+        setAgentModelSaveError("");
         setSavingAgentModel(true);
         try {
             const result = await updateAdminAgentDefaultModelSetting(agentModelId);
@@ -191,9 +231,32 @@ export default function ModelPricingPage() {
                 message.warning("全站 Agent 模型已保存，但当前页面同步失败，请刷新后继续");
             }
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "保存 Agent 模型失败");
+            const reason = error instanceof Error ? error.message : "保存 Agent 模型失败";
+            setAgentModelSaveError(reason);
+            message.error(reason);
         } finally {
             setSavingAgentModel(false);
+        }
+    };
+
+    const saveAgentVisionModel = async () => {
+        if (!agentVisionModelId) {
+            message.error("请选择已启用、已完整定价且凭据健康的视觉理解模型");
+            return;
+        }
+        setAgentVisionModelSaveError("");
+        setSavingAgentVisionModel(true);
+        try {
+            const result = await updateAdminAgentVisionModelSetting(agentVisionModelId);
+            setAgentVisionSetting(result.setting);
+            setAgentVisionModelId(result.setting.channelModelId);
+            message.success("全站 Agent 视觉理解模型已更新");
+        } catch (error) {
+            const reason = error instanceof Error ? error.message : "保存视觉理解模型失败";
+            setAgentVisionModelSaveError(reason);
+            message.error(reason);
+        } finally {
+            setSavingAgentVisionModel(false);
         }
     };
 
@@ -220,8 +283,9 @@ export default function ModelPricingPage() {
             if (supplierCost !== undefined) result.push({ specification, supplierCost, userCredits });
             return result;
         }, []);
-        if (values.priceStrategy === "image_resolution" && tierInputs.length !== imagePricingSpecifications.length) {
-            message.error("图片模型必须完整配置 1K、2K、4K 定价");
+        const requiredBaseSpecifications = specifications.filter((specification) => specification.group === "base");
+        if (values.priceStrategy === "image_resolution" && tierInputs.filter(({ specification }) => specification.group === "base").length !== requiredBaseSpecifications.length) {
+            message.error(`图片模型必须完整配置 ${requiredBaseSpecifications.map((specification) => specification.label).join("、")} 定价`);
             return;
         }
         const baseTierInputs = tierInputs.filter(({ specification }) => specification.group === "base");
@@ -361,7 +425,7 @@ export default function ModelPricingPage() {
 
     if (loadError && models.length === 0) {
         return (
-            <AdminPageFrame title="模型中心" description="集中维护文案、图片、视频与音频模型的供应商成本、积分售价和目标利润。" modelCenter>
+            <AdminPageFrame title="模型中心" description="集中维护文本、视觉理解、图片、视频与音频模型的供应商成本、积分售价和目标利润。" modelCenter>
                 <AdminContentError title="模型商业定价加载失败" description={loadError} onRetry={() => void reload()} />
             </AdminPageFrame>
         );
@@ -370,7 +434,7 @@ export default function ModelPricingPage() {
     return (
         <AdminPageFrame
             title="模型中心"
-            description="集中维护文案、图片、视频与音频模型的供应商成本、积分售价和目标利润，所有用户调用均以这里的生效价格扣费。"
+            description="集中维护文本、视觉理解、图片、视频与音频模型的供应商成本、积分售价和目标利润，所有用户调用均以这里的生效价格扣费。"
             modelCenter
             actions={
                 <Button className="model-pricing-settings-button" icon={<Settings2 className="size-4" />} onClick={openSettings}>
@@ -384,19 +448,50 @@ export default function ModelPricingPage() {
                 </div>
             ) : null}
             <AdminDataLayout>
-                <AdminContentSection className="model-pricing-agent-section" title="Agent 模型配置" description="全站使用唯一已启用文本模型；模型失效时明确停用，不自动降级。">
-                    <div className="model-pricing-agent-setting-controls flex flex-col gap-3 sm:flex-row sm:items-center">
-                        <Select
-                            aria-label="全站 Agent 默认模型"
-                            className="model-pricing-agent-model-select min-w-0 flex-1"
-                            value={agentModelId || undefined}
+                <AdminContentSection className="model-pricing-agent-section" title="Agent 模型配置" description="文本模型负责决策，视觉模型负责图片理解；均由管理员统一配置，失效时显式失败且不自动降级。">
+                    <div className="model-pricing-agent-settings">
+                        <AgentModelSettingRow
+                            title="文本决策模型"
+                            description="负责 Agent 的规划、工具选择与最终回复。"
+                            selectLabel="全站 Agent 默认模型"
+                            saveLabel="保存文本 Agent 模型"
                             placeholder="选择已启用并完成定价的文本模型"
+                            value={agentModelId}
+                            savedValue={agentSetting?.channelModelId || ""}
                             options={agentModelOptions}
-                            onChange={setAgentModelId}
+                            loading={agentModelLoading}
+                            saving={savingAgentModel}
+                            loaded={agentSetting !== null}
+                            loadError={agentModelLoadError}
+                            saveError={agentModelSaveError}
+                            onChange={(value) => {
+                                setAgentModelId(value);
+                                setAgentModelSaveError("");
+                            }}
+                            onRetry={() => void reloadAgentModelSetting()}
+                            onSave={() => void saveAgentModel()}
                         />
-                        <Button className="model-pricing-agent-model-save" type="primary" loading={savingAgentModel} disabled={!agentModelId || agentModelId === agentSetting?.channelModelId} onClick={() => void saveAgentModel()}>
-                            保存 Agent 模型
-                        </Button>
+                        <AgentModelSettingRow
+                            title="视觉理解模型"
+                            description="当 Agent 需要读取图片时自动调用，前台无需单独开关。"
+                            selectLabel="全站 Agent 默认视觉理解模型"
+                            saveLabel="保存视觉理解模型"
+                            placeholder="选择已启用并完成 Token 定价的视觉模型"
+                            value={agentVisionModelId}
+                            savedValue={agentVisionSetting?.channelModelId || ""}
+                            options={visionModelOptions}
+                            loading={agentVisionModelLoading}
+                            saving={savingAgentVisionModel}
+                            loaded={agentVisionSetting !== null}
+                            loadError={agentVisionModelLoadError}
+                            saveError={agentVisionModelSaveError}
+                            onChange={(value) => {
+                                setAgentVisionModelId(value);
+                                setAgentVisionModelSaveError("");
+                            }}
+                            onRetry={() => void reloadAgentVisionModelSetting()}
+                            onSave={() => void saveAgentVisionModel()}
+                        />
                     </div>
                 </AdminContentSection>
                 <AdminMetricBand title="商业定价概览" description="集中查看模型定价完整性与利润风险。">
@@ -438,6 +533,7 @@ export default function ModelPricingPage() {
                             options={[
                                 { label: "全部类型", value: "all" },
                                 { label: "文案", value: "text" },
+                                { label: "视觉理解", value: "vision" },
                                 { label: "图片", value: "image" },
                                 { label: "视频", value: "video" },
                                 { label: "音频", value: "audio" },
@@ -624,11 +720,90 @@ function PricingDrawer({
     );
 }
 
+function AgentModelSettingRow({
+    title,
+    description,
+    selectLabel,
+    saveLabel,
+    placeholder,
+    value,
+    savedValue,
+    options,
+    loading,
+    saving,
+    loaded,
+    loadError,
+    saveError,
+    onChange,
+    onRetry,
+    onSave,
+}: {
+    title: string;
+    description: string;
+    selectLabel: string;
+    saveLabel: string;
+    placeholder: string;
+    value: string;
+    savedValue: string;
+    options: Array<{ label: string; value: string }>;
+    loading: boolean;
+    saving: boolean;
+    loaded: boolean;
+    loadError: string;
+    saveError: string;
+    onChange: (value: string) => void;
+    onRetry: () => void;
+    onSave: () => void;
+}) {
+    const dirty = value !== savedValue;
+    return (
+        <section className="model-pricing-agent-setting-row">
+            <div className="model-pricing-agent-setting-copy">
+                <h3 className="model-pricing-agent-setting-title">{title}</h3>
+                <p className="model-pricing-agent-setting-description">{description}</p>
+            </div>
+            {loadError ? (
+                <Alert
+                    className="model-pricing-agent-setting-error model-pricing-agent-setting-load-error"
+                    type="error"
+                    showIcon
+                    title={`${title}读取失败`}
+                    description={loadError}
+                    action={
+                        <Button className="model-pricing-agent-setting-retry" size="small" onClick={onRetry}>
+                            重试读取
+                        </Button>
+                    }
+                />
+            ) : null}
+            {saveError ? <Alert className="model-pricing-agent-setting-error model-pricing-agent-setting-save-error" type="error" showIcon title={`${title}保存失败`} description={saveError} /> : null}
+            <div className="model-pricing-agent-setting-controls">
+                <Select
+                    aria-label={selectLabel}
+                    className="model-pricing-agent-model-select"
+                    value={value || undefined}
+                    placeholder={placeholder}
+                    options={options}
+                    loading={loading}
+                    disabled={loading || saving || (!loaded && Boolean(loadError))}
+                    onChange={onChange}
+                />
+                <Button className="model-pricing-agent-model-save" aria-label={saveLabel} type="primary" loading={saving} disabled={loading || (!loaded && Boolean(loadError)) || !value || !dirty} onClick={onSave}>
+                    保存
+                </Button>
+            </div>
+            <div className="model-pricing-agent-setting-state" role="status" aria-live="polite">
+                {loading ? "正在读取配置" : !loaded && loadError ? "配置状态未知，读取成功前不可保存" : dirty ? "有未保存变更" : savedValue ? "当前配置已同步" : "尚未配置"}
+            </div>
+        </section>
+    );
+}
+
 function FlatPricingFields({ capability, strategy }: { capability?: ChannelModel["capability"]; strategy: ChannelModel["priceStrategy"] }) {
     return (
         <div className="model-pricing-flat-fields">
             <h3 className="model-pricing-section-title mb-4 text-sm font-semibold">成本与积分售价</h3>
-            {capability === "text" ? (
+            {capability === "text" || capability === "vision" ? (
                 <>
                     <div className="model-pricing-token-grid grid grid-cols-1 gap-x-4 sm:grid-cols-2">
                         <MoneyField name="inputPerMillion" label="输入成本 / 百万 Token" />
@@ -788,7 +963,7 @@ function tierCost(pricing: ModelPricing | undefined, specification: string) {
     return optionalMoney(value);
 }
 function capabilityLabel(value: ChannelModel["capability"]) {
-    return { text: "文案", image: "图片", video: "视频", audio: "音频" }[value];
+    return { text: "文案", vision: "视觉理解", image: "图片", video: "视频", audio: "音频" }[value];
 }
 
 function commercialStatus(model: CommercialModel, setting: ModelPricingOperationsSetting): "configured" | "warning" | "incomplete" {
@@ -824,7 +999,7 @@ function comparableCost(model: CommercialModel, resolution?: string) {
     const pricing = model.pricing;
     if (!pricing) return null;
     if (model.priceStrategy !== "flat" && model.priceStrategy !== "token") return pricing.tiers.find((tier) => tier.specification === resolution)?.supplierCostMicros ?? null;
-    if (model.capability === "text") {
+    if (model.capability === "text" || model.capability === "vision") {
         const tokenCost =
             (pricing.inputPerMillionMicros * pricing.expectedInputTokens) / 1_000_000 + (pricing.outputPerMillionMicros * pricing.expectedOutputTokens) / 1_000_000 + (pricing.cachedPerMillionMicros * pricing.expectedCachedTokens) / 1_000_000;
         const totalCost = pricing.perRequestMicros + tokenCost;
@@ -913,7 +1088,8 @@ function tierLabel(value: string) {
     };
     if (value.includes("::")) {
         const [resolution, variant] = value.split("::");
-        return `${resolution}·${variant === "reference_video" ? "参考视频" : variant === "standard_audio" ? "普通生成（有声）" : "普通生成（无声）"}`;
+        const variantLabel = variant === "reference_video" ? "参考视频" : variant === "standard_audio" ? "普通生成（有声）" : variant === "low" ? "低画质" : variant === "medium" ? "标准画质" : variant === "high" ? "高画质" : "普通生成（无声）";
+        return `${resolution}·${variantLabel}`;
     }
     return labels[value] || value;
 }

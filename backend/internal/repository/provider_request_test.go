@@ -14,7 +14,8 @@ func TestSaveProviderCallKeepsUpstreamIDWhenAuditInsertFails(t *testing.T) {
 	now := time.Now().UTC()
 	task := model.Task{
 		ID: "task-provider-response", UserID: "user", Status: model.TaskStatusRunning,
-		LeaseOwner: "worker", LeaseExpiresAt: &now, PollStage: "creating",
+		LeaseOwner: "worker", LeaseExpiresAt: &now, LeaseGeneration: 1,
+		LeaseToken: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", PollStage: "creating",
 	}
 	order := model.BillingOrder{ID: "order-provider-response", UserID: task.UserID, TaskID: task.ID, Status: model.BillingStatusRunning}
 	if err := db.Create(&task).Error; err != nil {
@@ -31,7 +32,7 @@ func TestSaveProviderCallKeepsUpstreamIDWhenAuditInsertFails(t *testing.T) {
 		ID: "log-provider-response", UserID: task.UserID, TaskID: task.ID, BillingOrderID: order.ID,
 		Status: model.ApiCallStatusSucceeded, StatusCode: 200, ProviderRequestID: "upstream-task-id",
 	}
-	err := repo.SaveProviderCall(log, task.LeaseOwner, true)
+	err := repo.SaveProviderCall(log, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken, true)
 	if err == nil {
 		t.Fatal("SaveProviderCall() error = nil, want audit failure")
 	}
@@ -49,7 +50,54 @@ func TestSaveProviderCallKeepsUpstreamIDWhenAuditInsertFails(t *testing.T) {
 	if storedOrder.ProviderRequestID != "upstream-task-id" {
 		t.Fatalf("billing provider request id = %q", storedOrder.ProviderRequestID)
 	}
-	if beginErr := repo.BeginProviderCreate(task.ID, task.LeaseOwner); !errors.Is(beginErr, ErrProviderCreateStateConflict) {
+	if beginErr := repo.BeginProviderCreate(task.ID, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken); !errors.Is(beginErr, ErrProviderCreateStateConflict) {
 		t.Fatalf("BeginProviderCreate() error = %v, want state conflict", beginErr)
+	}
+}
+
+func TestSaveProviderCallPersistsCancelledCreateRecoveryFact(t *testing.T) {
+	db := openProviderRepositorySQLite(t)
+	repo := New(db)
+	now := time.Now().UTC()
+	task := model.Task{
+		ID: "cancelled-create-response", UserID: "user", Status: model.TaskStatusRunning,
+		LeaseOwner: "worker", LeaseExpiresAt: &now, LeaseGeneration: 3,
+		LeaseToken: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
+	order := model.BillingOrder{ID: "cancelled-create-order", UserID: task.UserID, TaskID: task.ID, Status: model.BillingStatusRunning}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.BeginProviderCreate(task.ID, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	if cancelled, err := repo.CancelTaskIfStatus(task.UserID, task.ID, model.TaskStatusRunning, "user_requested", now); err != nil || !cancelled {
+		t.Fatalf("cancelled = %v, error = %v", cancelled, err)
+	}
+
+	log := &model.ApiCallLog{
+		ID: "cancelled-create-log", UserID: task.UserID, TaskID: task.ID, BillingOrderID: order.ID,
+		Status: model.ApiCallStatusSucceeded, StatusCode: 200, ProviderRequestID: "late-upstream-task-id",
+	}
+	if err := repo.SaveProviderCall(log, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken, true); err != nil {
+		t.Fatalf("SaveProviderCall() error = %v", err)
+	}
+
+	storedTask, err := repo.Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedTask.Status != model.TaskStatusCancelled || storedTask.ProviderRequestID != log.ProviderRequestID || storedTask.PollStage != "cancel_reconcile" || storedTask.NextPollAt == nil {
+		t.Fatalf("cancelled provider recovery facts = %#v", storedTask)
+	}
+	storedOrder, err := repo.BillingOrder(order.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedOrder.ProviderRequestID != log.ProviderRequestID {
+		t.Fatalf("billing provider request id = %q", storedOrder.ProviderRequestID)
 	}
 }

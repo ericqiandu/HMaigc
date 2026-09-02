@@ -1,15 +1,4 @@
-export type RouteModuleKey =
-    | "home"
-    | "projects"
-    | "projectDetail"
-    | "canvas"
-    | "canvasProject"
-    | "tasks"
-    | "assets"
-    | "skills"
-    | "teams"
-    | "wallet"
-    | "settings";
+export type RouteModuleKey = "home" | "projects" | "projectDetail" | "canvas" | "canvasProject" | "tasks" | "assets" | "skills" | "teams" | "wallet" | "settings";
 
 export type RouteModuleLoaders = Record<RouteModuleKey, () => Promise<unknown>>;
 

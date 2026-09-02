@@ -147,7 +147,7 @@ func createAgentRuntimeCanvas(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	now := time.Now().UTC()
 	if err := db.Save(&model.CanvasProject{
-		ID: "runtime-canvas", UserID: "runtime-user", Title: "Agent Canvas", Revision: 7,
+		ID: "runtime-canvas", ProjectID: "runtime-project", UserID: "runtime-user", Title: "Agent Canvas", Revision: 7,
 		PayloadJSON: `{"nodes":[],"connections":[]}`, CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatal(err)

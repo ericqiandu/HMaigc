@@ -1,5 +1,8 @@
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { seedanceReferenceLabel } from "@/lib/seedance-video";
+import { canvasMediaPlaybackUrl } from "@/lib/canvas-media-playback";
+import { replaceTextRange, type TextRange } from "@/lib/audio-pause";
+import { resourceIdFromStorageKey } from "@/services/api/resources";
 import type { PlatformSkill } from "@/services/api/skills";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
@@ -19,6 +22,35 @@ export type CanvasResourceReference = {
     skill?: PlatformSkill;
 };
 
+export type CanvasReferenceManifestEntry = {
+    assetKey: string;
+    sourceNodeId: string;
+    targetNodeId: string;
+    edgeId: string;
+    mediaType: "image" | "video" | "audio";
+    semanticRole: string;
+    handle?: string;
+    artifactId?: string;
+    revisionId?: string;
+    resourceId: string;
+    resourceUrl: string;
+    sourceRevision?: string;
+    ordinal: number;
+};
+
+export type CanvasReferenceRejection = {
+    edgeId: string;
+    sourceNodeId: string;
+    targetNodeId: string;
+    code: "missing_resource_url" | "unsupported_source_type";
+    message: string;
+};
+
+export type CanvasReferenceManifest = {
+    entries: CanvasReferenceManifestEntry[];
+    rejections: CanvasReferenceRejection[];
+};
+
 export function canvasResourceMentionToken(reference: CanvasResourceReference) {
     if (reference.kind === "skill" && reference.skill?.dir) return `@[skill:${reference.skill.dir}]`;
     return `@[node:${reference.nodeId}]`;
@@ -28,9 +60,20 @@ export function selectVideoReferenceCandidates(references: CanvasResourceReferen
     return references.filter((reference) => reference.nodeId !== targetNodeId && Boolean(reference.previewUrl) && (reference.kind === "image" || reference.kind === "video" || reference.kind === "audio"));
 }
 
+export function mergeCanvasResourceReferenceCandidates(availableReferences: CanvasResourceReference[], activeReferences: CanvasResourceReference[]) {
+    const referencesById = new Map<string, CanvasResourceReference>();
+    availableReferences.forEach((reference) => referencesById.set(reference.id, reference));
+    activeReferences.forEach((reference) => {
+        const available = referencesById.get(reference.id);
+        referencesById.set(reference.id, available ? { ...available, ...reference, active: available.active || reference.active } : reference);
+    });
+    return [...referencesById.values()].sort((left, right) => Number(right.active) - Number(left.active));
+}
+
 export type CanvasResourceGraph = {
     nodeById: Map<string, CanvasNodeData>;
     incomingByNodeId: Map<string, CanvasNodeData[]>;
+    incomingConnectionsByNodeId: Map<string, CanvasConnection[]>;
     configTargetByNodeId: Map<string, string>;
     resourceNodes: CanvasNodeData[];
 };
@@ -38,6 +81,7 @@ export type CanvasResourceGraph = {
 export function createCanvasResourceGraph(nodes: CanvasNodeData[], connections: CanvasConnection[]): CanvasResourceGraph {
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const incomingByNodeId = new Map<string, CanvasNodeData[]>();
+    const incomingConnectionsByNodeId = new Map<string, CanvasConnection[]>();
     const configTargetByNodeId = new Map<string, string>();
     connections.forEach((connection) => {
         const source = nodeById.get(connection.fromNodeId);
@@ -46,9 +90,66 @@ export function createCanvasResourceGraph(nodes: CanvasNodeData[], connections: 
         const incoming = incomingByNodeId.get(target.id) || [];
         incoming.push(source);
         incomingByNodeId.set(target.id, incoming);
+        const incomingConnections = incomingConnectionsByNodeId.get(target.id) || [];
+        incomingConnections.push(connection);
+        incomingConnectionsByNodeId.set(target.id, incomingConnections);
         if (target.type === CanvasNodeType.Config && !configTargetByNodeId.has(source.id)) configTargetByNodeId.set(source.id, target.id);
     });
-    return { nodeById, incomingByNodeId, configTargetByNodeId, resourceNodes: nodes.filter(isResourceNode) };
+    return { nodeById, incomingByNodeId, incomingConnectionsByNodeId, configTargetByNodeId, resourceNodes: nodes.filter(isResourceNode) };
+}
+
+export function buildCanvasReferenceManifest(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): CanvasReferenceManifest {
+    return buildCanvasReferenceManifestFromGraph(nodeId, createCanvasResourceGraph(nodes, connections));
+}
+
+export function buildCanvasReferenceManifestFromGraph(nodeId: string, graph: CanvasResourceGraph): CanvasReferenceManifest {
+    const entries: CanvasReferenceManifestEntry[] = [];
+    const rejections: CanvasReferenceRejection[] = [];
+    getReferenceConnections(nodeId, graph).forEach((connection) => {
+        const source = graph.nodeById.get(connection.fromNodeId);
+        if (!source) return;
+        if (source.type === CanvasNodeType.Skill) return;
+        const mediaType = referenceMediaType(source);
+        if (!mediaType) {
+            if (source.type === CanvasNodeType.Text) return;
+            rejections.push({
+                edgeId: connection.id,
+                sourceNodeId: source.id,
+                targetNodeId: nodeId,
+                code: "unsupported_source_type",
+                message: `节点“${source.title}”不是可执行的图片、视频或音频素材`,
+            });
+            return;
+        }
+        const resourceId = resourceIdFromStorageKey(source.metadata?.storageKey);
+        if (!resourceId) {
+            rejections.push({
+                edgeId: connection.id,
+                sourceNodeId: source.id,
+                targetNodeId: nodeId,
+                code: "missing_resource_url",
+                message: `素材“${source.title}”缺少已持久化的 Resource URL`,
+            });
+            return;
+        }
+        const handle = connection.toHandleId || connection.fromHandleId;
+        entries.push({
+            assetKey: source.id,
+            sourceNodeId: source.id,
+            targetNodeId: nodeId,
+            edgeId: connection.id,
+            mediaType,
+            semanticRole: handle || (source.metadata?.workflowKind === "character" ? "character" : "reference"),
+            handle,
+            artifactId: source.metadata?.artifactId,
+            revisionId: source.metadata?.artifactRevisionId,
+            resourceId,
+            resourceUrl: canvasMediaPlaybackUrl(source),
+            sourceRevision: source.metadata?.artifactRevisionId,
+            ordinal: entries.length + 1,
+        });
+    });
+    return { entries, rejections };
 }
 
 export function buildCanvasResourceReferences(nodes: CanvasNodeData[], connections: CanvasConnection[], contextNodeId?: string | null) {
@@ -77,10 +178,7 @@ export function buildNodeMentionReferencesByNodeId(nodes: CanvasNodeData[], grap
 export function getMentionResourceNodes(nodeId: string, graph: CanvasResourceGraph) {
     const configInputs = getConnectedConfigResourceNodes(nodeId, graph);
     if (configInputs.length) return configInputs;
-    const ownInputs = getContextResourceNodes(nodeId, graph);
-    if (ownInputs.length) return ownInputs;
-    const node = graph.nodeById.get(nodeId);
-    return node && isResourceNode(node) ? [node] : [];
+    return getContextResourceNodes(nodeId, graph);
 }
 
 export function getGenerationResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
@@ -105,6 +203,67 @@ function getConnectedConfigResourceNodes(nodeId: string, graph: CanvasResourceGr
     return getContextResourceNodes(configNodeId, graph).filter((node) => node.id !== nodeId);
 }
 
+function getReferenceConnections(nodeId: string, graph: CanvasResourceGraph) {
+    const configNodeId = graph.configTargetByNodeId.get(nodeId);
+    const targetNodeId = configNodeId || nodeId;
+    return (graph.incomingConnectionsByNodeId.get(targetNodeId) || []).filter((connection) => connection.fromNodeId !== nodeId);
+}
+
+function referenceMediaType(node: CanvasNodeData): CanvasReferenceManifestEntry["mediaType"] | null {
+    if (node.metadata?.workflowKind === "character" && node.metadata.characterAssetId) return "image";
+    if (node.type === CanvasNodeType.Image) return "image";
+    if (node.type === CanvasNodeType.Video) return "video";
+    if (node.type === CanvasNodeType.Audio) return "audio";
+    return null;
+}
+
+export function insertCanvasResourceMention(value: string, selection: TextRange, reference: CanvasResourceReference) {
+    const range = normalizedTextRange(value, selection);
+    const replacementRange = range.start === range.end ? pendingMentionRange(value, range.start) || range : range;
+    const nextCharacter = value[replacementRange.end] || "";
+    const separator = nextCharacter && /[\s，。！？、,.!?;:]/u.test(nextCharacter) ? "" : " ";
+    return replaceTextRange(value, replacementRange, `${canvasResourceMentionToken(reference)}${separator}`);
+}
+
+export function canvasResourceMentionQueryAt(value: string, cursor: number) {
+    const range = pendingMentionRange(value, Math.max(0, Math.min(value.length, cursor)));
+    return range ? { start: range.start, query: value.slice(range.start + 1, range.end) } : null;
+}
+
+export function reconcileCanvasResourceMentions(value: string, references: CanvasResourceReference[]) {
+    const activeNodeIds = new Set(references.filter((reference) => reference.active && reference.kind !== "skill").map((reference) => reference.nodeId));
+    const mentionPattern = /@\[node:([^\]]+)\]/g;
+    let next = "";
+    let cursor = 0;
+    for (const match of value.matchAll(mentionPattern)) {
+        const index = match.index;
+        const token = match[0];
+        const nodeId = match[1];
+        next += value.slice(cursor, index);
+        cursor = index + token.length;
+        if (activeNodeIds.has(nodeId)) {
+            next += token;
+            continue;
+        }
+        if (next.endsWith(" ") && value[cursor] === " ") cursor += 1;
+    }
+    return next + value.slice(cursor);
+}
+
+function normalizedTextRange(value: string, range: TextRange): TextRange {
+    const start = Math.max(0, Math.min(value.length, range.start));
+    const end = Math.max(start, Math.min(value.length, range.end));
+    return { start, end };
+}
+
+function pendingMentionRange(value: string, cursor: number): TextRange | null {
+    const mentionStart = value.lastIndexOf("@", cursor - 1);
+    if (mentionStart < 0) return null;
+    const query = value.slice(mentionStart + 1, cursor);
+    if (/\s|[@\[\]{}()<>，。！？、,.!?;:]/u.test(query)) return null;
+    return { start: mentionStart, end: cursor };
+}
+
 function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
     const counts: Record<CanvasResourceKind, number> = { image: 0, video: 0, audio: 0, text: 0, skill: 0, character: 0 };
     return nodes.flatMap((node): CanvasResourceReference[] => {
@@ -119,7 +278,7 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
                 kind,
                 label,
                 title: node.title || label,
-                previewUrl: node.metadata?.workflowKind === "character" ? node.metadata.characterCoverUrl : node.metadata?.content,
+                previewUrl: resourcePreviewUrl(node, kind),
                 storageKey: node.metadata?.storageKey,
                 text:
                     node.metadata?.workflowKind === "character"
@@ -134,6 +293,12 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
             },
         ];
     });
+}
+
+function resourcePreviewUrl(node: CanvasNodeData, kind: CanvasResourceKind) {
+    if (kind === "character") return node.metadata?.characterCoverUrl;
+    if (kind === "image" || kind === "video" || kind === "audio") return canvasMediaPlaybackUrl(node);
+    return node.metadata?.content;
 }
 
 function labelForKind(kind: CanvasResourceKind, index: number) {

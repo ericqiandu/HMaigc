@@ -32,3 +32,12 @@ type CanvasChange struct {
 	PayloadJSON      string    `json:"payloadJson" gorm:"type:text"`
 	CreatedAt        time.Time `json:"createdAt" gorm:"index"`
 }
+
+// CanvasProjectDeletion 是跨客户端同步使用的不可变删除事实，不保存画布正文。
+type CanvasProjectDeletion struct {
+	CanvasID        string    `json:"id" gorm:"primaryKey;size:80"`
+	UserID          string    `json:"-" gorm:"index;size:36"`
+	TeamID          string    `json:"-" gorm:"index;size:36"`
+	DeletedByUserID string    `json:"-" gorm:"index;size:36"`
+	DeletedAt       time.Time `json:"deletedAt" gorm:"index"`
+}

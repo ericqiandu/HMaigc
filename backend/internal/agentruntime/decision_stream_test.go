@@ -47,3 +47,23 @@ func TestDecisionStreamObserverEmitsMonotonicDeltasAfterFinalKindIsKnown(t *test
 		t.Fatalf("second delta = %q, error = %v", second, err)
 	}
 }
+
+func TestDecisionStreamObserverUsesFrozenToolSchema(t *testing.T) {
+	observer := NewDecisionStreamObserverForToolSchema(ProductionToolSchemaVersion)
+	legacy := `{"kind":"tool_call","toolCall":{"toolCallId":"legacy","toolName":"production.plan","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`
+	if _, err := observer.Push(legacy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := observer.Finish(); err == nil {
+		t.Fatal("production observer accepted retired legacy tool")
+	}
+
+	observer = NewDecisionStreamObserverForToolSchema(CurrentToolSchemaVersion)
+	current := `{"kind":"tool_call","toolCall":{"toolCallId":"read","toolName":"canvas.read","actionVersion":1,"arguments":{"canvasId":"canvas-1","selectedNodeIds":[],"includeViewport":true},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`
+	if _, err := observer.Push(current); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := observer.Finish(); err != nil {
+		t.Fatalf("current observer rejected cloud tool: %v", err)
+	}
+}

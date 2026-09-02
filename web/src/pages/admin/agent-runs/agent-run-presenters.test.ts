@@ -3,14 +3,7 @@ import { describe, test } from "node:test";
 
 import type { AdminAgentRun } from "@/services/api/admin-agent-runs";
 
-import {
-    describeAgentRunControl,
-    describeAgentRunFacts,
-    formatAgentRunInactiveDuration,
-    formatAgentRunTimestamp,
-    getAgentRunActivityLabel,
-    getAgentRunStatusLabel,
-} from "./agent-run-presenters";
+import { describeAgentRunControl, describeAgentRunFacts, formatAgentRunInactiveDuration, formatAgentRunTimestamp, getAgentRunActivityLabel, getAgentRunStatusLabel } from "./agent-run-presenters";
 
 const baseRun: AdminAgentRun = {
     runId: "run-123456789",
@@ -32,6 +25,7 @@ const baseRun: AdminAgentRun = {
     inactiveSeconds: 721,
     activityClassification: "possibly_stalled",
     linkedModelTaskStatus: "running",
+    linkedVisionTaskStatus: "none",
     linkedMediaTaskStatus: "none",
     billingState: "running",
     providerRequestState: "submitted",
@@ -100,8 +94,14 @@ describe("Agent 运行事实 presenter", () => {
     });
 
     test("运行详情只展示后端返回的任务、账务、供应商和工具事实", () => {
-        assert.deepEqual(describeAgentRunFacts({ ...baseRun, pendingToolName: "production.render" }), [
+        const runWithVision = {
+            ...baseRun,
+            linkedVisionTaskStatus: "running",
+            pendingToolName: "production.render",
+        };
+        assert.deepEqual(describeAgentRunFacts(runWithVision), [
             { label: "文本模型任务", value: "运行中" },
+            { label: "图片理解任务", value: "运行中" },
             { label: "媒体任务", value: "无关联任务" },
             { label: "账务", value: "计费中" },
             { label: "供应商请求", value: "已提交" },

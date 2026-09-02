@@ -7,35 +7,41 @@ import (
 )
 
 type AgentThread struct {
-	ID              string                    `json:"id" gorm:"primaryKey;size:80"`
-	TenantKind      agentruntime.TenantKind   `json:"tenantKind" gorm:"size:16;not null"`
-	TenantID        string                    `json:"tenantId" gorm:"size:80;not null"`
-	CreatedByUserID string                    `json:"createdByUserId" gorm:"size:80;not null"`
-	DomainProjectID string                    `json:"domainProjectId,omitempty" gorm:"size:80;not null;default:''"`
-	CanvasID        string                    `json:"canvasId" gorm:"size:80;not null"`
-	Status          agentruntime.ThreadStatus `json:"status" gorm:"size:24;not null"`
-	CreatedAt       time.Time                 `json:"createdAt"`
-	UpdatedAt       time.Time                 `json:"updatedAt"`
+	ID               string                     `json:"id" gorm:"primaryKey;size:80"`
+	ReasoningHost    agentruntime.ReasoningHost `json:"reasoningHost" gorm:"size:24;not null;default:'managed'"`
+	ExternalThreadID string                     `json:"externalThreadId,omitempty" gorm:"size:120;not null;default:''"`
+	TenantKind       agentruntime.TenantKind    `json:"tenantKind" gorm:"size:16;not null"`
+	TenantID         string                     `json:"tenantId" gorm:"size:80;not null"`
+	CreatedByUserID  string                     `json:"createdByUserId" gorm:"size:80;not null"`
+	DomainProjectID  string                     `json:"domainProjectId,omitempty" gorm:"size:80;not null;default:''"`
+	CanvasID         string                     `json:"canvasId" gorm:"size:80;not null"`
+	Status           agentruntime.ThreadStatus  `json:"status" gorm:"size:24;not null"`
+	CreatedAt        time.Time                  `json:"createdAt"`
+	UpdatedAt        time.Time                  `json:"updatedAt"`
 }
 
 type AgentRun struct {
-	ID                string                 `json:"id" gorm:"primaryKey;size:80"`
-	ThreadID          string                 `json:"threadId" gorm:"size:80;not null"`
-	ActorUserID       string                 `json:"actorUserId" gorm:"size:80;not null"`
-	ClientRequestID   string                 `json:"clientRequestId" gorm:"size:120;not null"`
-	Status            agentruntime.RunStatus `json:"status" gorm:"size:32;not null"`
-	LastEventSequence int64                  `json:"lastEventSequence" gorm:"not null;default:0"`
-	StateVersion      int                    `json:"stateVersion" gorm:"not null;default:0"`
-	StepNumber        int                    `json:"stepNumber" gorm:"not null;default:0"`
-	MaxSteps          int                    `json:"maxSteps" gorm:"not null;default:0"`
-	ModelRecordID     string                 `json:"modelRecordId" gorm:"size:80;not null;default:''"`
-	ModelKey          string                 `json:"modelKey" gorm:"size:120;not null;default:''"`
-	ToolSchemaVersion int                    `json:"toolSchemaVersion" gorm:"not null;default:0"`
-	RuntimeVersion    int                    `json:"runtimeVersion" gorm:"not null;default:0"`
-	PolicyVersion     int                    `json:"policyVersion" gorm:"not null;default:0"`
-	CreatedAt         time.Time              `json:"createdAt"`
-	UpdatedAt         time.Time              `json:"updatedAt"`
-	CompletedAt       *time.Time             `json:"completedAt,omitempty"`
+	ID                     string                     `json:"id" gorm:"primaryKey;size:80"`
+	ThreadID               string                     `json:"threadId" gorm:"size:80;not null"`
+	ReasoningHost          agentruntime.ReasoningHost `json:"reasoningHost" gorm:"size:24;not null;default:'managed'"`
+	ActorUserID            string                     `json:"actorUserId" gorm:"size:80;not null"`
+	ClientRequestID        string                     `json:"clientRequestId" gorm:"size:120;not null"`
+	Status                 agentruntime.RunStatus     `json:"status" gorm:"size:32;not null"`
+	LastEventSequence      int64                      `json:"lastEventSequence" gorm:"not null;default:0"`
+	StateVersion           int                        `json:"stateVersion" gorm:"not null;default:0"`
+	StepNumber             int                        `json:"stepNumber" gorm:"not null;default:0"`
+	MaxSteps               int                        `json:"maxSteps" gorm:"not null;default:0"`
+	ModelRecordID          string                     `json:"modelRecordId" gorm:"size:80;not null;default:''"`
+	ModelKey               string                     `json:"modelKey" gorm:"size:120;not null;default:''"`
+	ToolSchemaVersion      int                        `json:"toolSchemaVersion" gorm:"not null;default:0"`
+	RuntimeVersion         int                        `json:"runtimeVersion" gorm:"not null;default:0"`
+	PolicyVersion          int                        `json:"policyVersion" gorm:"not null;default:0"`
+	SpecialistInputTokens  int64                      `json:"specialistInputTokens" gorm:"not null;default:0"`
+	SpecialistCachedTokens int64                      `json:"specialistCachedTokens" gorm:"not null;default:0"`
+	SpecialistOutputTokens int64                      `json:"specialistOutputTokens" gorm:"not null;default:0"`
+	CreatedAt              time.Time                  `json:"createdAt"`
+	UpdatedAt              time.Time                  `json:"updatedAt"`
+	CompletedAt            *time.Time                 `json:"completedAt,omitempty"`
 }
 
 type AgentTimelineItemKind string
@@ -192,6 +198,19 @@ type AgentRunEvent struct {
 	CreatedAt   time.Time              `json:"createdAt"`
 }
 
+// AgentExternalDecision is the immutable idempotency receipt for one decision
+// submitted by an external reasoning host. The runtime transition and this
+// receipt are committed in the same database transaction.
+type AgentExternalDecision struct {
+	ID                   string    `json:"id" gorm:"primaryKey;size:80"`
+	RunID                string    `json:"runId" gorm:"size:80;not null"`
+	ClientRequestID      string    `json:"clientRequestId" gorm:"size:120;not null"`
+	RequestHash          string    `json:"requestHash" gorm:"size:64;not null"`
+	ExpectedStateVersion int       `json:"expectedStateVersion" gorm:"not null"`
+	ResultStateVersion   int       `json:"resultStateVersion" gorm:"not null"`
+	CreatedAt            time.Time `json:"createdAt"`
+}
+
 type AgentCheckpoint struct {
 	ID           string    `json:"id" gorm:"primaryKey;size:80"`
 	RunID        string    `json:"runId" gorm:"size:80;not null"`
@@ -202,23 +221,30 @@ type AgentCheckpoint struct {
 }
 
 type AgentToolCall struct {
-	ID                string                            `json:"id" gorm:"primaryKey;size:80"`
-	RunID             string                            `json:"runId" gorm:"size:80;not null"`
-	ToolCallID        string                            `json:"toolCallId" gorm:"size:120;not null"`
-	ActionVersion     int                               `json:"actionVersion" gorm:"not null"`
-	ToolName          string                            `json:"toolName" gorm:"size:120;not null"`
-	Status            agentruntime.ToolCallStatus       `json:"status" gorm:"size:32;not null"`
-	RiskLevel         agentruntime.ToolRiskLevel        `json:"riskLevel" gorm:"size:8;not null;default:''"`
-	RequiredAccess    agentruntime.AccessLevel          `json:"requiredAccess" gorm:"size:16;not null;default:''"`
-	ApprovalRequired  bool                              `json:"approvalRequired" gorm:"not null;default:false"`
-	ApprovalDecision  agentruntime.ToolApprovalDecision `json:"approvalDecision,omitempty" gorm:"size:16;not null;default:''"`
-	ApprovalByUserID  string                            `json:"approvalByUserId,omitempty" gorm:"size:80;not null;default:''"`
-	ApprovalDecidedAt *time.Time                        `json:"approvalDecidedAt,omitempty"`
-	IdempotencyKey    string                            `json:"idempotencyKey" gorm:"size:256;not null;default:''"`
-	InputJSON         string                            `json:"-" gorm:"type:text;not null"`
-	OutputJSON        string                            `json:"-" gorm:"type:text;not null"`
-	ErrorCode         string                            `json:"errorCode,omitempty" gorm:"size:80;not null;default:''"`
-	StartedAt         *time.Time                        `json:"startedAt,omitempty"`
-	CreatedAt         time.Time                         `json:"createdAt"`
-	UpdatedAt         time.Time                         `json:"updatedAt"`
+	ID                        string                            `json:"id" gorm:"primaryKey;size:80"`
+	RunID                     string                            `json:"runId" gorm:"size:80;not null"`
+	ToolCallID                string                            `json:"toolCallId" gorm:"size:120;not null"`
+	ActionVersion             int                               `json:"actionVersion" gorm:"not null"`
+	ToolName                  string                            `json:"toolName" gorm:"size:120;not null"`
+	Status                    agentruntime.ToolCallStatus       `json:"status" gorm:"size:32;not null"`
+	RiskLevel                 agentruntime.ToolRiskLevel        `json:"riskLevel" gorm:"size:8;not null;default:''"`
+	RequiredAccess            agentruntime.AccessLevel          `json:"requiredAccess" gorm:"size:16;not null;default:''"`
+	ApprovalRequired          bool                              `json:"approvalRequired" gorm:"not null;default:false"`
+	ApprovalDecision          agentruntime.ToolApprovalDecision `json:"approvalDecision,omitempty" gorm:"size:16;not null;default:''"`
+	ApprovalByUserID          string                            `json:"approvalByUserId,omitempty" gorm:"size:80;not null;default:''"`
+	ApprovalDecidedAt         *time.Time                        `json:"approvalDecidedAt,omitempty"`
+	ApprovalProposalJSON      string                            `json:"-" gorm:"type:text;not null;default:''"`
+	ApprovalProposalHash      string                            `json:"approvalProposalHash,omitempty" gorm:"size:64;not null;default:''"`
+	ApprovalExpiresAt         *time.Time                        `json:"approvalExpiresAt,omitempty"`
+	IdempotencyKey            string                            `json:"idempotencyKey" gorm:"size:256;not null;default:''"`
+	CapabilityIdempotencyKey  string                            `json:"capabilityIdempotencyKey,omitempty" gorm:"size:80;not null;default:''"`
+	ReplaySourceRunID         string                            `json:"replaySourceRunId,omitempty" gorm:"size:80;not null;default:''"`
+	ReplaySourceToolCallID    string                            `json:"replaySourceToolCallId,omitempty" gorm:"size:120;not null;default:''"`
+	ReplaySourceActionVersion int                               `json:"replaySourceActionVersion,omitempty" gorm:"not null;default:0"`
+	InputJSON                 string                            `json:"-" gorm:"type:text;not null"`
+	OutputJSON                string                            `json:"-" gorm:"type:text;not null"`
+	ErrorCode                 string                            `json:"errorCode,omitempty" gorm:"size:80;not null;default:''"`
+	StartedAt                 *time.Time                        `json:"startedAt,omitempty"`
+	CreatedAt                 time.Time                         `json:"createdAt"`
+	UpdatedAt                 time.Time                         `json:"updatedAt"`
 }

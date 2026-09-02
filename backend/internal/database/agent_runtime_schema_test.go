@@ -23,10 +23,15 @@ func TestEnsureAgentRuntimeIntegritySchemaCreatesExactIndexes(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{
+		"idx_agent_threads_local_external":                           `CREATE UNIQUE INDEX idx_agent_threads_local_external ON agent_threads(tenant_kind, tenant_id, canvas_id, external_thread_id) WHERE reasoning_host = 'local_codex' AND external_thread_id <> ''`,
 		"idx_agent_runs_thread_client_request":                       `CREATE UNIQUE INDEX idx_agent_runs_thread_client_request ON agent_runs(thread_id, client_request_id)`,
 		"idx_agent_run_events_run_sequence":                          `CREATE UNIQUE INDEX idx_agent_run_events_run_sequence ON agent_run_events(run_id, sequence)`,
+		"idx_agent_external_decisions_run_client":                    `CREATE UNIQUE INDEX idx_agent_external_decisions_run_client ON agent_external_decisions(run_id, client_request_id)`,
 		"idx_agent_checkpoints_run_sequence":                         `CREATE UNIQUE INDEX idx_agent_checkpoints_run_sequence ON agent_checkpoints(run_id, sequence)`,
 		"idx_agent_tool_calls_action":                                `CREATE UNIQUE INDEX idx_agent_tool_calls_action ON agent_tool_calls(run_id, tool_call_id, action_version)`,
+		"idx_agent_tool_calls_run_proposal":                          `CREATE UNIQUE INDEX idx_agent_tool_calls_run_proposal ON agent_tool_calls(run_id, approval_proposal_hash) WHERE approval_proposal_hash <> ''`,
+		"idx_agent_tool_calls_capability_idempotency":                `CREATE INDEX idx_agent_tool_calls_capability_idempotency ON agent_tool_calls(tool_name, capability_idempotency_key, status, updated_at) WHERE capability_idempotency_key <> ''`,
+		"idx_agent_tool_calls_capability_owner":                      `CREATE UNIQUE INDEX idx_agent_tool_calls_capability_owner ON agent_tool_calls(capability_idempotency_key) WHERE capability_idempotency_key <> ''`,
 		"idx_agent_threads_scope":                                    `CREATE INDEX idx_agent_threads_scope ON agent_threads(tenant_kind, tenant_id, canvas_id, updated_at)`,
 		"idx_agent_production_plan_versions_scope_key_version":       `CREATE UNIQUE INDEX idx_agent_production_plan_versions_scope_key_version ON agent_production_plan_versions(tenant_kind, tenant_id, domain_project_id, canvas_id, plan_key, version)`,
 		"idx_agent_production_artifacts_version_reference_shot_kind": `CREATE UNIQUE INDEX idx_agent_production_artifacts_version_reference_shot_kind ON agent_production_artifacts(plan_version_id, reference_key, shot_key, kind)`,
@@ -42,6 +47,255 @@ func TestEnsureAgentRuntimeIntegritySchemaCreatesExactIndexes(t *testing.T) {
 		if compactSQL(actual) != compactSQL(expected) {
 			t.Fatalf("index %s SQL = %q, want %q", name, actual, expected)
 		}
+	}
+}
+
+func TestBackfillAgentMediaCapabilityIdempotencyKeys(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	thread := model.AgentThread{
+		ID: "media-replay-thread", ReasoningHost: agentruntime.ReasoningHostLocalCodex,
+		ExternalThreadID: "codex-thread", TenantKind: agentruntime.TenantPersonal,
+		TenantID: "media-user", CreatedByUserID: "media-user", DomainProjectID: "media-project",
+		CanvasID: "media-canvas", Status: agentruntime.ThreadActive, CreatedAt: now, UpdatedAt: now,
+	}
+	run := model.AgentRun{
+		ID: "media-replay-run", ThreadID: thread.ID, ReasoningHost: agentruntime.ReasoningHostLocalCodex,
+		ActorUserID: "media-user", ClientRequestID: "media-turn", Status: agentruntime.RunSucceeded,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	arguments := `{"mediaKind":"image","modelRecordId":"image-model","modelKey":"gpt-image-2","parameters":{"prompt":"red cube"},"sourceResourceIds":[],"targetCanvasNodeId":"image-node","clientRequestId":"stable-media-request"}`
+	call := model.AgentToolCall{
+		ID: "media-replay-call", RunID: run.ID, ToolCallID: "media-call", ActionVersion: 1,
+		ToolName: string(agentruntime.ToolMediaGenerate), Status: agentruntime.ToolCallSucceeded,
+		InputJSON: arguments, OutputJSON: `{"taskId":"task-1"}`, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&thread).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&run).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&call).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := backfillAgentMediaCapabilityIdempotencyKeys(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&call, "id = ?", call.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	want, err := agentruntime.CapabilityIdempotencyKey(agentruntime.Scope{
+		TenantKind: thread.TenantKind, TenantID: thread.TenantID, ActorUserID: run.ActorUserID,
+		DomainProjectID: thread.DomainProjectID, CanvasID: thread.CanvasID, ThreadID: thread.ID, RunID: run.ID,
+		Access: agentruntime.AccessGrant{Level: agentruntime.AccessViewer},
+	}, agentruntime.ToolCallDecision{
+		ToolCallID: call.ToolCallID, ToolName: agentruntime.ToolMediaGenerate,
+		ActionVersion: call.ActionVersion, Arguments: json.RawMessage(arguments),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if call.CapabilityIdempotencyKey != want {
+		t.Fatalf("capability idempotency key = %q, want %q", call.CapabilityIdempotencyKey, want)
+	}
+	if err := backfillAgentMediaCapabilityIdempotencyKeys(db); err != nil {
+		t.Fatalf("idempotent backfill: %v", err)
+	}
+}
+
+func TestBackfillAgentMediaCapabilityIdempotencyKeysPreservesReplayWithoutOwnership(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	thread := model.AgentThread{
+		ID: "media-replay-owner-thread", ReasoningHost: agentruntime.ReasoningHostManaged,
+		TenantKind: agentruntime.TenantPersonal, TenantID: "media-user", CreatedByUserID: "media-user",
+		DomainProjectID: "media-project", CanvasID: "media-canvas", Status: agentruntime.ThreadActive,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	ownerRun := model.AgentRun{
+		ID: "media-owner-run", ThreadID: thread.ID, ReasoningHost: agentruntime.ReasoningHostManaged,
+		ActorUserID: "media-user", ClientRequestID: "owner-turn", Status: agentruntime.RunSucceeded,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	replayRun := model.AgentRun{
+		ID: "media-replay-run", ThreadID: thread.ID, ReasoningHost: agentruntime.ReasoningHostManaged,
+		ActorUserID: "media-user", ClientRequestID: "replay-turn", Status: agentruntime.RunSucceeded,
+		CreatedAt: now.Add(time.Second), UpdatedAt: now.Add(time.Second),
+	}
+	arguments := `{"mediaKind":"image","modelRecordId":"image-model","modelKey":"gpt-image-2","parameters":{"prompt":"red cube"},"sourceResourceIds":[],"targetCanvasNodeId":"image-node","clientRequestId":"stable-media-request"}`
+	ownerKey, err := agentruntime.CapabilityIdempotencyKey(agentruntime.Scope{
+		TenantKind: thread.TenantKind, TenantID: thread.TenantID, ActorUserID: ownerRun.ActorUserID,
+		DomainProjectID: thread.DomainProjectID, CanvasID: thread.CanvasID, ThreadID: thread.ID, RunID: ownerRun.ID,
+		Access: agentruntime.AccessGrant{Level: agentruntime.AccessViewer},
+	}, agentruntime.ToolCallDecision{
+		ToolCallID: "owner-media-call", ToolName: agentruntime.ToolMediaGenerate,
+		ActionVersion: 1, Arguments: json.RawMessage(arguments),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerCall := model.AgentToolCall{
+		ID: "media-owner-call", RunID: ownerRun.ID, ToolCallID: "owner-media-call", ActionVersion: 1,
+		ToolName: string(agentruntime.ToolMediaGenerate), Status: agentruntime.ToolCallSucceeded,
+		CapabilityIdempotencyKey: ownerKey, InputJSON: arguments, OutputJSON: `{"taskId":"task-1"}`,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	replayCall := model.AgentToolCall{
+		ID: "media-replayed-call", RunID: replayRun.ID, ToolCallID: "replayed-media-call", ActionVersion: 1,
+		ToolName: string(agentruntime.ToolMediaGenerate), Status: agentruntime.ToolCallSucceeded,
+		ReplaySourceRunID: ownerRun.ID, ReplaySourceToolCallID: ownerCall.ToolCallID, ReplaySourceActionVersion: 1,
+		InputJSON: arguments, OutputJSON: ownerCall.OutputJSON, CreatedAt: now.Add(time.Second), UpdatedAt: now.Add(time.Second),
+	}
+	if err := db.Create(&thread).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&[]model.AgentRun{ownerRun, replayRun}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&[]model.AgentToolCall{ownerCall, replayCall}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := backfillAgentMediaCapabilityIdempotencyKeys(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&replayCall, "id = ?", replayCall.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if replayCall.CapabilityIdempotencyKey != "" {
+		t.Fatalf("replayed call acquired commercial ownership key %q", replayCall.CapabilityIdempotencyKey)
+	}
+}
+
+func TestEnsureAgentRuntimeIntegritySchemaRejectsDuplicateCommercialCapabilityIdentities(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	calls := []model.AgentToolCall{
+		{
+			ID: "commercial-call-1", RunID: "commercial-run-1", ToolCallID: "media-call-1", ActionVersion: 1,
+			ToolName: string(agentruntime.ToolMediaGenerate), Status: agentruntime.ToolCallRunning,
+			CapabilityIdempotencyKey: "cap-shared-commercial-identity", InputJSON: `{}`, OutputJSON: `{}`,
+			CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			ID: "commercial-call-2", RunID: "commercial-run-2", ToolCallID: "media-call-2", ActionVersion: 1,
+			ToolName: string(agentruntime.ToolMediaGenerate), Status: agentruntime.ToolCallSucceeded,
+			CapabilityIdempotencyKey: "cap-shared-commercial-identity", InputJSON: `{}`, OutputJSON: `{}`,
+			CreatedAt: now, UpdatedAt: now,
+		},
+	}
+	if err := db.Create(&calls).Error; err != nil {
+		t.Fatal(err)
+	}
+	err := EnsureAgentRuntimeIntegritySchema(db)
+	if err == nil || !strings.Contains(err.Error(), "agent commercial capability identity") {
+		t.Fatalf("duplicate commercial capability identity error = %v", err)
+	}
+}
+
+func TestEnsureAgentRuntimeIntegritySchemaRejectsDuplicateLocalExternalThreads(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	threads := []model.AgentThread{
+		{
+			ID: "local-thread-1", TenantKind: agentruntime.TenantPersonal, TenantID: "local-user",
+			CreatedByUserID: "local-user", CanvasID: "local-canvas", Status: agentruntime.ThreadActive,
+			ReasoningHost: agentruntime.ReasoningHostLocalCodex, ExternalThreadID: "codex-thread-1",
+			CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			ID: "local-thread-2", TenantKind: agentruntime.TenantPersonal, TenantID: "local-user",
+			CreatedByUserID: "local-user", CanvasID: "local-canvas", Status: agentruntime.ThreadActive,
+			ReasoningHost: agentruntime.ReasoningHostLocalCodex, ExternalThreadID: "codex-thread-1",
+			CreatedAt: now, UpdatedAt: now,
+		},
+	}
+	if err := db.Create(&threads).Error; err != nil {
+		t.Fatal(err)
+	}
+	err := EnsureAgentRuntimeIntegritySchema(db)
+	if err == nil || !strings.Contains(err.Error(), "agent local external thread") {
+		t.Fatalf("duplicate local external thread error = %v", err)
+	}
+}
+
+func TestEnsureAgentRuntimeIntegritySchemaRejectsDuplicateExternalDecisionReceipts(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	receipts := []model.AgentExternalDecision{
+		{
+			ID: "external-decision-1", RunID: "local-run", ClientRequestID: "decision-request",
+			RequestHash: strings.Repeat("a", 64), ExpectedStateVersion: 1, ResultStateVersion: 2, CreatedAt: now,
+		},
+		{
+			ID: "external-decision-2", RunID: "local-run", ClientRequestID: "decision-request",
+			RequestHash: strings.Repeat("a", 64), ExpectedStateVersion: 1, ResultStateVersion: 2, CreatedAt: now,
+		},
+	}
+	if err := db.Create(&receipts).Error; err != nil {
+		t.Fatal(err)
+	}
+	err := EnsureAgentRuntimeIntegritySchema(db)
+	if err == nil || !strings.Contains(err.Error(), "agent external decision receipt") {
+		t.Fatalf("duplicate external decision receipt error = %v", err)
+	}
+}
+
+func TestEnsureAgentRuntimeIntegritySchemaRejectsInvalidReasoningHostFacts(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	thread := model.AgentThread{
+		ID: "managed-thread-with-external-id", TenantKind: agentruntime.TenantPersonal, TenantID: "managed-user",
+		CreatedByUserID: "managed-user", CanvasID: "managed-canvas", Status: agentruntime.ThreadActive,
+		ReasoningHost: agentruntime.ReasoningHostManaged, ExternalThreadID: "must-not-exist",
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&thread).Error; err != nil {
+		t.Fatal(err)
+	}
+	err := EnsureAgentRuntimeIntegritySchema(db)
+	if err == nil || !strings.Contains(err.Error(), "reasoning host facts") {
+		t.Fatalf("invalid reasoning host facts error = %v", err)
+	}
+}
+
+func TestRuntimeSchemaRetiredAuditIndexIsInstalled(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
+	const name = "idx_agent_runs_runtime_retirement"
+	const expected = `CREATE INDEX idx_agent_runs_runtime_retirement ON agent_runs(runtime_version, status, created_at, id)`
+	var actual string
+	if err := db.Raw("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", name).Scan(&actual).Error; err != nil {
+		t.Fatal(err)
+	}
+	if compactSQL(actual) != compactSQL(expected) {
+		t.Fatalf("index %s SQL = %q, want %q", name, actual, expected)
 	}
 }
 
@@ -318,8 +572,8 @@ func TestEnsureAgentRuntimeIntegritySchemaRetiresIncompatibleQueuedRunWithTermin
 	run := model.AgentRun{
 		ID: "run-old-queued", ThreadID: "thread-old-queued", ActorUserID: "user-old", ClientRequestID: "request-old-queued",
 		Status: agentruntime.RunQueued, LastEventSequence: 1, StateVersion: 1, MaxSteps: state.MaxSteps,
-		ModelRecordID: "model-record-old", ModelKey: "model-old", ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion - 1,
-		RuntimeVersion: 1, PolicyVersion: 1, CreatedAt: now, UpdatedAt: now,
+		ModelRecordID: "model-record-old", ModelKey: "model-old", ToolSchemaVersion: agentruntime.LegacyToolSchemaVersion,
+		RuntimeVersion: agentruntime.LegacyRuntimeVersion, PolicyVersion: agentruntime.LegacyPolicyVersion, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&run).Error; err != nil {
 		t.Fatal(err)
@@ -397,7 +651,7 @@ func TestEnsureAgentRuntimeIntegritySchemaRetiresPristineQueuedRunWithOlderRunti
 		ID: "run-old-runtime-queued", ThreadID: "thread-old-runtime", ActorUserID: "user-old", ClientRequestID: "request-old-runtime",
 		Status: agentruntime.RunQueued, LastEventSequence: 1, StateVersion: 1, MaxSteps: state.MaxSteps,
 		ModelRecordID: "model-record-old", ModelKey: "model-old", ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
-		RuntimeVersion: agentruntime.CurrentRuntimeVersion - 1, PolicyVersion: agentruntime.CurrentPolicyVersion - 1,
+		RuntimeVersion: agentruntime.LegacyRuntimeVersion, PolicyVersion: agentruntime.LegacyPolicyVersion,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&run).Error; err != nil {
@@ -437,8 +691,81 @@ func TestEnsureAgentRuntimeIntegritySchemaRetiresPristineQueuedRunWithOlderRunti
 	if err := json.Unmarshal([]byte(checkpoint.StateJSON), &terminal); err != nil {
 		t.Fatal(err)
 	}
-	if terminal.Status != agentruntime.RunFailed || terminal.FailureCode != "runtime_contract_retired" || terminal.StateVersion != 2 {
+	if terminal.Status != agentruntime.RunFailed || terminal.FailureCode != agentruntime.FailureRuntimeSchemaRetired || terminal.StateVersion != 2 {
 		t.Fatalf("terminal runtime state = %#v", terminal)
+	}
+}
+
+func TestRuntimeV4CutoverRetiresPristineQueuedV3AndKeepsTerminalHistory(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	state := agentruntime.RuntimeState{
+		StateVersion: 1, StepNumber: 0, MaxSteps: 6, Status: agentruntime.RunQueued,
+		UserMessage:   "生成短剧样片",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+	}
+	stateJSON, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued := model.AgentRun{
+		ID: "run-v3-queued", ThreadID: "thread-v3", ActorUserID: "user-v3", ClientRequestID: "request-v3-queued",
+		Status: agentruntime.RunQueued, LastEventSequence: 1, StateVersion: 1, MaxSteps: state.MaxSteps,
+		ModelRecordID: "model-record-v3", ModelKey: "model-v3", ToolSchemaVersion: 4,
+		RuntimeVersion: 3, PolicyVersion: 3, CreatedAt: now, UpdatedAt: now,
+	}
+	completedAt := now.Add(-time.Minute)
+	terminal := model.AgentRun{
+		ID: "run-v3-terminal", ThreadID: "thread-v3", ActorUserID: "user-v3", ClientRequestID: "request-v3-terminal",
+		Status: agentruntime.RunSucceeded, LastEventSequence: 2, StateVersion: 2, MaxSteps: 6,
+		ModelRecordID: "model-record-v3", ModelKey: "model-v3", ToolSchemaVersion: 4,
+		RuntimeVersion: 3, PolicyVersion: 3, CreatedAt: now.Add(-time.Hour), UpdatedAt: completedAt, CompletedAt: &completedAt,
+	}
+	if err := db.Create(&[]model.AgentRun{queued, terminal}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AgentRunEvent{
+		ID: "event-v3-queued-1", RunID: queued.ID, Sequence: 1, Kind: agentruntime.EventRunCreated,
+		PayloadJSON: string(stateJSON), CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AgentCheckpoint{
+		ID: "checkpoint-v3-queued-1", RunID: queued.ID, Sequence: 1,
+		StateVersion: state.StateVersion, StateJSON: string(stateJSON), CreatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatalf("runtime v4 cutover: %v", err)
+	}
+	var storedQueued, storedTerminal model.AgentRun
+	if err := db.First(&storedQueued, "id = ?", queued.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&storedTerminal, "id = ?", terminal.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedQueued.Status != agentruntime.RunFailed || storedQueued.RuntimeVersion != 3 || storedQueued.ToolSchemaVersion != 4 {
+		t.Fatalf("queued v3 retirement = %#v", storedQueued)
+	}
+	if storedTerminal.Status != agentruntime.RunSucceeded || storedTerminal.CompletedAt == nil {
+		t.Fatalf("terminal v3 history changed = %#v", storedTerminal)
+	}
+	var checkpoint model.AgentCheckpoint
+	if err := db.Order("sequence DESC").First(&checkpoint, "run_id = ?", queued.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var retired agentruntime.RuntimeState
+	if err := json.Unmarshal([]byte(checkpoint.StateJSON), &retired); err != nil {
+		t.Fatal(err)
+	}
+	if retired.FailureCode != agentruntime.FailureRuntimeSchemaRetired {
+		t.Fatalf("retired v3 failure code = %q", retired.FailureCode)
 	}
 }
 
@@ -834,7 +1161,7 @@ func TestMigrateSchemaAddsAgentRuntimeWithoutChangingCanvasFacts(t *testing.T) {
 	if !db.Migrator().HasColumn(&model.AgentProductionPlanVersion{}, "domain_project_id") {
 		t.Fatal("missing additive agent production plan domain_project_id column")
 	}
-	for _, column := range []string{"risk_level", "required_access", "approval_required", "approval_decision", "approval_by_user_id", "approval_decided_at", "idempotency_key", "started_at"} {
+	for _, column := range []string{"risk_level", "required_access", "approval_required", "approval_decision", "approval_by_user_id", "approval_decided_at", "approval_proposal_json", "approval_proposal_hash", "approval_expires_at", "idempotency_key", "started_at"} {
 		if !db.Migrator().HasColumn(&model.AgentToolCall{}, column) {
 			t.Fatalf("missing additive agent_tool_calls column %s", column)
 		}
@@ -884,8 +1211,8 @@ func seedIncompatibleQueuedAgentRun(t *testing.T, db *gorm.DB, runID string, now
 	run := model.AgentRun{
 		ID: runID, ThreadID: "thread-" + runID, ActorUserID: "user-old", ClientRequestID: "request-" + runID,
 		Status: agentruntime.RunQueued, LastEventSequence: 1, StateVersion: 1, MaxSteps: state.MaxSteps,
-		ModelRecordID: "model-record-old", ModelKey: "model-old", ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion - 1,
-		RuntimeVersion: 1, PolicyVersion: 1, CreatedAt: now, UpdatedAt: now,
+		ModelRecordID: "model-record-old", ModelKey: "model-old", ToolSchemaVersion: agentruntime.LegacyToolSchemaVersion,
+		RuntimeVersion: agentruntime.LegacyRuntimeVersion, PolicyVersion: agentruntime.LegacyPolicyVersion, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&run).Error; err != nil {
 		t.Fatal(err)

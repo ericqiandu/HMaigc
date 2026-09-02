@@ -15,7 +15,7 @@ describe("backend generated video storage", () => {
         });
 
         expect(video).toEqual({
-            url: "/api/resources/video-resource-1/file",
+            url: "/api/resources/video-resource-1/file?direct=1",
             storageKey: "resource:video-resource-1",
             width: 854,
             height: 480,

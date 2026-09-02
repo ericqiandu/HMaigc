@@ -293,13 +293,13 @@ func TestMembershipConcurrencyPolicyIsEnforcedAtTaskCreation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if capability != taskCapabilityImage || imagePolicy.CapabilityLimit != 4 || imagePolicy.TotalLimit != 8 {
+	if capability != taskCapabilityImage || imagePolicy.ClassLimit != 4 || imagePolicy.TotalLimit != 8 {
 		t.Fatalf("unexpected origin image policy: %#v capability=%s", imagePolicy, capability)
 	}
 	// 此测试直接写入无计费订单的仓储级任务，只验证账户中立的并发计数；
 	// 生产生成链路始终通过 BillingOrder 冻结并按账户范围计数。
 	imagePolicy.BillingTeamID = nil
-	for index := 0; index < imagePolicy.CapabilityLimit; index++ {
+	for index := 0; index < imagePolicy.ClassLimit; index++ {
 		task := &model.Task{
 			ID: "image-task-" + string(rune('a'+index)), UserID: owner.ID, Type: "canvas_image",
 			Capability: taskCapabilityImage, Status: model.TaskStatusQueued,
@@ -320,13 +320,13 @@ func TestMembershipConcurrencyPolicyIsEnforcedAtTaskCreation(t *testing.T) {
 	for index := 0; index < runtimePolicy.Task.ActiveTaskLimit; index++ {
 		task := &model.Task{
 			ID: "other-task-" + string(rune('a'+index)), UserID: owner.ID, Type: "canvas_text",
-			Capability: taskCapabilityOther, Status: model.TaskStatusRunning,
+			Capability: "text", Status: model.TaskStatusRunning,
 		}
 		if err := svc.repo.CreateTaskWithActiveLimit(task, otherPolicy, model.WatermarkCapabilityNotApplicable); err != nil {
 			t.Fatalf("create other task %d: %v", index+1, err)
 		}
 	}
-	excessOther := &model.Task{ID: "other-task-excess", UserID: owner.ID, Type: "canvas_text", Capability: taskCapabilityOther, Status: model.TaskStatusQueued}
+	excessOther := &model.Task{ID: "other-task-excess", UserID: owner.ID, Type: "canvas_audio", Capability: "audio", Status: model.TaskStatusQueued}
 	if err := svc.repo.CreateTaskWithActiveLimit(excessOther, otherPolicy, model.WatermarkCapabilityNotApplicable); !errors.Is(err, repository.ErrCapabilityTaskLimit) {
 		t.Fatalf("excess other task error = %v, want ErrCapabilityTaskLimit", err)
 	}

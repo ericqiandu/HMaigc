@@ -25,8 +25,19 @@ type StartScopedAgentRunInput struct {
 }
 
 type AgentRuntimeView struct {
-	Run   model.AgentRun            `json:"run"`
-	State agentruntime.RuntimeState `json:"state"`
+	Run             model.AgentRun            `json:"run"`
+	State           agentruntime.RuntimeState `json:"state"`
+	PendingApproval *AgentPendingApprovalView `json:"pendingApproval,omitempty"`
+}
+
+type AgentPendingApprovalView struct {
+	ToolCallID    string                          `json:"toolCallId"`
+	ToolName      agentruntime.ToolName           `json:"toolName"`
+	ActionVersion int                             `json:"actionVersion"`
+	ProposalHash  string                          `json:"proposalHash"`
+	ExpiresAt     time.Time                       `json:"expiresAt"`
+	Effect        agentruntime.ApprovalEffect     `json:"effect"`
+	Quote         *agentruntime.ApprovalCostQuote `json:"quote,omitempty"`
 }
 
 func (view AgentRuntimeView) MarshalJSON() ([]byte, error) {
@@ -54,7 +65,7 @@ func agentRuntimeViewNeedsHistoricalConfiguration(view AgentRuntimeView) bool {
 		view.State.ClarificationHistory == nil
 }
 
-const CurrentAgentUIProtocolVersion = 2
+const CurrentAgentUIProtocolVersion = agentruntime.CloudAgentUIProtocolVersion
 
 var ErrAgentEventProjectionFailed = errors.New("agent event projection failed")
 var ErrAgentStreamCursorInvalid = errors.New("agent stream cursor invalid")
@@ -87,30 +98,6 @@ type AgentUIEvent struct {
 	CreatedAt       time.Time                   `json:"createdAt"`
 }
 
-type agentArtifactTimelinePayload struct {
-	ArtifactID     string                              `json:"artifactId"`
-	Kind           model.AgentProductionArtifactKind   `json:"kind"`
-	PlanKey        string                              `json:"planKey"`
-	PlanVersion    int                                 `json:"planVersion"`
-	ReferenceKey   string                              `json:"referenceKey,omitempty"`
-	ShotKey        string                              `json:"shotKey,omitempty"`
-	TaskID         string                              `json:"taskId,omitempty"`
-	BillingOrderID string                              `json:"billingOrderId,omitempty"`
-	ResourceID     string                              `json:"resourceId,omitempty"`
-	Status         model.AgentProductionArtifactStatus `json:"status"`
-}
-
-type agentArtifactUIEventPayload struct {
-	ArtifactID   string                              `json:"artifactId"`
-	Kind         model.AgentProductionArtifactKind   `json:"kind"`
-	PlanKey      string                              `json:"planKey"`
-	PlanVersion  int                                 `json:"planVersion"`
-	ReferenceKey string                              `json:"referenceKey,omitempty"`
-	ShotKey      string                              `json:"shotKey,omitempty"`
-	ResourceID   string                              `json:"resourceId"`
-	Status       model.AgentProductionArtifactStatus `json:"status"`
-}
-
 func ProjectAgentEvent(threadID string, event model.AgentRunEvent, item *model.AgentTimelineItem, protocolVersion int) (AgentUIEvent, error) {
 	threadID = strings.TrimSpace(threadID)
 	if protocolVersion != CurrentAgentUIProtocolVersion || threadID == "" || strings.TrimSpace(event.RunID) == "" ||
@@ -135,9 +122,22 @@ func ProjectAgentEvent(threadID string, event model.AgentRunEvent, item *model.A
 	case agentruntime.EventCheckpointSaved:
 		return projectAgentRunEvent(projected, event, item, AgentUIEventStateSnapshot, false)
 	case agentruntime.EventUserMessageAdded, agentruntime.EventRunSteered,
-		agentruntime.EventAgentMessageCompleted, agentruntime.EventClarificationResponded,
-		agentruntime.EventArtifactAvailable:
+		agentruntime.EventAgentMessageCompleted, agentruntime.EventClarificationResponded:
 		projected.Kind = AgentUIEventItemCompleted
+	case agentruntime.EventArtifactAvailable:
+		if item == nil {
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent artifact item is missing"))
+		}
+		switch item.Status {
+		case model.AgentTimelineItemInProgress:
+			projected.Kind = AgentUIEventItemDelta
+		case model.AgentTimelineItemCompleted:
+			projected.Kind = AgentUIEventItemCompleted
+		case model.AgentTimelineItemFailed, model.AgentTimelineItemInterrupted:
+			projected.Kind = AgentUIEventItemFailed
+		default:
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent artifact item status is invalid"))
+		}
 	case agentruntime.EventAgentMessageFailed:
 		projected.Kind = AgentUIEventItemFailed
 	case agentruntime.EventClarificationRequested, agentruntime.EventToolCall:
@@ -210,25 +210,47 @@ func projectAgentItemEvent(projected AgentUIEvent, event model.AgentRunEvent, it
 	}
 	projected.ItemID = item.ID
 	projected.ItemKind = item.Kind
+	var envelope struct {
+		ContentType string `json:"contentType"`
+	}
+	if err := json.Unmarshal([]byte(item.ContentJSON), &envelope); err != nil {
+		return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent timeline facts are invalid"))
+	}
+	if item.Kind == model.AgentTimelineItemApproval {
+		if envelope.ContentType == agentruntime.StageReviewContentType {
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("retired stage review resolution is not part of Agent UI v5"))
+		}
+	}
+	if item.Kind == model.AgentTimelineItemToolCall && envelope.ContentType == agentruntime.MediaAssemblyContentType {
+		return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("retired media assembly timeline content is not part of Agent UI v5"))
+	}
 	if item.Kind != model.AgentTimelineItemArtifact {
 		projected.Payload = append(json.RawMessage(nil), item.ContentJSON...)
 		return projected, nil
 	}
-	internal, err := decodeAgentArtifactTimelinePayload(item.ContentJSON)
-	if err != nil || internal.ArtifactID == "" ||
-		internal.PlanKey == "" || internal.PlanVersion < 1 || internal.ResourceID == "" || !internal.Status.Valid() {
-		return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent artifact timeline facts are invalid"))
+	if envelope.ContentType == agentruntime.AssetPublicationContentType {
+		content, err := agentruntime.DecodeAssetPublicationContent([]byte(item.ContentJSON))
+		if err != nil || item.Status != model.AgentTimelineItemCompleted {
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent asset publication timeline facts are invalid"))
+		}
+		projected.Payload, err = json.Marshal(content)
+		if err != nil {
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, err)
+		}
+		return projected, nil
 	}
-	safePayload, err := json.Marshal(agentArtifactUIEventPayload{
-		ArtifactID: internal.ArtifactID, Kind: internal.Kind, PlanKey: internal.PlanKey,
-		PlanVersion: internal.PlanVersion, ReferenceKey: internal.ReferenceKey, ShotKey: internal.ShotKey,
-		ResourceID: internal.ResourceID, Status: internal.Status,
-	})
-	if err != nil {
-		return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, err)
+	if envelope.ContentType == agentruntime.AssetPublicationFailedType {
+		content, err := agentruntime.DecodeAssetPublicationFailureContent([]byte(item.ContentJSON))
+		if err != nil || item.Status != model.AgentTimelineItemFailed {
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("agent asset publication failure timeline facts are invalid"))
+		}
+		projected.Payload, err = json.Marshal(content)
+		if err != nil {
+			return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, err)
+		}
+		return projected, nil
 	}
-	projected.Payload = safePayload
-	return projected, nil
+	return AgentUIEvent{}, errors.Join(ErrAgentEventProjectionFailed, errors.New("retired artifact timeline content is not part of the current Agent UI protocol"))
 }
 
 func validateAgentProjectedItem(projected AgentUIEvent, event model.AgentRunEvent, item *model.AgentTimelineItem) error {
@@ -255,20 +277,6 @@ func projectAgentVisibleModelDelta(projected AgentUIEvent, event model.AgentRunE
 	projected.ItemKind = item.Kind
 	projected.Payload = json.RawMessage(event.PayloadJSON)
 	return projected, nil
-}
-
-func decodeAgentArtifactTimelinePayload(raw string) (agentArtifactTimelinePayload, error) {
-	decoder := json.NewDecoder(strings.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	var payload agentArtifactTimelinePayload
-	if err := decoder.Decode(&payload); err != nil {
-		return agentArtifactTimelinePayload{}, err
-	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return agentArtifactTimelinePayload{}, errors.New("agent event payload has trailing data")
-	}
-	return payload, nil
 }
 
 type agentVisibleModelDeltaPayload struct {
@@ -304,10 +312,15 @@ type AgentControlError struct {
 	ErrorCode          string `json:"errorCode"`
 	Message            string `json:"-"`
 	LatestStateVersion int    `json:"latestStateVersion,omitempty"`
+	Cause              error  `json:"-"`
 }
 
 func (err *AgentControlError) Error() string {
 	return err.Message
+}
+
+func (err *AgentControlError) Unwrap() error {
+	return err.Cause
 }
 
 func (err *AgentClarificationError) Error() string {
@@ -348,7 +361,7 @@ func (s *Service) StartScopedAgentRun(actor *model.User, threadID string, input 
 	if err != nil {
 		return nil, s.mapAgentItemStateConflict(scope, err)
 	}
-	return agentRuntimeView(progress), nil
+	return s.agentRuntimeViewForProgress(scope, progress)
 }
 
 func (s *Service) ReadScopedAgentRun(actor *model.User, runID string) (*AgentRuntimeView, error) {
@@ -360,6 +373,14 @@ func (s *Service) ReadScopedAgentRun(actor *model.User, runID string) (*AgentRun
 }
 
 func (s *Service) readAgentRuntimeView(scope agentruntime.Scope) (*AgentRuntimeView, error) {
+	view, err := s.readAgentRuntimeStateView(scope)
+	if err != nil {
+		return nil, err
+	}
+	return s.enrichAgentRuntimeView(scope, view)
+}
+
+func (s *Service) readAgentRuntimeStateView(scope agentruntime.Scope) (*AgentRuntimeView, error) {
 	run, err := s.repo.AgentRunForScope(scope)
 	if err != nil {
 		return nil, err
@@ -421,7 +442,7 @@ func (s *Service) SubmitScopedAgentApproval(actor *model.User, runID string, inp
 	if err != nil {
 		return nil, s.mapAgentItemStateConflict(scope, err)
 	}
-	return agentRuntimeView(progress), nil
+	return s.agentRuntimeViewForProgress(scope, progress)
 }
 
 func (s *Service) SubmitScopedAgentClarificationResponse(actor *model.User, runID string, requestID string, submission agentruntime.ClarificationResponseSubmission) (*AgentRuntimeView, error) {
@@ -434,7 +455,7 @@ func (s *Service) SubmitScopedAgentClarificationResponse(actor *model.User, runI
 	if err != nil {
 		return nil, s.mapAgentItemStateConflict(scope, err)
 	}
-	return agentRuntimeView(progress), nil
+	return s.agentRuntimeViewForProgress(scope, progress)
 }
 
 func (s *Service) SubmitScopedAgentSteer(actor *model.User, runID string, request agentruntime.SteerRequest) (*AgentRuntimeView, error) {
@@ -473,12 +494,25 @@ func (s *Service) SubmitScopedAgentInterrupt(actor *model.User, runID string, ex
 			Status: http.StatusBadRequest, ErrorCode: "agent_interrupt_conflict", Message: "Agent 停止请求格式无效",
 		}
 	}
-	state, err := s.repo.InterruptAgentRun(scope, expectedStateVersion, time.Now().UTC())
+	state, err := s.repo.CancelAgentRunTree(scope, expectedStateVersion, time.Now().UTC())
 	if err != nil {
 		return nil, s.mapAgentControlError(scope, err, "agent_interrupt_conflict", "Agent 运行状态已经变化，请按最新状态重试")
 	}
-	s.cancelActiveTask(agentRuntimeModelTaskID(scope.RunID, state.StepNumber))
+	if err := s.cancelAgentRunTreeContexts(scope); err != nil {
+		return nil, err
+	}
 	return s.agentRuntimeViewForState(scope, state)
+}
+
+func (s *Service) cancelAgentRunTreeContexts(scope agentruntime.Scope) error {
+	taskIDs, err := s.repo.AgentRunTreeTaskIDs(scope)
+	if err != nil {
+		return err
+	}
+	for _, taskID := range taskIDs {
+		s.cancelActiveTask(taskID)
+	}
+	return nil
 }
 
 func (s *Service) agentRuntimeViewForState(scope agentruntime.Scope, state agentruntime.RuntimeState) (*AgentRuntimeView, error) {
@@ -486,7 +520,11 @@ func (s *Service) agentRuntimeViewForState(scope agentruntime.Scope, state agent
 	if err != nil {
 		return nil, err
 	}
-	return agentRuntimeViewFromFacts(*run, state)
+	view, err := agentRuntimeViewFromFacts(*run, state)
+	if err != nil {
+		return nil, err
+	}
+	return s.enrichAgentRuntimeView(scope, view)
 }
 
 func (s *Service) mapAgentControlError(scope agentruntime.Scope, err error, errorCode string, message string) error {
@@ -640,4 +678,44 @@ func agentRuntimeView(progress *AgentRuntimeProgress) *AgentRuntimeView {
 		return nil
 	}
 	return &AgentRuntimeView{Run: progress.Run, State: progress.State}
+}
+
+func (s *Service) agentRuntimeViewForProgress(scope agentruntime.Scope, progress *AgentRuntimeProgress) (*AgentRuntimeView, error) {
+	return s.enrichAgentRuntimeView(scope, agentRuntimeView(progress))
+}
+
+func (s *Service) enrichAgentRuntimeView(scope agentruntime.Scope, view *AgentRuntimeView) (*AgentRuntimeView, error) {
+	if view == nil || view.State.Status != agentruntime.RunWaitingApproval {
+		return view, nil
+	}
+	call := view.State.PendingToolCall
+	if call == nil {
+		return nil, errors.New("agent approval projection is missing the frozen tool call")
+	}
+	record, err := s.repo.AgentToolCallForScope(scope, call.ToolCallID, call.ActionVersion)
+	if err != nil {
+		return nil, err
+	}
+	if record.Status != agentruntime.ToolCallWaitingApproval || !record.ApprovalRequired || record.ApprovalDecision != "" ||
+		record.ToolName != string(call.ToolName) || !equalAgentToolArguments(record.InputJSON, call.Arguments) || record.ApprovalProposalHash == "" || record.ApprovalExpiresAt == nil {
+		return nil, errors.New("agent approval projection conflicts with the frozen tool call")
+	}
+	proposal, err := agentruntime.DecodeApprovalProposal(json.RawMessage(record.ApprovalProposalJSON))
+	if err != nil {
+		return nil, err
+	}
+	proposalHash, err := proposal.Hash()
+	if err != nil || proposalHash != record.ApprovalProposalHash || proposal.ToolCallID != call.ToolCallID || proposal.ActionVersion != call.ActionVersion || proposal.ToolName != call.ToolName {
+		return nil, errors.New("agent approval projection conflicts with the frozen proposal")
+	}
+	var quote *agentruntime.ApprovalCostQuote
+	if proposal.Quote != nil {
+		frozenQuote := *proposal.Quote
+		quote = &frozenQuote
+	}
+	view.PendingApproval = &AgentPendingApprovalView{
+		ToolCallID: proposal.ToolCallID, ToolName: proposal.ToolName, ActionVersion: proposal.ActionVersion,
+		ProposalHash: proposalHash, ExpiresAt: proposal.ExpiresAt, Effect: proposal.Effect, Quote: quote,
+	}
+	return view, nil
 }

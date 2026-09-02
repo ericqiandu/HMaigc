@@ -1,5 +1,5 @@
 import type { CanvasNodeMetadata } from "@/types/canvas";
-import { modelOptionName, resolveModelChannel, type AiConfig, type ProviderModelCapabilities } from "@/stores/use-config-store";
+import { modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig, type ProviderModelCapabilities } from "@/stores/use-config-store";
 
 type ImageDimensions = { width: number; height: number };
 
@@ -44,8 +44,10 @@ export function normalizeImageConfigForModel(config: AiConfig, selectedModel = c
 
 export function imageModelMetadataPatch(config: AiConfig, selectedModel: string): Partial<CanvasNodeMetadata> {
     const resetConfig = normalizeImageConfigForModel({ ...config, size: "", quality: "", count: "", transparentBackground: "false" }, selectedModel);
+    const requestConfig = resolveModelRequestConfig(config, selectedModel);
     return {
-        model: selectedModel,
+        channelId: requestConfig.channelId,
+        model: requestConfig.model,
         size: resetConfig.size,
         quality: resetConfig.quality,
         count: Number(resetConfig.count),

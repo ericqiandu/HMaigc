@@ -8,6 +8,14 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+func TestGenericChatChannelCapabilityInferenceRemainsText(t *testing.T) {
+	for _, interfaceType := range []model.ChannelInterfaceType{model.ChannelInterfaceChatCompletion, model.ChannelInterfaceOpenAIResponse} {
+		if got := capabilityForChannel(model.ModelChannel{InterfaceType: interfaceType}); got != "text" {
+			t.Fatalf("%s inferred capability = %q, want text", interfaceType, got)
+		}
+	}
+}
+
 func TestNormalizeChannelModelPriceTierCollectionsEmitsEmptyArray(t *testing.T) {
 	input := []model.ChannelModel{{ID: "model-1"}}
 
@@ -147,5 +155,31 @@ func TestBuildChannelModelPriceTiersRequiresEveryKlingExecutablePricingVariant(t
 	}
 	if _, err := buildChannelModelPriceTiers(item, requests[:6]); err == nil || !strings.Contains(err.Error(), "4K / standard") {
 		t.Fatalf("missing 4K standard error = %v", err)
+	}
+}
+
+func TestBuildChannelModelPriceTiersRequiresEveryGPTImage2QualityResolutionVariant(t *testing.T) {
+	item := &model.ChannelModel{
+		ID: "gpt-image-2", ModelKey: kuaiziGPTImage2Model, Capability: "image", BillingMode: "fixed_request",
+		PriceStrategy: "image_resolution", PriceConfigured: true, PriceVersion: 2,
+	}
+	requests := make([]ChannelModelPriceTierRequest, 0, 9)
+	for _, resolution := range []string{"1k", "2k", "4k"} {
+		for _, quality := range []string{"low", "medium", "high"} {
+			requests = append(requests, ChannelModelPriceTierRequest{
+				Resolution: resolution, InputVariant: quality, UnitPriceMicrocredits: 100_000,
+			})
+		}
+	}
+
+	tiers, err := buildChannelModelPriceTiers(item, requests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tiers) != 9 {
+		t.Fatalf("len(tiers) = %d, want 9 Image 2 resolution/quality variants", len(tiers))
+	}
+	if _, err := buildChannelModelPriceTiers(item, requests[:8]); err == nil || !strings.Contains(err.Error(), "4K / high") {
+		t.Fatalf("missing 4K high error = %v", err)
 	}
 }

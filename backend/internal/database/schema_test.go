@@ -45,6 +45,45 @@ func TestModelsRegistersAgentRuntimeFacts(t *testing.T) {
 	}
 }
 
+func TestModelsRegistersCanvasProjectDeletion(t *testing.T) {
+	for _, value := range Models() {
+		if _, ok := value.(*model.CanvasProjectDeletion); ok {
+			return
+		}
+	}
+	t.Fatal("CanvasProjectDeletion is not registered in database.Models()")
+}
+
+func TestTaskOutboxSchemaRegistersDurableDeliveryFacts(t *testing.T) {
+	registered := false
+	for _, value := range Models() {
+		if _, ok := value.(*model.TaskOutbox); ok {
+			registered = true
+			break
+		}
+	}
+	if !registered {
+		t.Fatal("TaskOutbox is not registered in database.Models()")
+	}
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{
+		"idempotency_key", "task_id", "event_type", "payload_json", "status",
+		"attempt_count", "available_at", "lease_owner", "lease_token",
+		"lease_expires_at", "last_error", "delivered_at",
+	} {
+		if !db.Migrator().HasColumn(&model.TaskOutbox{}, column) {
+			t.Fatalf("task_outboxes.%s was not migrated", column)
+		}
+	}
+}
+
 func TestTaskAudienceMigrationBackfillsCustomerAndInternalTasks(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
@@ -84,6 +123,112 @@ func TestTaskAudienceMigrationBackfillsCustomerAndInternalTasks(t *testing.T) {
 	}
 	if byID["agent-task"].Audience != model.TaskAudienceInternal {
 		t.Fatalf("agent audience = %q", byID["agent-task"].Audience)
+	}
+}
+
+func TestUnbilledInternalTaskExecutionKindMigration(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE tasks (
+		id text PRIMARY KEY,
+		user_id text,
+		type text,
+		status text,
+		created_at datetime,
+		updated_at datetime
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if err := db.Exec(`INSERT INTO tasks (id, user_id, type, status, created_at, updated_at) VALUES
+		(?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?)`,
+		"provider-task", "user-1", "canvas_video", model.TaskStatusQueued, now, now,
+		"assembly-task", "user-1", "agent_media_assembly", model.TaskStatusQueued, now, now,
+	).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	var tasks []model.Task
+	if err := db.Order("id asc").Find(&tasks).Error; err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]model.Task{}
+	for _, task := range tasks {
+		byID[task.ID] = task
+	}
+	if byID["provider-task"].ExecutionKind != model.TaskExecutionProvider {
+		t.Fatalf("provider execution kind = %q", byID["provider-task"].ExecutionKind)
+	}
+	if byID["assembly-task"].ExecutionKind != model.TaskExecutionLocalMediaAssembly {
+		t.Fatalf("assembly execution kind = %q", byID["assembly-task"].ExecutionKind)
+	}
+	if byID["assembly-task"].Audience != model.TaskAudienceInternal {
+		t.Fatalf("assembly audience = %q", byID["assembly-task"].Audience)
+	}
+}
+
+func TestTaskEnvelopeSchemaCreatesExecutionAuditFacts(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"execution_envelope", "execution_envelope_key_id", "execution_payload_digest"} {
+		if !db.Migrator().HasColumn(&model.Task{}, column) {
+			t.Fatalf("tasks.%s was not migrated", column)
+		}
+	}
+}
+
+func TestCancellationIntentAndLeaseGenerationSchemaCreatesDurableTaskFacts(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"cancel_requested_at", "cancel_reason_code", "lease_generation", "lease_token"} {
+		if !db.Migrator().HasColumn(&model.Task{}, column) {
+			t.Fatalf("tasks.%s was not migrated", column)
+		}
+	}
+	assertSQLiteNotNullEmptyDefault(t, db, "tasks", "lease_token")
+}
+
+func TestCancellationIntentMigrationBackfillsExistingCancelledTasks(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE tasks (
+		id text PRIMARY KEY,
+		status text,
+		completed_at datetime,
+		created_at datetime,
+		updated_at datetime
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := db.Exec("INSERT INTO tasks(id, status, completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", "legacy-cancelled", model.TaskStatusCancelled, now, now.Add(-time.Minute), now).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	var task model.Task
+	if err := db.First(&task, "id = ?", "legacy-cancelled").Error; err != nil {
+		t.Fatal(err)
+	}
+	if task.CancelRequestedAt == nil || !task.CancelRequestedAt.Equal(now) || task.CancelReasonCode != "legacy_cancelled" {
+		t.Fatalf("legacy cancellation facts = %#v", task)
 	}
 }
 

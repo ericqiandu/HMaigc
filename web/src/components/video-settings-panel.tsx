@@ -29,6 +29,14 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const duration = Number(normalizedConfig.videoSeconds);
     const generateAudio = boolConfig(config.videoGenerateAudio, true);
     const generationCount = normalizeVideoCount(config.count, capabilities.outputCounts);
+    const referenceDurationLimits = [
+        capabilities.referenceLimits && capabilities.referenceLimits.totalVideoDurationSeconds > 0
+            ? `视频累计不超过 ${capabilities.referenceLimits.totalVideoDurationSeconds} 秒`
+            : "",
+        capabilities.referenceLimits && capabilities.referenceLimits.totalAudioDurationSeconds > 0
+            ? `音频累计不超过 ${capabilities.referenceLimits.totalAudioDurationSeconds} 秒`
+            : "",
+    ].filter(Boolean);
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -61,9 +69,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     <CanvasGenerationSettingsSection label="参考素材" theme={theme}>
                         <div className="canvas-video-reference-limits text-[11px] leading-5" style={{ color: theme.node.muted }}>
                             最多 {generationMode === "omni_reference" ? capabilities.referenceLimits.imagesWithVideo : capabilities.referenceLimits.images} 图 + {capabilities.referenceLimits.videos} 视频 + {capabilities.referenceLimits.audios} 音频
-                            <span className="canvas-video-reference-duration-limits block">
-                                视频累计不超过 {capabilities.referenceLimits.totalVideoDurationSeconds} 秒 · 音频累计不超过 {capabilities.referenceLimits.totalAudioDurationSeconds} 秒
-                            </span>
+                            {referenceDurationLimits.length ? <span className="canvas-video-reference-duration-limits block">{referenceDurationLimits.join(" · ")}</span> : null}
                         </div>
                     </CanvasGenerationSettingsSection>
                 ) : null}

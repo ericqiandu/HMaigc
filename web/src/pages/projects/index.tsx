@@ -7,7 +7,8 @@ import { useNavigate, useSearchParams } from "react-router";
 import { PageHeader, WorkspacePage } from "@/components/layout/workspace-page";
 import { WorkspaceErrorState, WorkspaceLoadingState, WorkspaceState } from "@/components/layout/workspace-state";
 import { projectBelongsToWorkspace } from "@/lib/workspace-scope";
-import { createProject, listProjects } from "@/services/api/projects";
+import { projectsQueryKey, projectsQueryOptions } from "@/queries/projects-query";
+import { createProject } from "@/services/api/projects";
 import { getTeamWorkspace } from "@/services/api/teams";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -42,10 +43,7 @@ export default function ProjectsPage() {
         setSearchParams(next, { replace: true });
     };
 
-    const query = useQuery({
-        queryKey: ["projects"],
-        queryFn: listProjects,
-    });
+    const query = useQuery(projectsQueryOptions);
     const teamWorkspaceQuery = useQuery({
         queryKey: ["team-workspace", user?.id],
         queryFn: getTeamWorkspace,
@@ -64,7 +62,7 @@ export default function ProjectsPage() {
             }),
         onSuccess: ({ project }) => {
             setCreateOpen(false);
-            void queryClient.invalidateQueries({ queryKey: ["projects"] });
+            void queryClient.invalidateQueries({ queryKey: projectsQueryKey });
             navigate(`/projects/${project.id}/overview`);
         },
         onError: (error) => {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,10 +11,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
 )
 
 type CoordinateAgentToolInput struct {
@@ -25,6 +26,7 @@ type AgentToolApprovalSubmission struct {
 	ToolCallID    string
 	ActionVersion int
 	Decision      agentruntime.ToolApprovalDecision
+	ProposalHash  string
 }
 
 func (s *Service) SubmitAgentToolApproval(scope agentruntime.Scope, input AgentToolApprovalSubmission) (*AgentRuntimeProgress, error) {
@@ -32,6 +34,7 @@ func (s *Service) SubmitAgentToolApproval(scope agentruntime.Scope, input AgentT
 		return nil, err
 	}
 	input.ToolCallID = strings.TrimSpace(input.ToolCallID)
+	input.ProposalHash = strings.TrimSpace(input.ProposalHash)
 	if input.ToolCallID == "" || input.ActionVersion < 1 || (input.Decision != agentruntime.ToolApprovalApproved && input.Decision != agentruntime.ToolApprovalRejected) {
 		return nil, errors.New("agent tool approval submission is invalid")
 	}
@@ -47,14 +50,44 @@ func (s *Service) SubmitAgentToolApproval(scope agentruntime.Scope, input AgentT
 		if record.ApprovalDecision != input.Decision || record.ApprovalByUserID != scope.ActorUserID || record.ApprovalDecidedAt == nil {
 			return nil, errors.New("agent tool approval facts conflict")
 		}
+		if err := validateStoredApprovalProposal(scope, record, input.ProposalHash, time.Now().UTC(), false); err != nil {
+			return nil, err
+		}
+		if state.Status == agentruntime.RunCancelled {
+			if err := s.cancelAgentRunTreeContexts(scope); err != nil {
+				return nil, err
+			}
+		}
 		return s.agentRuntimeProgressForCurrentState(scope, state)
 	}
 	if state.PendingToolCall == nil {
 		return nil, errors.New("agent approval tool facts are missing")
 	}
-	_, policy, err := s.frozenAgentToolCall(scope, state.PendingToolCall, agentruntime.ToolCallWaitingApproval, state.Configuration.ExecutionMode)
+	record, policy, err := s.frozenAgentToolCall(scope, state.PendingToolCall, agentruntime.ToolCallWaitingApproval, state.Configuration.ExecutionMode)
 	if err != nil {
 		return nil, err
+	}
+	now := time.Now().UTC()
+	if proposalErr := validateStoredApprovalProposal(scope, record, input.ProposalHash, now, true); proposalErr != nil {
+		invalidationCode := approvalProposalInvalidationCode(proposalErr)
+		if invalidationCode == "" {
+			return nil, proposalErr
+		}
+		transition, transitionErr := agentruntime.InvalidateToolApproval(state, agentruntime.ToolApprovalInvalidation{
+			ToolCallID: input.ToolCallID, ActionVersion: input.ActionVersion,
+			ProposalHash: record.ApprovalProposalHash, ErrorCode: invalidationCode,
+		})
+		if transitionErr != nil {
+			return nil, transitionErr
+		}
+		progress, commitErr := s.commitAgentRuntimeState(scope, state, transition)
+		if commitErr != nil {
+			return nil, commitErr
+		}
+		if progress.State.Status != agentruntime.RunRunning {
+			return progress, nil
+		}
+		return s.advanceAgentRun(scope, agentWakeApprovalDecided)
 	}
 	project, access, err := s.canvasAccess(scope.ActorUserID, scope.CanvasID)
 	if err != nil {
@@ -64,7 +97,7 @@ func (s *Service) SubmitAgentToolApproval(scope agentruntime.Scope, input AgentT
 		return nil, err
 	}
 	transition, err := agentruntime.ReviewToolApproval(state, agentruntime.ToolApproval{
-		ToolCallID: input.ToolCallID, ActionVersion: input.ActionVersion, Decision: input.Decision,
+		ToolCallID: input.ToolCallID, ActionVersion: input.ActionVersion, Decision: input.Decision, ProposalHash: input.ProposalHash,
 	})
 	if err != nil {
 		return nil, err
@@ -73,12 +106,17 @@ func (s *Service) SubmitAgentToolApproval(scope agentruntime.Scope, input AgentT
 	if err != nil {
 		return nil, err
 	}
-	record, err := s.repo.AgentToolCallForScope(scope, input.ToolCallID, input.ActionVersion)
+	record, err = s.repo.AgentToolCallForScope(scope, input.ToolCallID, input.ActionVersion)
 	if err != nil {
 		return nil, err
 	}
 	if record.ApprovalDecision != input.Decision || record.ApprovalByUserID != scope.ActorUserID || record.ApprovalDecidedAt == nil {
 		return nil, errors.New("agent tool approval facts conflict")
+	}
+	if progress.State.Status == agentruntime.RunCancelled {
+		if err := s.cancelAgentRunTreeContexts(scope); err != nil {
+			return nil, err
+		}
 	}
 	if progress.State.Status != agentruntime.RunRunning {
 		if progress.State.Status != agentruntime.RunWaitingTool {
@@ -86,6 +124,53 @@ func (s *Service) SubmitAgentToolApproval(scope agentruntime.Scope, input AgentT
 		}
 	}
 	return s.advanceAgentRun(scope, agentWakeApprovalDecided)
+}
+
+func approvalProposalInvalidationCode(err error) string {
+	switch {
+	case errors.Is(err, agentruntime.ErrApprovalProposalExpired):
+		return agentruntime.ApprovalProposalExpired
+	case errors.Is(err, agentruntime.ErrApprovalProposalMismatch):
+		return agentruntime.ApprovalProposalMismatch
+	default:
+		return ""
+	}
+}
+
+func validateStoredApprovalProposal(scope agentruntime.Scope, record *model.AgentToolCall, proposalHash string, now time.Time, requireFresh bool) error {
+	if record == nil {
+		return errors.New("agent approval proposal facts are missing")
+	}
+	if record.ApprovalProposalHash == "" {
+		if proposalHash != "" {
+			return errors.New("agent approval proposal facts conflict")
+		}
+		return nil
+	}
+	if proposalHash == "" || proposalHash != record.ApprovalProposalHash {
+		return agentruntime.ErrApprovalProposalMismatch
+	}
+	if record.ApprovalExpiresAt == nil {
+		return errors.New("agent approval proposal facts conflict")
+	}
+	proposal, err := agentruntime.DecodeApprovalProposal(json.RawMessage(record.ApprovalProposalJSON))
+	if err != nil {
+		return err
+	}
+	if proposal.RunID != scope.RunID || proposal.ToolCallID != record.ToolCallID || proposal.ActionVersion != record.ActionVersion ||
+		string(proposal.ToolName) != record.ToolName || proposal.Scope.TenantKind != scope.TenantKind || proposal.Scope.TenantID != scope.TenantID ||
+		proposal.Scope.ActorUserID != scope.ActorUserID || proposal.Scope.DomainProjectID != scope.DomainProjectID || proposal.Scope.CanvasID != scope.CanvasID ||
+		proposal.Scope.ThreadID != scope.ThreadID || !record.ApprovalExpiresAt.Equal(proposal.ExpiresAt) {
+		return errors.New("agent approval proposal facts conflict")
+	}
+	if requireFresh {
+		return agentruntime.ValidateApprovalProposalDecision(proposal, proposalHash, now)
+	}
+	computedHash, err := proposal.Hash()
+	if err != nil || computedHash != proposalHash {
+		return errors.New("agent approval proposal facts conflict")
+	}
+	return nil
 }
 
 func (s *Service) CoordinatePendingAgentTool(scope agentruntime.Scope, input CoordinateAgentToolInput) (*AgentRuntimeProgress, error) {
@@ -119,12 +204,25 @@ func (s *Service) coordinatePendingAgentTool(scope agentruntime.Scope, input Coo
 		}
 		return s.agentRuntimeProgressForCurrentState(scope, state)
 	}
+	run, err := s.repo.AgentRunForScope(scope)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateAgentRuntimeExecutionContract(*run); err != nil {
+		return nil, err
+	}
 	call := state.PendingToolCall
 	expectedStatus := agentruntime.ToolCallPending
 	if state.PendingToolStarted {
 		expectedStatus = agentruntime.ToolCallRunning
 	}
-	record, policy, err := s.frozenAgentToolCall(scope, call, expectedStatus, state.Configuration.ExecutionMode)
+	_, policy, err := s.frozenAgentToolCall(scope, call, expectedStatus, state.Configuration.ExecutionMode)
+	if err != nil && expectedStatus == agentruntime.ToolCallRunning {
+		// A capability with an authoritative external effect may persist its
+		// success receipt atomically with that effect before the runtime
+		// checkpoint advances. Resume from that exact frozen receipt.
+		_, policy, err = s.frozenAgentToolCall(scope, call, agentruntime.ToolCallSucceeded, state.Configuration.ExecutionMode)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -135,28 +233,39 @@ func (s *Service) coordinatePendingAgentTool(scope agentruntime.Scope, input Coo
 	if err := authorizeAgentToolScope(scope, project, access, policy.RequiredAccess); err != nil {
 		return nil, err
 	}
-	var output []byte
-	switch call.ToolName {
-	case agentruntime.ToolSkillLoad:
-		output, err = executeAgentSkillLoad(state.Configuration, call.Arguments)
-		if err != nil {
-			return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, "skill_load_invalid", map[string]string{"reason": err.Error()})
-		}
-	case agentruntime.ToolProductionPlan:
-		output, err = s.executeAgentProductionPlan(scope, call.Arguments)
-		if errors.Is(err, errAgentRuntimeProductionPlanInput) {
-			return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, "production_plan_invalid", map[string]string{"reason": err.Error()})
-		}
-		if errors.Is(err, repository.ErrAgentProductionPlanVersionConflict) {
-			return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, "production_plan_version_conflict", map[string]string{"reason": err.Error()})
-		}
-	case agentruntime.ToolProductionRender:
-		return s.coordinatePendingAgentProductionRender(scope, state, call, record)
-	case agentruntime.ToolCanvasCommit:
-		return s.coordinatePendingAgentProductionCanvasCommit(scope, state, call, record)
-	default:
-		return nil, errors.New("agent tool executor is not connected")
+	registry, registryErr := newAgentCapabilityRegistry(s)
+	if registryErr != nil {
+		return nil, registryErr
 	}
+	execution, executionErr := registry.Execute(context.Background(), scope, *call)
+	if executionErr != nil {
+		failureCode := "capability_execution_failed"
+		var capabilityFailure *agentCapabilityExecutionError
+		if errors.As(executionErr, &capabilityFailure) {
+			failureCode = capabilityFailure.Code
+		}
+		return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, failureCode, map[string]string{"reason": executionErr.Error()})
+	}
+	if execution.Pending {
+		if len(execution.Output) != 0 {
+			return nil, errors.New("pending agent capability returned terminal output")
+		}
+		if state.PendingToolStarted {
+			return s.agentRuntimeProgressForCurrentState(scope, state)
+		}
+		started, beginErr := agentruntime.BeginToolExecution(state, agentruntime.ToolExecution{
+			ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
+		})
+		if beginErr != nil {
+			return nil, beginErr
+		}
+		progress, commitErr := s.commitAgentRuntimeState(scope, state, started)
+		if commitErr != nil {
+			return nil, commitErr
+		}
+		return s.agentRuntimeProgressForCurrentState(scope, progress.State)
+	}
+	output := execution.Output
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +305,11 @@ func (s *Service) frozenAgentToolCall(scope agentruntime.Scope, call *agentrunti
 	if err != nil {
 		return nil, agentruntime.ToolPolicy{}, err
 	}
-	policy, ok := agentruntime.ToolPolicyFor(call.ToolName)
+	run, err := s.repo.AgentRunForScope(scope)
+	if err != nil {
+		return nil, agentruntime.ToolPolicy{}, err
+	}
+	policy, ok := agentruntime.ToolPolicyForSchema(call.ToolName, run.ToolSchemaVersion)
 	approvalRequired := agentruntime.ApprovalRequiredFor(policy, executionMode)
 	if !ok || record.ToolName != string(call.ToolName) || record.Status != expectedStatus ||
 		record.RiskLevel != policy.RiskLevel || record.RequiredAccess != policy.RequiredAccess ||

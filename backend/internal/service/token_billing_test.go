@@ -20,15 +20,24 @@ import (
 func TestKuaiziTextModelAllowsTokenUsageBilling(t *testing.T) {
 	for _, modelKey := range []string{"deepseek-v4-flash", "deepseek-v4-pro"} {
 		t.Run(modelKey, func(t *testing.T) {
+			channel := model.ModelChannel{
+				ID:            deterministicKuaiziChatChannelID("deepseek"),
+				InterfaceType: model.ChannelInterfaceChatCompletion,
+			}
 			item := model.ChannelModel{
-				ModelKey:        modelKey,
-				Capability:      "text",
-				BillingMode:     "token_usage",
-				PriceStrategy:   "token",
-				PriceConfigured: true,
-				Enabled:         true,
+				ChannelID:            channel.ID,
+				ModelKey:             modelKey,
+				ProviderCredentialID: "managed-deepseek-credential",
+				Capability:           "text",
+				BillingMode:          "token_usage",
+				PriceStrategy:        "token",
+				PriceConfigured:      true,
+				Enabled:              true,
 			}
 			pricing := &model.ModelPricing{
+				ChannelID:              channel.ID,
+				Model:                  modelKey,
+				Capability:             "text",
 				Currency:               "CNY",
 				InputPerMillionMicros:  1_000_000,
 				CachedPerMillionMicros: 20_000,
@@ -37,9 +46,12 @@ func TestKuaiziTextModelAllowsTokenUsageBilling(t *testing.T) {
 				MaxOutputTokens:        8_192,
 			}
 
-			snapshot, err := validateTokenUsageModelBilling(item, pricing)
+			snapshot, authority, err := tokenBillingContract(channel, item, pricing)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if authority != tokenBillingManagedReconciliation {
+				t.Fatalf("billing authority = %q, want managed reconciliation", authority)
 			}
 			if snapshot.InputPerMillionMicros != 1_000_000 || snapshot.CachedPerMillionMicros != 20_000 || snapshot.OutputPerMillionMicros != 2_000_000 || snapshot.MaxOutputTokens != 8_192 {
 				t.Fatalf("pricing snapshot = %#v", snapshot)
@@ -49,15 +61,21 @@ func TestKuaiziTextModelAllowsTokenUsageBilling(t *testing.T) {
 }
 
 func TestKuaiziTextModelSeparatesExpectedUsageFromMaximumOutput(t *testing.T) {
+	channel := model.ModelChannel{ID: deterministicKuaiziChatChannelID("deepseek"), InterfaceType: model.ChannelInterfaceChatCompletion}
 	item := model.ChannelModel{
-		ModelKey:        "deepseek-v4-pro",
-		Capability:      "text",
-		BillingMode:     "token_usage",
-		PriceStrategy:   "token",
-		PriceConfigured: true,
-		Enabled:         true,
+		ChannelID:            channel.ID,
+		ModelKey:             "deepseek-v4-pro",
+		ProviderCredentialID: "managed-deepseek-credential",
+		Capability:           "text",
+		BillingMode:          "token_usage",
+		PriceStrategy:        "token",
+		PriceConfigured:      true,
+		Enabled:              true,
 	}
 	pricing := &model.ModelPricing{
+		ChannelID:              channel.ID,
+		Model:                  item.ModelKey,
+		Capability:             "text",
 		Currency:               "CNY",
 		InputPerMillionMicros:  3_000_000,
 		CachedPerMillionMicros: 25_000,
@@ -66,9 +84,12 @@ func TestKuaiziTextModelSeparatesExpectedUsageFromMaximumOutput(t *testing.T) {
 		MaxOutputTokens:        16_384,
 	}
 
-	snapshot, err := validateTokenUsageModelBilling(item, pricing)
+	snapshot, authority, err := tokenBillingContract(channel, item, pricing)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if authority != tokenBillingManagedReconciliation {
+		t.Fatalf("billing authority = %q", authority)
 	}
 	if snapshot.MaxOutputTokens != 16_384 {
 		t.Fatalf("maximum output tokens = %d, want 16384", snapshot.MaxOutputTokens)
@@ -78,7 +99,7 @@ func TestKuaiziTextModelSeparatesExpectedUsageFromMaximumOutput(t *testing.T) {
 func TestKuaiziTokenBilledTextModelPublicationRequiresSupplierPrice(t *testing.T) {
 	svc, db := openProviderCredentialService(t)
 	now := time.Now().UTC()
-	channel := model.ModelChannel{ID: "token-agent-channel", Scope: model.ChannelScopeSystem, Enabled: true, Name: "Token Agent", CreatedAt: now, UpdatedAt: now}
+	channel := model.ModelChannel{ID: "token-agent-channel", Scope: model.ChannelScopeSystem, Enabled: true, Name: "Token Agent", InterfaceType: model.ChannelInterfaceChatCompletion, CreatedAt: now, UpdatedAt: now}
 	item := model.ChannelModel{
 		ID: "token-agent-model", ChannelID: channel.ID, ModelKey: "deepseek-v4-flash", DisplayName: "DeepSeek V4 Flash",
 		AccessPolicy: model.ModelAccessAuthenticated, Capability: "text", BillingMode: "token_usage", PriceStrategy: "token",
@@ -89,10 +110,14 @@ func TestKuaiziTokenBilledTextModelPublicationRequiresSupplierPrice(t *testing.T
 		InputPerMillionMicros: 1_000_000, CachedPerMillionMicros: 20_000, OutputPerMillionMicros: 2_000_000,
 		ExpectedOutputTokens: 2_048, MaxOutputTokens: 8_192, CreatedAt: now, UpdatedAt: now,
 	}
-	for _, row := range []any{&channel, &item, &pricing} {
-		if err := db.Create(row).Error; err != nil {
-			t.Fatal(err)
-		}
+	if err := db.Create(&channel).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&pricing).Error; err != nil {
+		t.Fatal(err)
 	}
 
 	setting, err := svc.UpdateAgentDefaultModelSetting(providerAdmin(), UpdateAgentDefaultModelRequest{ChannelModelID: item.ID})
@@ -116,15 +141,21 @@ func TestKuaiziTokenBilledTextModelPublicationRequiresSupplierPrice(t *testing.T
 }
 
 func TestTokenUsageBillingRejectsNonTextAndMissingPrice(t *testing.T) {
+	managedChannel := model.ModelChannel{ID: deterministicKuaiziChatChannelID("deepseek"), InterfaceType: model.ChannelInterfaceChatCompletion}
 	validItem := model.ChannelModel{
-		ModelKey:        "deepseek-v4-pro",
-		Capability:      "text",
-		BillingMode:     "token_usage",
-		PriceStrategy:   "token",
-		PriceConfigured: true,
-		Enabled:         true,
+		ChannelID:            managedChannel.ID,
+		ModelKey:             "deepseek-v4-pro",
+		ProviderCredentialID: "managed-deepseek-credential",
+		Capability:           "text",
+		BillingMode:          "token_usage",
+		PriceStrategy:        "token",
+		PriceConfigured:      true,
+		Enabled:              true,
 	}
 	validPricing := &model.ModelPricing{
+		ChannelID:              managedChannel.ID,
+		Model:                  validItem.ModelKey,
+		Capability:             "text",
 		Currency:               "CNY",
 		InputPerMillionMicros:  3_000_000,
 		CachedPerMillionMicros: 25_000,
@@ -140,7 +171,7 @@ func TestTokenUsageBillingRejectsNonTextAndMissingPrice(t *testing.T) {
 	}{
 		{name: "missing supplier price", item: validItem, pricing: nil},
 		{name: "non text capability", item: func() model.ChannelModel { value := validItem; value.Capability = "image"; return value }(), pricing: validPricing},
-		{name: "unmanaged model", item: func() model.ChannelModel { value := validItem; value.ModelKey = "custom-text"; return value }(), pricing: validPricing},
+		{name: "unregistered managed model", item: func() model.ChannelModel { value := validItem; value.ModelKey = "custom-text"; return value }(), pricing: validPricing},
 		{name: "fixed unit price", item: func() model.ChannelModel { value := validItem; value.UnitPriceMicrocredits = 1; return value }(), pricing: validPricing},
 		{name: "flat price strategy", item: func() model.ChannelModel { value := validItem; value.PriceStrategy = "flat"; return value }(), pricing: validPricing},
 		{name: "wrong currency", item: validItem, pricing: func() *model.ModelPricing { value := *validPricing; value.Currency = "USD"; return &value }()},
@@ -152,8 +183,141 @@ func TestTokenUsageBillingRejectsNonTextAndMissingPrice(t *testing.T) {
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			if _, err := validateTokenUsageModelBilling(testCase.item, testCase.pricing); err == nil {
+			if _, _, err := tokenBillingContract(managedChannel, testCase.item, testCase.pricing); err == nil {
 				t.Fatal("invalid token billing configuration accepted")
+			}
+		})
+	}
+}
+
+func TestDirectVisionModelAllowsResponseUsageTokenBilling(t *testing.T) {
+	for _, interfaceType := range []model.ChannelInterfaceType{model.ChannelInterfaceChatCompletion, model.ChannelInterfaceOpenAIResponse} {
+		t.Run(string(interfaceType), func(t *testing.T) {
+			channel := model.ModelChannel{ID: "direct-vision", InterfaceType: interfaceType}
+			item := model.ChannelModel{
+				ChannelID: channel.ID, ModelKey: "deepseek-v4-flash-vision-exp", Capability: "vision",
+				BillingMode: "token_usage", PriceStrategy: "token", PriceConfigured: true, Enabled: true,
+			}
+			pricing := &model.ModelPricing{
+				ChannelID: channel.ID, Model: item.ModelKey, Capability: "vision", Currency: "CNY",
+				InputPerMillionMicros: 1_000_000, CachedPerMillionMicros: 20_000,
+				OutputPerMillionMicros: 2_000_000, MaxOutputTokens: 8_192,
+			}
+
+			snapshot, authority, err := tokenBillingContract(channel, item, pricing)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if authority != tokenBillingResponseUsage || snapshot.MaxOutputTokens != 8_192 {
+				t.Fatalf("contract = authority:%q snapshot:%#v", authority, snapshot)
+			}
+		})
+	}
+}
+
+func TestManagedVisionModelUsesManagedReconciliationAuthority(t *testing.T) {
+	channel := model.ModelChannel{ID: deterministicKuaiziChatChannelID("deepseek"), InterfaceType: model.ChannelInterfaceChatCompletion}
+	item := model.ChannelModel{
+		ChannelID: channel.ID, ProviderCredentialID: "managed-deepseek-credential",
+		ModelKey: "deepseek-v4-flash-vision-exp", Capability: "vision", BillingMode: "token_usage",
+		PriceStrategy: "token", PriceConfigured: true, Enabled: true,
+	}
+	pricing := &model.ModelPricing{
+		ChannelID: channel.ID, Model: item.ModelKey, Capability: "vision", Currency: "CNY",
+		InputPerMillionMicros: 1_000_000, CachedPerMillionMicros: 20_000,
+		OutputPerMillionMicros: 2_000_000, MaxOutputTokens: 8_192,
+	}
+	_, authority, err := tokenBillingContract(channel, item, pricing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authority != tokenBillingManagedReconciliation {
+		t.Fatalf("managed vision billing authority = %q", authority)
+	}
+}
+
+func TestReserveProxyTokenBillingAllowsDirectVisionWithoutManagedProviderVersions(t *testing.T) {
+	svc, db := openProviderCredentialService(t)
+	now := time.Now().UTC()
+	channel := model.ModelChannel{
+		ID: "direct-vision-reservation", Scope: model.ChannelScopeSystem, Enabled: true,
+		Name: "Direct DeepSeek Vision", InterfaceType: model.ChannelInterfaceChatCompletion,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	item := model.ChannelModel{
+		ID: "direct-vision-reservation-model", ChannelID: channel.ID,
+		ModelKey: "deepseek-v4-flash-vision-exp", DisplayName: "DeepSeek Vision",
+		AccessPolicy: model.ModelAccessAuthenticated, Capability: "vision", BillingMode: "token_usage",
+		PriceStrategy: "token", PriceConfigured: true, Enabled: true, PriceVersion: 4,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	pricing := model.ModelPricing{
+		ID: "direct-vision-reservation-price", ChannelID: channel.ID, Model: item.ModelKey,
+		Capability: "vision", Currency: "CNY", InputPerMillionMicros: 1_000_000,
+		CachedPerMillionMicros: 20_000, OutputPerMillionMicros: 2_000_000,
+		ExpectedOutputTokens: 2_048, MaxOutputTokens: 50_000, CreatedAt: now, UpdatedAt: now,
+	}
+	account := model.CreditAccount{UserID: "direct-vision-reservation-user", AvailableMicrocredits: 100_000_000, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&channel).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&pricing).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	reservation := TokenBillingReservation{
+		TaskID: "direct-vision-task", EstimatedInputTokens: 200_000, MaxOutputTokens: 50_000,
+		Pricing: TokenPricingSnapshot{
+			InputPerMillionMicros: 1_000_000, CachedPerMillionMicros: 20_000,
+			OutputPerMillionMicros: 2_000_000, MaxOutputTokens: 50_000,
+		},
+	}
+
+	order, err := svc.ReserveProxyTokenBilling(account.UserID, channel.ID, item.ModelKey, "agent_vision", "direct-vision-request", reservation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if order.ProviderEndpointVersionID != "" || order.ProviderCredentialVersionID != "" || order.ChannelModelID != item.ID || order.PriceVersion != item.PriceVersion {
+		t.Fatalf("direct response-usage reservation = %#v", order)
+	}
+}
+
+func TestTokenBillingContractRejectsUnsupportedVisionConfigurations(t *testing.T) {
+	pricing := &model.ModelPricing{
+		Currency: "CNY", InputPerMillionMicros: 1_000_000, CachedPerMillionMicros: 20_000,
+		OutputPerMillionMicros: 2_000_000, MaxOutputTokens: 8_192,
+	}
+	validItem := model.ChannelModel{
+		ModelKey: "deepseek-v4-flash-vision-exp", Capability: "vision", BillingMode: "token_usage",
+		PriceStrategy: "token", PriceConfigured: true, Enabled: true,
+	}
+	tests := []struct {
+		name    string
+		channel model.ModelChannel
+		item    model.ChannelModel
+		pricing *model.ModelPricing
+	}{
+		{name: "unsupported interface", channel: model.ModelChannel{ID: "image", InterfaceType: model.ChannelInterfaceOpenAIImage}, item: validItem, pricing: pricing},
+		{name: "unknown visual token ceiling", channel: model.ModelChannel{ID: "direct", InterfaceType: model.ChannelInterfaceChatCompletion}, item: func() model.ChannelModel { value := validItem; value.ModelKey = "unknown-vision"; return value }(), pricing: pricing},
+		{name: "managed channel missing credential", channel: model.ModelChannel{ID: deterministicKuaiziChatChannelID("deepseek"), InterfaceType: model.ChannelInterfaceChatCompletion}, item: validItem, pricing: pricing},
+		{name: "direct channel with managed credential", channel: model.ModelChannel{ID: "direct", InterfaceType: model.ChannelInterfaceChatCompletion}, item: func() model.ChannelModel {
+			value := validItem
+			value.ProviderCredentialID = "partial-managed"
+			return value
+		}(), pricing: pricing},
+		{name: "fixed request", channel: model.ModelChannel{ID: "direct", InterfaceType: model.ChannelInterfaceChatCompletion}, item: func() model.ChannelModel { value := validItem; value.BillingMode = "fixed_request"; return value }(), pricing: pricing},
+		{name: "per second", channel: model.ModelChannel{ID: "direct", InterfaceType: model.ChannelInterfaceChatCompletion}, item: func() model.ChannelModel { value := validItem; value.BillingMode = "per_second"; return value }(), pricing: pricing},
+		{name: "incomplete supplier price", channel: model.ModelChannel{ID: "direct", InterfaceType: model.ChannelInterfaceChatCompletion}, item: validItem, pricing: func() *model.ModelPricing { value := *pricing; value.OutputPerMillionMicros = 0; return &value }()},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			if _, _, err := tokenBillingContract(testCase.channel, testCase.item, testCase.pricing); err == nil {
+				t.Fatal("invalid vision token billing configuration accepted")
 			}
 		})
 	}
@@ -214,10 +378,11 @@ func TestTokenChargeMicrocreditsRejectsInvalidUsageAndOverflow(t *testing.T) {
 func TestReserveProxyTokenBillingAtomicallyFreezesMaximumCost(t *testing.T) {
 	svc, db := openProviderCredentialService(t)
 	now := time.Now().UTC()
-	channel := model.ModelChannel{ID: "reserve-token-channel", Scope: model.ChannelScopeSystem, Enabled: true, Name: "Token Agent", CreatedAt: now, UpdatedAt: now}
+	channel := model.ModelChannel{ID: deterministicKuaiziChatChannelID("deepseek"), Scope: model.ChannelScopeSystem, Enabled: true, Name: "Token Agent", InterfaceType: model.ChannelInterfaceChatCompletion, CreatedAt: now, UpdatedAt: now}
 	item := model.ChannelModel{
 		ID: "reserve-token-model", ChannelID: channel.ID, ModelKey: "deepseek-v4-flash", DisplayName: "DeepSeek V4 Flash",
-		AccessPolicy: model.ModelAccessAuthenticated, Capability: "text", BillingMode: "token_usage", PriceStrategy: "token",
+		ProviderCredentialID: "managed-deepseek-credential",
+		AccessPolicy:         model.ModelAccessAuthenticated, Capability: "text", BillingMode: "token_usage", PriceStrategy: "token",
 		PriceConfigured: true, Enabled: true, PriceVersion: 3, CreatedAt: now, UpdatedAt: now,
 	}
 	pricing := model.ModelPricing{
@@ -309,7 +474,7 @@ func TestKuaiziAgentProxyMissingUsageStillSettlesByTaskID(t *testing.T) {
 	defer server.Close()
 	svc, db, account, _, _, reservation := tokenReservationServiceFixture(t)
 	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-token-key")
-	order, err := svc.ReserveProxyTokenBilling(account.UserID, "idempotent-token-channel", "deepseek-v4-flash", "agent", "settle-by-task", reservation)
+	order, err := svc.ReserveProxyTokenBilling(account.UserID, deterministicKuaiziChatChannelID("deepseek"), "deepseek-v4-flash", "agent", "settle-by-task", reservation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +503,7 @@ func TestKuaiziAgentProxyPreservesUpstreamAmountAndRecordsLocalVariance(t *testi
 	defer server.Close()
 	svc, db, account, _, _, reservation := tokenReservationServiceFixture(t)
 	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-token-key")
-	order, err := svc.ReserveProxyTokenBilling(account.UserID, "idempotent-token-channel", "deepseek-v4-flash", "agent", "variance-warning", reservation)
+	order, err := svc.ReserveProxyTokenBilling(account.UserID, deterministicKuaiziChatChannelID("deepseek"), "deepseek-v4-flash", "agent", "variance-warning", reservation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +537,7 @@ func TestKuaiziAgentProxyQueriesBillingWithTaskIDInsideChatCompletionID(t *testi
 	defer server.Close()
 	svc, db, account, _, _, reservation := tokenReservationServiceFixture(t)
 	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-token-key")
-	order, err := svc.ReserveProxyTokenBilling(account.UserID, "idempotent-token-channel", "deepseek-v4-flash", "agent", "chat-completion-task-id", reservation)
+	order, err := svc.ReserveProxyTokenBilling(account.UserID, deterministicKuaiziChatChannelID("deepseek"), "deepseek-v4-flash", "agent", "chat-completion-task-id", reservation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +569,7 @@ func TestKuaiziAgentProxyPendingBillIsReconciledWithoutSecondModelCall(t *testin
 	defer server.Close()
 	svc, db, account, _, _, reservation := tokenReservationServiceFixture(t)
 	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-token-key")
-	order, err := svc.ReserveProxyTokenBilling(account.UserID, "idempotent-token-channel", "deepseek-v4-flash", "agent", "pending-bill", reservation)
+	order, err := svc.ReserveProxyTokenBilling(account.UserID, deterministicKuaiziChatChannelID("deepseek"), "deepseek-v4-flash", "agent", "pending-bill", reservation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +617,7 @@ func TestKuaiziAgentProxyRecoversUnscheduledChatCompletionBill(t *testing.T) {
 	defer server.Close()
 	svc, db, account, _, _, reservation := tokenReservationServiceFixture(t)
 	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-recovered-key")
-	order, err := svc.ReserveProxyTokenBilling(account.UserID, "idempotent-token-channel", "deepseek-v4-flash", "agent", "recover-unscheduled-chat", reservation)
+	order, err := svc.ReserveProxyTokenBilling(account.UserID, deterministicKuaiziChatChannelID("deepseek"), "deepseek-v4-flash", "agent", "recover-unscheduled-chat", reservation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -624,7 +789,7 @@ func TestKuaiziTokenContradictorySucceededBillRequiresManualReview(t *testing.T)
 	defer server.Close()
 	svc, db, account, _, _, reservation := tokenReservationServiceFixture(t)
 	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-contradiction-token-key")
-	order, err := svc.ReserveProxyTokenBilling(account.UserID, "idempotent-token-channel", "deepseek-v4-flash", "agent", "contradictory-token-bill", reservation)
+	order, err := svc.ReserveProxyTokenBilling(account.UserID, deterministicKuaiziChatChannelID("deepseek"), "deepseek-v4-flash", "agent", "contradictory-token-bill", reservation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -708,7 +873,7 @@ func TestKuaiziAgentProxyInvalidUsageDoesNotBlockSupplierSettlement(t *testing.T
 	defer server.Close()
 	svc, db, account, _, _, reservation := tokenReservationServiceFixture(t)
 	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-token-key")
-	order, err := svc.ReserveProxyTokenBilling(account.UserID, "idempotent-token-channel", "deepseek-v4-flash", "agent", "invalid-usage", reservation)
+	order, err := svc.ReserveProxyTokenBilling(account.UserID, deterministicKuaiziChatChannelID("deepseek"), "deepseek-v4-flash", "agent", "invalid-usage", reservation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -734,7 +899,7 @@ func TestKuaiziAgentProxyFailedBillWithAmountPersistsObservation(t *testing.T) {
 	defer server.Close()
 	svc, db, account, _, _, reservation := tokenReservationServiceFixture(t)
 	installFrozenTokenRuntime(t, svc, db, server.URL, reservation, "frozen-token-key")
-	order, err := svc.ReserveProxyTokenBilling(account.UserID, "idempotent-token-channel", "deepseek-v4-flash", "agent", "failed-with-amount", reservation)
+	order, err := svc.ReserveProxyTokenBilling(account.UserID, deterministicKuaiziChatChannelID("deepseek"), "deepseek-v4-flash", "agent", "failed-with-amount", reservation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -776,10 +941,11 @@ func tokenReservationServiceFixture(t *testing.T) (*Service, *gorm.DB, model.Cre
 	t.Helper()
 	svc, db := openProviderCredentialService(t)
 	now := time.Now().UTC()
-	channel := model.ModelChannel{ID: "idempotent-token-channel", Scope: model.ChannelScopeSystem, Enabled: true, Name: "Token Agent", CreatedAt: now, UpdatedAt: now}
+	channel := model.ModelChannel{ID: deterministicKuaiziChatChannelID("deepseek"), Scope: model.ChannelScopeSystem, Enabled: true, Name: "Token Agent", InterfaceType: model.ChannelInterfaceChatCompletion, CreatedAt: now, UpdatedAt: now}
 	item := model.ChannelModel{
 		ID: "idempotent-token-model", ChannelID: channel.ID, ModelKey: "deepseek-v4-flash", DisplayName: "DeepSeek V4 Flash",
-		AccessPolicy: model.ModelAccessAuthenticated, Capability: "text", BillingMode: "token_usage", PriceStrategy: "token",
+		ProviderCredentialID: "token-provider-credential",
+		AccessPolicy:         model.ModelAccessAuthenticated, Capability: "text", BillingMode: "token_usage", PriceStrategy: "token",
 		PriceConfigured: true, Enabled: true, PriceVersion: 3, CreatedAt: now, UpdatedAt: now,
 	}
 	pricing := model.ModelPricing{

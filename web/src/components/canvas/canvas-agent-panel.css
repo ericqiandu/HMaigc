@@ -45,6 +45,217 @@
     white-space: nowrap;
 }
 
+.canvas-agent-header-center {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    justify-content: center;
+}
+
+.canvas-agent-host-switch {
+    display: inline-flex;
+    height: 32px;
+    align-items: center;
+    padding: 2px;
+    border: 1px solid color-mix(in srgb, var(--foreground) 10%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--foreground) 4%, transparent);
+}
+
+.canvas-agent-host-option {
+    display: inline-flex;
+    height: 26px;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: color-mix(in srgb, var(--foreground) 58%, transparent);
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 16px;
+}
+
+.canvas-agent-host-option[data-active="true"] {
+    background: color-mix(in srgb, var(--foreground) 10%, transparent);
+    color: var(--foreground);
+}
+
+.canvas-agent-host-option:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--primary) 72%, transparent);
+    outline-offset: 1px;
+}
+
+.canvas-agent-host-option-icon {
+    width: 13px;
+    height: 13px;
+}
+
+.canvas-agent-host-option-label {
+    white-space: nowrap;
+}
+
+.canvas-agent-workspace-stack,
+.canvas-agent-workspace-slot,
+.canvas-agent-workspace {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+}
+
+.canvas-agent-workspace-slot[hidden] {
+    display: none;
+}
+
+.canvas-agent-local-loading {
+    display: grid;
+    min-height: 180px;
+    flex: 1 1 auto;
+    place-items: center;
+    color: color-mix(in srgb, var(--foreground) 58%, transparent);
+    font-size: 12px;
+}
+
+.canvas-agent-workspace-toolbar {
+    display: flex;
+    min-height: 36px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 12px;
+}
+
+.canvas-agent-workspace-host-status {
+    overflow: hidden;
+    color: color-mix(in srgb, var(--foreground) 58%, transparent);
+    font-size: 11px;
+    line-height: 18px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.canvas-agent-workspace-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.canvas-agent-local-connect {
+    display: flex;
+    width: min(100%, 360px);
+    flex-direction: column;
+    gap: 14px;
+    margin: auto;
+    padding: 24px;
+}
+
+.canvas-agent-local-connect-heading {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.canvas-agent-local-connect-icon {
+    width: 18px;
+    height: 18px;
+    margin-top: 2px;
+    color: var(--primary);
+}
+
+.canvas-agent-local-connect-copy,
+.canvas-agent-local-connect-field {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.canvas-agent-local-connect-title,
+.canvas-agent-local-connect-label {
+    font-size: 12px;
+    font-weight: 650;
+    line-height: 18px;
+}
+
+.canvas-agent-local-connect-description {
+    font-size: 11px;
+    line-height: 18px;
+}
+
+.canvas-agent-local-connect-input.ant-input,
+.canvas-agent-local-connect-input.ant-input-affix-wrapper {
+    border-radius: 6px;
+}
+
+.canvas-agent-local-connect-submit.ant-btn {
+    align-self: flex-end;
+}
+
+.canvas-agent-local-history,
+.canvas-agent-local-conversation {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.canvas-agent-local-history-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.canvas-agent-local-history-title {
+    font-size: 13px;
+    line-height: 20px;
+}
+
+.canvas-agent-local-history-retry.ant-btn {
+    color: color-mix(in srgb, var(--foreground) 58%, transparent);
+}
+
+.canvas-agent-local-history-item {
+    display: flex;
+    width: 100%;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+}
+
+.canvas-agent-local-history-item:hover,
+.canvas-agent-local-history-item[aria-current="true"] {
+    background: color-mix(in srgb, var(--foreground) 7%, transparent);
+}
+
+.canvas-agent-local-history-item:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--primary) 68%, transparent);
+}
+
+.canvas-agent-local-history-item-message {
+    overflow: hidden;
+    font-size: 12px;
+    line-height: 18px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.canvas-agent-local-history-item-meta,
+.canvas-agent-local-history-empty,
+.canvas-agent-local-runtime-state {
+    color: color-mix(in srgb, var(--foreground) 50%, transparent);
+    font-size: 11px;
+    line-height: 18px;
+}
+
 .canvas-agent-header-actions {
     display: flex;
     flex: 0 0 auto;
@@ -230,100 +441,6 @@
     font-weight: 650;
 }
 
-.canvas-agent-avatar {
-    width: 28px;
-    height: 28px;
-}
-
-.canvas-agent-tool-card,
-.canvas-agent-proposal-card {
-    border: 0;
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--foreground) 5%, transparent);
-    box-shadow: none;
-}
-
-.canvas-agent-tool-card {
-    padding: 11px 12px;
-}
-
-.canvas-agent-proposal-card {
-    padding: 12px;
-}
-
-.canvas-agent-tool-icon {
-    width: 28px;
-    height: 28px;
-    border: 0;
-    border-radius: 6px;
-}
-
-.canvas-agent-status-badge {
-    display: inline-flex;
-    min-height: 20px;
-    flex: 0 0 auto;
-    align-items: center;
-    padding: 2px 7px;
-    border: 0;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 16px;
-}
-
-.canvas-agent-impact-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 1px;
-    overflow: hidden;
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--foreground) 8%, transparent);
-}
-
-.canvas-agent-impact-metric {
-    min-width: 0;
-    padding: 8px;
-    background: color-mix(in srgb, var(--background) 96%, transparent);
-}
-
-.canvas-agent-proposal-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    margin-top: 12px;
-}
-
-.canvas-agent-proposal-actions .ant-btn {
-    height: 32px !important;
-    border-radius: 6px !important;
-    font-size: 13px;
-    font-weight: 600;
-}
-
-.canvas-agent-proposal-actions .canvas-agent-proposal-secondary.ant-btn {
-    border-color: transparent;
-    background: color-mix(in srgb, var(--foreground) 6%, transparent);
-    color: var(--foreground);
-}
-
-.canvas-agent-proposal-actions .canvas-agent-proposal-primary.ant-btn {
-    border-color: transparent;
-    background: var(--foreground);
-    color: var(--background);
-}
-
-.canvas-agent-detail {
-    max-height: 256px;
-    margin-top: 10px;
-    overflow: auto;
-    padding: 10px;
-    border: 0;
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--foreground) 4%, transparent);
-    font-size: 11px;
-    line-height: 16px;
-}
-
 .canvas-agent-composer-wrap {
     padding: 8px 12px 12px;
 }
@@ -395,7 +512,6 @@
 .canvas-agent-runtime-composer-footer,
 .canvas-agent-runtime-approval-heading,
 .canvas-agent-runtime-approval-actions,
-.canvas-agent-runtime-tool-result,
 .canvas-agent-runtime-error,
 .canvas-agent-runtime-failure {
     display: flex;
@@ -891,25 +1007,70 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.canvas-agent-runtime-arguments {
+.canvas-agent-runtime-approval-details,
+.canvas-agent-runtime-approval-invalid {
     margin-top: 10px;
 }
-.canvas-agent-runtime-arguments-summary {
-    cursor: pointer;
-    color: var(--muted-foreground);
-    font-size: 11px;
-    line-height: 18px;
+.canvas-agent-runtime-approval-details {
+    display: grid;
+    gap: 8px;
 }
-.canvas-agent-runtime-arguments-code {
-    max-height: 160px;
-    overflow: auto;
-    margin: 8px 0 0;
-    padding: 10px;
-    background: color-mix(in srgb, var(--foreground) 5%, transparent);
+.canvas-agent-runtime-approval-detail-meta,
+.canvas-agent-runtime-approval-expiry {
     font-size: 10px;
     line-height: 16px;
-    white-space: pre-wrap;
     overflow-wrap: anywhere;
+}
+.canvas-agent-runtime-approval-operation-list,
+.canvas-agent-runtime-approval-parameter-list {
+    display: grid;
+    gap: 5px;
+    margin: 0;
+    padding: 0;
+}
+.canvas-agent-runtime-approval-operation-list {
+    list-style: none;
+}
+.canvas-agent-runtime-approval-operation {
+    font-size: 11px;
+    line-height: 17px;
+}
+.canvas-agent-runtime-approval-parameter {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 8px;
+}
+.canvas-agent-runtime-approval-parameter-label,
+.canvas-agent-runtime-approval-parameter-value {
+    margin: 0;
+    font-size: 11px;
+    line-height: 17px;
+}
+.canvas-agent-runtime-approval-parameter-value {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.canvas-agent-runtime-approval-invalid {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    color: var(--status-danger);
+}
+.canvas-agent-runtime-approval-invalid-icon {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 15px;
+    margin-top: 2px;
+}
+.canvas-agent-runtime-approval-invalid-copy {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+}
+.canvas-agent-runtime-approval-invalid-title,
+.canvas-agent-runtime-approval-invalid-guidance {
+    font-size: 11px;
+    line-height: 17px;
 }
 .canvas-agent-runtime-approval-actions {
     justify-content: flex-end;
@@ -920,26 +1081,81 @@
 .canvas-agent-runtime-approve.ant-btn {
     min-height: 34px;
 }
-.canvas-agent-runtime-tool-result {
-    width: fit-content;
-    max-width: 100%;
-    gap: 10px;
-    padding: 5px 8px;
-    border-radius: 999px;
+.canvas-agent-runtime-activity {
+    display: grid;
+    gap: 6px;
+}
+.canvas-agent-runtime-activity-item {
+    display: flex;
+    min-width: 0;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 10px;
     background: color-mix(in srgb, var(--foreground) 5%, transparent);
-    font-size: 11px;
-    line-height: 17px;
 }
-.canvas-agent-runtime-tool-result-state[data-success="true"] {
-    color: var(--status-success);
-}
-.canvas-agent-runtime-tool-result-state[data-success="false"] {
+.canvas-agent-runtime-activity-item[data-status="failed"],
+.canvas-agent-runtime-activity-item[data-status="invalid"] {
     color: var(--status-danger);
 }
-.canvas-agent-runtime-tool-result-id {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+.canvas-agent-runtime-activity-icon,
+.canvas-agent-runtime-activity-icon-svg {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 14px;
+}
+.canvas-agent-runtime-activity-icon {
+    margin-top: 2px;
+}
+.canvas-agent-runtime-activity-copy {
+    display: grid;
+    min-width: 0;
+    flex: 1;
+    gap: 4px;
+}
+.canvas-agent-runtime-activity-heading {
+    display: flex;
+    min-width: 0;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+.canvas-agent-runtime-activity-title,
+.canvas-agent-runtime-activity-tool,
+.canvas-agent-runtime-activity-task,
+.canvas-agent-runtime-activity-error,
+.canvas-agent-runtime-activity-error-code {
+    font-size: 10px;
+    line-height: 16px;
+}
+.canvas-agent-runtime-activity-title {
+    font-weight: 600;
+}
+.canvas-agent-runtime-activity-tool,
+.canvas-agent-runtime-activity-error-code {
+    overflow-wrap: anywhere;
+}
+.canvas-agent-runtime-activity-resources {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+}
+.canvas-agent-runtime-resource-link,
+.canvas-agent-runtime-resource-image,
+.canvas-agent-runtime-resource-video,
+.canvas-agent-runtime-resource-audio {
+    display: block;
+    width: 100%;
+}
+.canvas-agent-runtime-resource-image,
+.canvas-agent-runtime-resource-video {
+    aspect-ratio: 16 / 10;
+    object-fit: cover;
+    background: color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+.canvas-agent-runtime-resource-audio {
+    grid-column: 1 / -1;
+    min-height: 40px;
 }
 .canvas-agent-runtime-error,
 .canvas-agent-runtime-failure {
@@ -1032,7 +1248,7 @@
     border-bottom: 0;
     border-radius: 16px 0 0 0;
     background: var(--background);
-    animation: agent-clarification-enter 220ms cubic-bezier(.2, .8, .2, 1) both;
+    animation: agent-clarification-enter 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 .agent-clarification-card.is-busy {
@@ -1106,7 +1322,9 @@
     place-items: center;
     border-radius: 8px;
     background: transparent;
-    transition: background-color 150ms cubic-bezier(.2, .8, .2, 1), color 150ms cubic-bezier(.2, .8, .2, 1);
+    transition:
+        background-color 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        color 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .agent-clarification-nav-button:hover:not(:disabled),
@@ -1152,7 +1370,10 @@
     border-radius: 8px;
     background: transparent;
     text-align: left;
-    transition: border-color 150ms cubic-bezier(.2, .8, .2, 1), background-color 150ms cubic-bezier(.2, .8, .2, 1), color 150ms cubic-bezier(.2, .8, .2, 1);
+    transition:
+        border-color 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        background-color 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        color 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .agent-clarification-option:hover,
@@ -1232,7 +1453,10 @@
     background: transparent;
     font-size: 13px;
     line-height: 20px;
-    transition: background-color 150ms cubic-bezier(.2, .8, .2, 1), color 150ms cubic-bezier(.2, .8, .2, 1), transform 150ms cubic-bezier(.2, .8, .2, 1);
+    transition:
+        background-color 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        color 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+        transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .agent-clarification-submit {
@@ -1253,7 +1477,7 @@
 }
 
 .agent-clarification-submit:not(:disabled):active {
-    transform: scale(.97);
+    transform: scale(0.97);
 }
 
 .agent-clarification-history-wrap {

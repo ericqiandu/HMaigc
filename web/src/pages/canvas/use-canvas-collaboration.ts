@@ -3,12 +3,7 @@ import { App } from "antd";
 import { nanoid } from "nanoid";
 
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
-import {
-    applyCanvasMutationPatch,
-    diffCanvasCollaborationDocument,
-    isEmptyCanvasMutationPatch,
-    type CanvasCollaborationDocument,
-} from "@/lib/canvas/canvas-collaboration-document";
+import { applyCanvasMutationPatch, diffCanvasCollaborationDocument, isEmptyCanvasMutationPatch, type CanvasCollaborationDocument } from "@/lib/canvas/canvas-collaboration-document";
 import {
     canvasCollaborationSocketURL,
     getCanvasCollaboration,
@@ -53,20 +48,7 @@ const MUTATION_DEBOUNCE_MS = 450;
 const PRESENCE_DEBOUNCE_MS = 50;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
-export function useCanvasCollaboration({
-    projectId,
-    projectLoaded,
-    project,
-    nodes,
-    connections,
-    backgroundMode,
-    showImageInfo,
-    selectedNodeIds,
-    setNodes,
-    setConnections,
-    setBackgroundMode,
-    setShowImageInfo,
-}: UseCanvasCollaborationOptions) {
+export function useCanvasCollaboration({ projectId, projectLoaded, project, nodes, connections, backgroundMode, showImageInfo, selectedNodeIds, setNodes, setConnections, setBackgroundMode, setShowImageInfo }: UseCanvasCollaborationOptions) {
     const { message } = App.useApp();
     const updateProject = useCanvasStore((state) => state.updateProject);
     const enabled = canvasUsesRevisionedMutations(projectLoaded, project?.id);
@@ -113,72 +95,81 @@ export function useCanvasCollaboration({
         selectedNodeIdsRef.current = selectedNodeIds;
     }, [selectedNodeIds]);
 
-    const applyDocument = useCallback((document: CanvasCollaborationDocument, metadata?: Partial<CanvasProject>) => {
-        const migratedGraph = removeRetiredCanvasNodes(document);
-        const migratedDocument = { ...document, ...migratedGraph };
-        setNodes(migratedDocument.nodes);
-        setConnections(migratedDocument.connections);
-        setBackgroundMode(document.backgroundMode);
-        setShowImageInfo(document.showImageInfo);
-        updateProject(projectId, {
-            title: document.title,
-            nodes: migratedDocument.nodes,
-            connections: migratedDocument.connections,
-            backgroundMode: document.backgroundMode,
-            showImageInfo: document.showImageInfo,
-            directorScenes: document.directorScenes,
-            ...metadata,
-        });
-        currentDocumentRef.current = migratedDocument;
-    }, [projectId, setBackgroundMode, setConnections, setNodes, setShowImageInfo, updateProject]);
+    const applyDocument = useCallback(
+        (document: CanvasCollaborationDocument, metadata?: Partial<CanvasProject>) => {
+            const migratedGraph = removeRetiredCanvasNodes(document);
+            const migratedDocument = { ...document, ...migratedGraph };
+            setNodes(migratedDocument.nodes);
+            setConnections(migratedDocument.connections);
+            setBackgroundMode(document.backgroundMode);
+            setShowImageInfo(document.showImageInfo);
+            updateProject(projectId, {
+                title: document.title,
+                nodes: migratedDocument.nodes,
+                connections: migratedDocument.connections,
+                backgroundMode: document.backgroundMode,
+                showImageInfo: document.showImageInfo,
+                directorScenes: document.directorScenes,
+                ...metadata,
+            });
+            currentDocumentRef.current = migratedDocument;
+        },
+        [projectId, setBackgroundMode, setConnections, setNodes, setShowImageInfo, updateProject],
+    );
 
-    const applySnapshot = useCallback((state: CanvasCollaborationState) => {
-        const remote = collaborationDocumentFromProject(state.project);
-        const previousBase = baseDocumentRef.current;
-        const desired = currentDocumentRef.current;
-        const pending = previousBase && desired ? diffCanvasCollaborationDocument(previousBase, desired) : {};
-        const canPreservePending = state.access.canEdit && !isEmptyCanvasMutationPatch(pending);
-        const nextDocument = canPreservePending ? applyCanvasMutationPatch(remote, pending) : remote;
-        baseDocumentRef.current = remote;
-        revisionRef.current = state.project.revision || 0;
-        inFlightRef.current = null;
-        accessRef.current = state.access;
-        setAccess(state.access);
-        setManagementState(state);
-        setPresenceByConnection({});
-        setStatus(state.access.canEdit ? "online" : "readonly");
-        applyDocument(nextDocument, collaborationMetadata(state));
-        if (canPreservePending) {
-            message.warning("协作连接已恢复，已保留本地未提交修改");
-        } else if (!state.access.canEdit && !isEmptyCanvasMutationPatch(pending)) {
-            message.warning("当前团队画布已变为只读，本地未提交修改未保存");
-        }
-    }, [applyDocument, message]);
-
-    const resync = useCallback(async (reason: string) => {
-        const base = baseDocumentRef.current;
-        const desired = currentDocumentRef.current;
-        const pending = base && desired ? diffCanvasCollaborationDocument(base, desired) : {};
-        try {
-            const state = await getCanvasCollaboration(projectId);
+    const applySnapshot = useCallback(
+        (state: CanvasCollaborationState) => {
             const remote = collaborationDocumentFromProject(state.project);
-            const merged = isEmptyCanvasMutationPatch(pending) ? remote : applyCanvasMutationPatch(remote, pending);
+            const previousBase = baseDocumentRef.current;
+            const desired = currentDocumentRef.current;
+            const pending = previousBase && desired ? diffCanvasCollaborationDocument(previousBase, desired) : {};
+            const canPreservePending = state.access.canEdit && !isEmptyCanvasMutationPatch(pending);
+            const nextDocument = canPreservePending ? applyCanvasMutationPatch(remote, pending) : remote;
             baseDocumentRef.current = remote;
             revisionRef.current = state.project.revision || 0;
             inFlightRef.current = null;
             accessRef.current = state.access;
             setAccess(state.access);
             setManagementState(state);
+            setPresenceByConnection({});
             setStatus(state.access.canEdit ? "online" : "readonly");
-            applyDocument(merged, collaborationMetadata(state));
-            if (!isEmptyCanvasMutationPatch(pending) && state.access.canEdit) {
-                message.warning(`${reason}，已同步最新版本并保留本地未提交修改`);
+            applyDocument(nextDocument, collaborationMetadata(state));
+            if (canPreservePending) {
+                message.warning("协作连接已恢复，已保留本地未提交修改");
+            } else if (!state.access.canEdit && !isEmptyCanvasMutationPatch(pending)) {
+                message.warning("当前团队画布已变为只读，本地未提交修改未保存");
             }
-        } catch (error) {
-            setStatus("error");
-            message.error(error instanceof Error ? `画布协作恢复失败：${error.message}` : "画布协作恢复失败");
-        }
-    }, [applyDocument, message, projectId]);
+        },
+        [applyDocument, message],
+    );
+
+    const resync = useCallback(
+        async (reason: string) => {
+            const base = baseDocumentRef.current;
+            const desired = currentDocumentRef.current;
+            const pending = base && desired ? diffCanvasCollaborationDocument(base, desired) : {};
+            try {
+                const state = await getCanvasCollaboration(projectId);
+                const remote = collaborationDocumentFromProject(state.project);
+                const merged = isEmptyCanvasMutationPatch(pending) ? remote : applyCanvasMutationPatch(remote, pending);
+                baseDocumentRef.current = remote;
+                revisionRef.current = state.project.revision || 0;
+                inFlightRef.current = null;
+                accessRef.current = state.access;
+                setAccess(state.access);
+                setManagementState(state);
+                setStatus(state.access.canEdit ? "online" : "readonly");
+                applyDocument(merged, collaborationMetadata(state));
+                if (!isEmptyCanvasMutationPatch(pending) && state.access.canEdit) {
+                    message.warning(`${reason}，已同步最新版本并保留本地未提交修改`);
+                }
+            } catch (error) {
+                setStatus("error");
+                message.error(error instanceof Error ? `画布协作恢复失败：${error.message}` : "画布协作恢复失败");
+            }
+        },
+        [applyDocument, message, projectId],
+    );
 
     const sendPendingMutation = useCallback(() => {
         const socket = socketRef.current;
@@ -190,10 +181,12 @@ export function useCanvasCollaboration({
         const id = nanoid();
         const target = applyCanvasMutationPatch(base, patch);
         inFlightRef.current = { id, patch, target };
-        socket.send(JSON.stringify({
-            type: "mutation",
-            mutation: { baseRevision: revisionRef.current, clientMutationId: id, patch },
-        }));
+        socket.send(
+            JSON.stringify({
+                type: "mutation",
+                mutation: { baseRevision: revisionRef.current, clientMutationId: id, patch },
+            }),
+        );
     }, []);
 
     const scheduleMutation = useCallback(() => {
@@ -204,70 +197,74 @@ export function useCanvasCollaboration({
         }, MUTATION_DEBOUNCE_MS);
     }, [sendPendingMutation]);
 
-    const applyMutation = useCallback((mutation: CanvasMutationResult) => {
-        const base = baseDocumentRef.current;
-        const current = currentDocumentRef.current;
-        if (!base || !current || mutation.revision <= revisionRef.current) return;
-        if (mutation.revision !== revisionRef.current + 1) {
-            void resync("检测到协作版本缺口");
-            return;
-        }
-        const inFlight = inFlightRef.current;
-        const pending = inFlight?.id === mutation.clientMutationId
-            ? diffCanvasCollaborationDocument(inFlight.target, current)
-            : diffCanvasCollaborationDocument(base, current);
-        const remote = applyCanvasMutationPatch(base, mutation.patch);
-        const merged = isEmptyCanvasMutationPatch(pending) ? remote : applyCanvasMutationPatch(remote, pending);
-        baseDocumentRef.current = remote;
-        revisionRef.current = mutation.revision;
-        if (inFlight?.id === mutation.clientMutationId) inFlightRef.current = null;
-        applyDocument(merged, { revision: mutation.revision });
-        if (!isEmptyCanvasMutationPatch(pending)) scheduleMutation();
-    }, [applyDocument, resync, scheduleMutation]);
+    const applyMutation = useCallback(
+        (mutation: CanvasMutationResult) => {
+            const base = baseDocumentRef.current;
+            const current = currentDocumentRef.current;
+            if (!base || !current || mutation.revision <= revisionRef.current) return;
+            if (mutation.revision !== revisionRef.current + 1) {
+                void resync("检测到协作版本缺口");
+                return;
+            }
+            const inFlight = inFlightRef.current;
+            const pending = inFlight?.id === mutation.clientMutationId ? diffCanvasCollaborationDocument(inFlight.target, current) : diffCanvasCollaborationDocument(base, current);
+            const remote = applyCanvasMutationPatch(base, mutation.patch);
+            const merged = isEmptyCanvasMutationPatch(pending) ? remote : applyCanvasMutationPatch(remote, pending);
+            baseDocumentRef.current = remote;
+            revisionRef.current = mutation.revision;
+            if (inFlight?.id === mutation.clientMutationId) inFlightRef.current = null;
+            applyDocument(merged, { revision: mutation.revision });
+            if (!isEmptyCanvasMutationPatch(pending)) scheduleMutation();
+        },
+        [applyDocument, resync, scheduleMutation],
+    );
 
-    const handleEnvelope = useCallback((value: unknown) => {
-        if (!isCanvasRealtimeEnvelope(value)) {
-            setStatus("error");
-            message.error("协作服务返回了无法识别的数据");
-            return;
-        }
-        const envelope = value;
-        if (envelope.type === "snapshot") {
-            connectionIDRef.current = envelope.connectionId;
-            reconnectAttemptRef.current = 0;
-            applySnapshot(envelope.state);
-            return;
-        }
-        if (envelope.type === "mutation") {
-            applyMutation(envelope.mutation);
-            return;
-        }
-        if (envelope.type === "presence") {
-            setPresenceByConnection((current) => {
-                if (!envelope.presence.active) {
-                    const next = { ...current };
-                    delete next[envelope.presence.connectionId];
+    const handleEnvelope = useCallback(
+        (value: unknown) => {
+            if (!isCanvasRealtimeEnvelope(value)) {
+                setStatus("error");
+                message.error("协作服务返回了无法识别的数据");
+                return;
+            }
+            const envelope = value;
+            if (envelope.type === "snapshot") {
+                connectionIDRef.current = envelope.connectionId;
+                reconnectAttemptRef.current = 0;
+                applySnapshot(envelope.state);
+                return;
+            }
+            if (envelope.type === "mutation") {
+                applyMutation(envelope.mutation);
+                return;
+            }
+            if (envelope.type === "presence") {
+                setPresenceByConnection((current) => {
+                    if (!envelope.presence.active) {
+                        const next = { ...current };
+                        delete next[envelope.presence.connectionId];
+                        return next;
+                    }
+                    return { ...current, [envelope.presence.connectionId]: envelope.presence };
+                });
+                return;
+            }
+            if (envelope.error.status === 409) {
+                void resync("画布发生并发修改");
+                return;
+            }
+            inFlightRef.current = null;
+            message.error(envelope.error.message);
+            if (envelope.error.status === 402 || envelope.error.status === 403) {
+                setAccess((current) => {
+                    const next = current ? { ...current, canEdit: false } : current;
+                    accessRef.current = next;
                     return next;
-                }
-                return { ...current, [envelope.presence.connectionId]: envelope.presence };
-            });
-            return;
-        }
-        if (envelope.error.status === 409) {
-            void resync("画布发生并发修改");
-            return;
-        }
-        inFlightRef.current = null;
-        message.error(envelope.error.message);
-        if (envelope.error.status === 402 || envelope.error.status === 403) {
-            setAccess((current) => {
-                const next = current ? { ...current, canEdit: false } : current;
-                accessRef.current = next;
-                return next;
-            });
-            setStatus("readonly");
-        }
-    }, [applyMutation, applySnapshot, message, resync]);
+                });
+                setStatus("readonly");
+            }
+        },
+        [applyMutation, applySnapshot, message, resync],
+    );
 
     useEffect(() => {
         disposedRef.current = false;
@@ -344,13 +341,15 @@ export function useCanvasCollaboration({
         presenceTimerRef.current = window.setTimeout(() => {
             presenceTimerRef.current = null;
             if (socket.readyState !== WebSocket.OPEN) return;
-            socket.send(JSON.stringify({
-                type: "presence",
-                presence: {
-                    cursor: cursorRef.current,
-                    selectedNodeIds: Array.from(selectedNodeIdsRef.current).slice(0, 100),
-                },
-            }));
+            socket.send(
+                JSON.stringify({
+                    type: "presence",
+                    presence: {
+                        cursor: cursorRef.current,
+                        selectedNodeIds: Array.from(selectedNodeIdsRef.current).slice(0, 100),
+                    },
+                }),
+            );
         }, PRESENCE_DEBOUNCE_MS);
     }, [enabled]);
 
@@ -358,10 +357,13 @@ export function useCanvasCollaboration({
         schedulePresence();
     }, [schedulePresence, selectedNodeIds]);
 
-    const updateCursor = useCallback((next: Position | undefined) => {
-        cursorRef.current = next;
-        schedulePresence();
-    }, [schedulePresence]);
+    const updateCursor = useCallback(
+        (next: Position | undefined) => {
+            cursorRef.current = next;
+            schedulePresence();
+        },
+        [schedulePresence],
+    );
 
     const refreshManagementState = useCallback(async () => {
         const state = await getCanvasCollaboration(projectId);
@@ -372,23 +374,30 @@ export function useCanvasCollaboration({
         return state;
     }, [projectId, updateProject]);
 
-    const refreshRemoteState = useCallback(async (expectedRevision?: number) => {
-        const loadedState = await getCanvasCollaboration(projectId);
-        const state = expectedRevision === undefined ? loadedState : requireCanvasCollaborationRevision(loadedState, expectedRevision);
-        if ((state.project.revision || 0) < revisionRef.current) return;
-        applySnapshot(state);
-    }, [applySnapshot, projectId]);
+    const refreshRemoteState = useCallback(
+        async (expectedRevision?: number) => {
+            const loadedState = await getCanvasCollaboration(projectId);
+            const state = expectedRevision === undefined ? loadedState : requireCanvasCollaborationRevision(loadedState, expectedRevision);
+            if ((state.project.revision || 0) < revisionRef.current) return state;
+            applySnapshot(state);
+            return state;
+        },
+        [applySnapshot, projectId],
+    );
 
-    const adoptAuthoritativeBaseline = useCallback((state: CanvasCollaborationState) => {
-        baseDocumentRef.current = collaborationDocumentFromProject(state.project);
-        revisionRef.current = state.project.revision || 0;
-        inFlightRef.current = null;
-        accessRef.current = state.access;
-        setAccess(state.access);
-        setManagementState(state);
-        setStatus(state.access.canEdit ? "online" : "readonly");
-        updateProject(projectId, collaborationMetadata(state));
-    }, [projectId, updateProject]);
+    const adoptAuthoritativeBaseline = useCallback(
+        (state: CanvasCollaborationState) => {
+            baseDocumentRef.current = collaborationDocumentFromProject(state.project);
+            revisionRef.current = state.project.revision || 0;
+            inFlightRef.current = null;
+            accessRef.current = state.access;
+            setAccess(state.access);
+            setManagementState(state);
+            setStatus(state.access.canEdit ? "online" : "readonly");
+            updateProject(projectId, collaborationMetadata(state));
+        },
+        [projectId, updateProject],
+    );
 
     const flushPendingChanges = useCallback(async () => {
         if (!enabled) return;

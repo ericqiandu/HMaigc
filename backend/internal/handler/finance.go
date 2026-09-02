@@ -117,6 +117,20 @@ func RegisterFinanceRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, wallet)
 	})
+	r.GET("/wallet/balance", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		balance, err := svc.WalletBalance(user)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Header("Cache-Control", "private, no-store")
+		ok(c, balance)
+	})
 	r.POST("/channels/:id/voices/:voiceId/preview", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

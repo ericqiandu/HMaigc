@@ -104,7 +104,7 @@ func TestAgentMessageStreamRejectsLateFactsAfterRunInterrupt(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.InterruptAgentRun(scope, 1, now.Add(2*time.Second)); err != nil {
+	if _, err := repo.CancelAgentRunTree(scope, 1, now.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.AppendAgentMessageDelta(AppendAgentMessageDeltaInput{
@@ -300,6 +300,34 @@ func TestAgentThreadHistoryReturnsAllTurnsAndItemsInStableOrder(t *testing.T) {
 	}
 }
 
+func TestAgentThreadHistoryExcludesLocalCodexThreads(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	scope := agentruntime.Scope{
+		TenantKind: agentruntime.TenantPersonal, TenantID: "history-source-user", ActorUserID: "history-source-user",
+		CanvasID: "history-source-canvas", ThreadID: "managed-history-thread", RunID: "managed-history-run",
+		Access: agentruntime.AccessGrant{Level: agentruntime.AccessManager, SubscriptionActive: true},
+	}
+	if _, err := repo.CreateAgentThread(scope, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	localThread := model.AgentThread{
+		ID: "local-history-thread", TenantKind: scope.TenantKind, TenantID: scope.TenantID,
+		CreatedByUserID: scope.ActorUserID, DomainProjectID: scope.DomainProjectID, CanvasID: scope.CanvasID,
+		Status: agentruntime.ThreadActive, ReasoningHost: agentruntime.ReasoningHostLocalCodex,
+		ExternalThreadID: "codex-history-thread", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC().Add(time.Second),
+	}
+	if err := db.Create(&localThread).Error; err != nil {
+		t.Fatal(err)
+	}
+	records, err := repo.AgentThreadHistory(scope, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Thread.ID != scope.ThreadID || records[0].Thread.ReasoningHost != agentruntime.ReasoningHostManaged {
+		t.Fatalf("managed website history = %#v", records)
+	}
+}
+
 func TestAgentThreadHistoryRebuildsMissingTimelineOnlyForTerminalRuns(t *testing.T) {
 	repo, db := openAgentRuntimeRepositorySQLite(t)
 	scope := agentruntime.Scope{
@@ -310,7 +338,7 @@ func TestAgentThreadHistoryRebuildsMissingTimelineOnlyForTerminalRuns(t *testing
 	createAgentRunForTest(t, repo, scope)
 	now := time.Now().UTC()
 	initializeHistoryRun(t, repo, scope, "旧终态任务", now)
-	if _, err := repo.InterruptAgentRun(scope, 1, now.Add(time.Second)); err != nil {
+	if _, err := repo.CancelAgentRunTree(scope, 1, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Where("run_id = ?", scope.RunID).Delete(&model.AgentTimelineItem{}).Error; err != nil {

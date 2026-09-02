@@ -42,12 +42,6 @@ referer_sentinel="TASK4_REFERER_SENTINEL_NGINX"
 query_sentinel="TASK4_QUERY_SENTINEL_NGINX"
 ordinary_error_marker="TASK4_ORDINARY_API_ERROR_MARKER"
 sensitive_query="token_hash=${token_hash_sentinel}&code_url=https%3A%2F%2Fqr.invalid%2F${qr_url_sentinel}&provider_error=${provider_error_sentinel}&trace=${query_sentinel}"
-static_asset_base_url="${HMAIGC_STATIC_ASSET_BASE_URL:-https://static.hm.kunagent.com/hmaigc/web}"
-if [[ ! "$static_asset_base_url" =~ ^(https://[A-Za-z0-9.-]+(:[0-9]+)?)(/[^?#]*)?$ ]]; then
-  echo "HMAIGC_STATIC_ASSET_BASE_URL 不是可用于 CSP 的 HTTPS 静态资源地址：${static_asset_base_url}" >&2
-  exit 1
-fi
-static_asset_origin="${BASH_REMATCH[1]}"
 
 printf '%s\n' \
   '[req]' \
@@ -230,7 +224,7 @@ run_case edge success "$repo_root/deploy/nginx/hmaigc.conf.example" 80
 run_case edge failure "$repo_root/deploy/nginx/hmaigc.conf.example" 80
 
 failed=0
-checkout_csp="default-src 'self'; base-uri 'self'; connect-src 'self' https: wss: blob: data:; font-src 'self' data: ${static_asset_origin}; form-action 'self'; frame-ancestors 'self'; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; object-src 'none'; script-src 'self' 'sha256-I6LPtG0ZaWWZjaqo01/h/CYOOBc9+Ljxd5XeZLu6aEI=' 'sha256-zf//CZlNtBsdfnnVuMsQm4ACjMfCcJk7E/v9zZbYc+A=' 'wasm-unsafe-eval' ${static_asset_origin}; style-src 'self' 'unsafe-inline' ${static_asset_origin}; worker-src 'self' blob: ${static_asset_origin}"
+checkout_csp="default-src 'self'; base-uri 'self'; connect-src 'self' https: wss: blob: data: http://127.0.0.1:*; font-src 'self' https://static.hm.kunagent.com data:; form-action 'self'; frame-ancestors 'self'; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; object-src 'none'; script-src 'self' https://static.hm.kunagent.com 'sha256-I6LPtG0ZaWWZjaqo01/h/CYOOBc9+Ljxd5XeZLu6aEI=' 'sha256-zf//CZlNtBsdfnnVuMsQm4ACjMfCcJk7E/v9zZbYc+A=' 'wasm-unsafe-eval'; style-src 'self' https://static.hm.kunagent.com 'unsafe-inline'; worker-src 'self' https://static.hm.kunagent.com blob:"
 assert_single_header() {
   local headers="$1"
   local header_name="$2"

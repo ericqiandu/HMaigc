@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 
@@ -41,10 +42,17 @@ type UpdateCanvasCollaboratorRequest struct {
 }
 
 type CanvasDocumentPatch struct {
-	Title          *string          `json:"title,omitempty"`
-	BackgroundMode *string          `json:"backgroundMode,omitempty"`
-	ShowImageInfo  *bool            `json:"showImageInfo,omitempty"`
-	DirectorScenes *json.RawMessage `json:"directorScenes,omitempty"`
+	Title          *string              `json:"title,omitempty"`
+	BackgroundMode *string              `json:"backgroundMode,omitempty"`
+	ShowImageInfo  *bool                `json:"showImageInfo,omitempty"`
+	DirectorScenes *json.RawMessage     `json:"directorScenes,omitempty"`
+	Viewport       *CanvasViewportPatch `json:"viewport,omitempty"`
+}
+
+type CanvasViewportPatch struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	K float64 `json:"k"`
 }
 
 type CanvasMutationPatch struct {
@@ -68,6 +76,14 @@ type CanvasMutationResult struct {
 	ClientMutationID string              `json:"clientMutationId"`
 	Patch            CanvasMutationPatch `json:"patch"`
 	UpdatedAt        time.Time           `json:"updatedAt"`
+}
+
+type agentCanvasMutationCompletion struct {
+	Scope           agentruntime.Scope
+	ToolCallID      string
+	ActionVersion   int
+	ProposalHash    string
+	ToolReceiptJSON string
 }
 
 type CanvasMutationConflictError struct {
@@ -256,6 +272,15 @@ func (s *Service) CommitCanvasMutation(
 	canvasID string,
 	req CanvasMutationRequest,
 ) (*CanvasMutationResult, error) {
+	return s.commitCanvasMutation(user, canvasID, req, nil)
+}
+
+func (s *Service) commitCanvasMutation(
+	user *model.User,
+	canvasID string,
+	req CanvasMutationRequest,
+	agentCompletion *agentCanvasMutationCompletion,
+) (*CanvasMutationResult, error) {
 	canvas, access, err := s.canvasAccess(user.ID, canvasID)
 	if err != nil {
 		return nil, err
@@ -291,18 +316,22 @@ func (s *Service) CommitCanvasMutation(
 		return nil, BadAuthRequest("单次画布变更不能超过 2MB")
 	}
 	now := time.Now()
-	commit, err := s.repo.CommitCanvasChange(
-		canvas.ID,
-		newID(),
-		user.ID,
-		req.BaseRevision,
-		req.ClientMutationID,
-		string(changePayload),
-		now,
-		func(current *model.CanvasProject) (string, string, error) {
-			return applyCanvasMutationPatch(current.PayloadJSON, current.Title, req.Patch)
-		},
-	)
+	apply := func(current *model.CanvasProject) (string, string, error) {
+		return applyCanvasMutationPatch(current.PayloadJSON, current.Title, req.Patch)
+	}
+	var commit *repository.CanvasChangeCommit
+	if agentCompletion == nil {
+		commit, err = s.repo.CommitCanvasChange(
+			canvas.ID, newID(), user.ID, req.BaseRevision, req.ClientMutationID, string(changePayload), now, apply,
+		)
+	} else {
+		commit, err = s.repo.CommitAgentCanvasChange(repository.AgentCanvasChangeInput{
+			Scope: agentCompletion.Scope, ToolCallID: agentCompletion.ToolCallID, ActionVersion: agentCompletion.ActionVersion,
+			ProposalHash: agentCompletion.ProposalHash, CanvasID: canvas.ID, ChangeID: newID(), ActorUserID: user.ID,
+			BaseRevision: req.BaseRevision, ClientMutationID: req.ClientMutationID, ChangePayloadJSON: string(changePayload),
+			ToolReceiptJSON: agentCompletion.ToolReceiptJSON, Now: now, Apply: apply,
+		})
+	}
 	if errors.Is(err, repository.ErrCanvasRevisionConflict) {
 		return nil, &CanvasMutationConflictError{Code: "canvas_revision_conflict", Message: "画布版本已更新，请同步最新内容后重试"}
 	}
@@ -314,6 +343,9 @@ func (s *Service) CommitCanvasMutation(
 	}
 	if errors.Is(err, repository.ErrCanvasWriteForbidden) {
 		return nil, Forbidden("当前用户没有团队画布编辑权限")
+	}
+	if errors.Is(err, repository.ErrAgentRuntimeStepConflict) {
+		return nil, &CanvasMutationConflictError{Code: "canvas_tool_receipt_conflict", Message: "画布提交与 Agent 工具回执冲突"}
 	}
 	if err != nil {
 		return nil, err

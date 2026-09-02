@@ -119,8 +119,7 @@ function resourceProxyFileUrl(id: string) {
 export async function resolveResourceUrl(storageKey?: string, fallback = "") {
     const id = resourceIdFromStorageKey(storageKey);
     if (!id) return fallback;
-    const resource = await getResource(id).catch(() => null);
-    return resource ? resource.publicUrl || resourceFileUrl(id) : fallback;
+    return resourceFileUrl(id);
 }
 
 export async function getResourceBlob(storageKey: string) {

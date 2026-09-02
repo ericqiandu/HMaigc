@@ -29,6 +29,13 @@ type CreateAgentRunInput struct {
 	Now             time.Time
 }
 
+type CreateLocalAgentRunInput struct {
+	Scope            agentruntime.Scope
+	ExternalThreadID string
+	ClientRequestID  string
+	Now              time.Time
+}
+
 type AgentRunRecord struct {
 	Thread  model.AgentThread
 	Run     model.AgentRun
@@ -47,7 +54,7 @@ func (r *Repository) CreateAgentThread(scope agentruntime.Scope, now time.Time) 
 	if now.IsZero() {
 		return nil, errors.New("agent thread creation time is required")
 	}
-	return agentThreadForCreate(r.db, scope, now)
+	return agentThreadForCreate(r.db, scope, agentruntime.ReasoningHostManaged, "", now)
 }
 
 func (r *Repository) AgentThreadForActor(threadID string, actorUserID string) (*model.AgentThread, error) {
@@ -81,28 +88,46 @@ func (r *Repository) AgentRunIdentityForActor(runID string, actorUserID string) 
 }
 
 func (r *Repository) CreateAgentRun(input CreateAgentRunInput) (*AgentRunRecord, error) {
-	if err := input.Scope.Validate(); err != nil {
+	return r.createAgentRun(input.Scope, agentruntime.ReasoningHostManaged, "", input.ClientRequestID, input.Now)
+}
+
+func (r *Repository) CreateLocalAgentRun(input CreateLocalAgentRunInput) (*AgentRunRecord, error) {
+	return r.createAgentRun(input.Scope, agentruntime.ReasoningHostLocalCodex, input.ExternalThreadID, input.ClientRequestID, input.Now)
+}
+
+func (r *Repository) createAgentRun(
+	scope agentruntime.Scope,
+	reasoningHost agentruntime.ReasoningHost,
+	externalThreadID string,
+	clientRequestID string,
+	now time.Time,
+) (*AgentRunRecord, error) {
+	if err := scope.Validate(); err != nil {
 		return nil, err
 	}
-	input.ClientRequestID = strings.TrimSpace(input.ClientRequestID)
-	if input.ClientRequestID == "" || len(input.ClientRequestID) > 120 {
+	externalThreadID = strings.TrimSpace(externalThreadID)
+	if err := validateAgentReasoningSource(reasoningHost, externalThreadID); err != nil {
+		return nil, err
+	}
+	clientRequestID = strings.TrimSpace(clientRequestID)
+	if clientRequestID == "" || len(clientRequestID) > 120 {
 		return nil, errors.New("agent run client request id is invalid")
 	}
-	if input.Now.IsZero() {
+	if now.IsZero() {
 		return nil, errors.New("agent run creation time is required")
 	}
 	var record AgentRunRecord
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		thread, err := agentThreadForCreate(tx, input.Scope, input.Now)
+		thread, err := agentThreadForCreate(tx, scope, reasoningHost, externalThreadID, now)
 		if err != nil {
 			return err
 		}
 		record.Thread = *thread
 
 		run := model.AgentRun{
-			ID: input.Scope.RunID, ThreadID: input.Scope.ThreadID,
-			ActorUserID: input.Scope.ActorUserID, ClientRequestID: input.ClientRequestID,
-			Status: agentruntime.RunQueued, CreatedAt: input.Now, UpdatedAt: input.Now,
+			ID: scope.RunID, ThreadID: thread.ID, ReasoningHost: reasoningHost,
+			ActorUserID: scope.ActorUserID, ClientRequestID: clientRequestID,
+			Status: agentruntime.RunQueued, CreatedAt: now, UpdatedAt: now,
 		}
 		result := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "thread_id"}, {Name: "client_request_id"}},
@@ -113,10 +138,13 @@ func (r *Repository) CreateAgentRun(input CreateAgentRunInput) (*AgentRunRecord,
 		}
 		if result.RowsAffected == 0 {
 			var existing model.AgentRun
-			if err := tx.Where("thread_id = ? AND client_request_id = ?", input.Scope.ThreadID, input.ClientRequestID).First(&existing).Error; err != nil {
+			if err := tx.Where("thread_id = ? AND client_request_id = ?", thread.ID, clientRequestID).First(&existing).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return ErrAgentScopeConflict
+				}
 				return err
 			}
-			if existing.ActorUserID != input.Scope.ActorUserID {
+			if existing.ActorUserID != scope.ActorUserID || existing.ReasoningHost != reasoningHost {
 				return ErrAgentScopeConflict
 			}
 			record.Run = existing
@@ -155,36 +183,67 @@ func (r *Repository) AgentRunForClientRequest(scope agentruntime.Scope, clientRe
 	return &run, nil
 }
 
-func agentThreadForCreate(db *gorm.DB, scope agentruntime.Scope, now time.Time) (*model.AgentThread, error) {
+func agentThreadForCreate(
+	db *gorm.DB,
+	scope agentruntime.Scope,
+	reasoningHost agentruntime.ReasoningHost,
+	externalThreadID string,
+	now time.Time,
+) (*model.AgentThread, error) {
 	candidate := model.AgentThread{
-		ID: scope.ThreadID, TenantKind: scope.TenantKind, TenantID: scope.TenantID,
+		ID: scope.ThreadID, ReasoningHost: reasoningHost, ExternalThreadID: externalThreadID,
+		TenantKind: scope.TenantKind, TenantID: scope.TenantID,
 		CreatedByUserID: scope.ActorUserID, DomainProjectID: scope.DomainProjectID,
 		CanvasID: scope.CanvasID, Status: agentruntime.ThreadActive,
 		CreatedAt: now, UpdatedAt: now,
 	}
-	if err := db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "id"}},
-		DoNothing: true,
-	}).Create(&candidate).Error; err != nil {
+	if err := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&candidate).Error; err != nil {
 		return nil, fmt.Errorf("create agent thread: %w", err)
 	}
 	var thread model.AgentThread
-	if err := db.First(&thread, "id = ?", scope.ThreadID).Error; err != nil {
+	query := db.Where("id = ?", scope.ThreadID)
+	if reasoningHost == agentruntime.ReasoningHostLocalCodex {
+		query = db.Where(`tenant_kind = ? AND tenant_id = ? AND canvas_id = ?
+			AND reasoning_host = ? AND external_thread_id = ?`, scope.TenantKind, scope.TenantID,
+			scope.CanvasID, reasoningHost, externalThreadID)
+	}
+	if err := query.First(&thread).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrAgentScopeConflict
+		}
 		return nil, err
 	}
 	if thread.TenantKind != scope.TenantKind || thread.TenantID != scope.TenantID ||
-		thread.CreatedByUserID != scope.ActorUserID || thread.DomainProjectID != scope.DomainProjectID || thread.CanvasID != scope.CanvasID {
+		thread.CreatedByUserID != scope.ActorUserID || thread.DomainProjectID != scope.DomainProjectID || thread.CanvasID != scope.CanvasID ||
+		thread.ReasoningHost != reasoningHost || thread.ExternalThreadID != externalThreadID {
 		return nil, ErrAgentScopeConflict
 	}
 	return &thread, nil
+}
+
+func validateAgentReasoningSource(reasoningHost agentruntime.ReasoningHost, externalThreadID string) error {
+	if !reasoningHost.Valid() {
+		return errors.New("agent reasoning host is invalid")
+	}
+	if reasoningHost == agentruntime.ReasoningHostManaged && externalThreadID != "" {
+		return errors.New("managed agent thread cannot have an external thread id")
+	}
+	if reasoningHost == agentruntime.ReasoningHostLocalCodex && (externalThreadID == "" || len(externalThreadID) > 120) {
+		return errors.New("local Codex external thread id is invalid")
+	}
+	return nil
 }
 
 func (r *Repository) AgentRunForScope(scope agentruntime.Scope) (*model.AgentRun, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, err
 	}
+	return agentRunForScopeDB(r.db, scope)
+}
+
+func agentRunForScopeDB(db *gorm.DB, scope agentruntime.Scope) (*model.AgentRun, error) {
 	var run model.AgentRun
-	err := r.db.Table("agent_runs").
+	err := db.Table("agent_runs").
 		Select("agent_runs.*").
 		Joins("JOIN agent_threads ON agent_threads.id = agent_runs.thread_id").
 		Where(`agent_runs.id = ? AND agent_runs.thread_id = ? AND agent_runs.actor_user_id = ?

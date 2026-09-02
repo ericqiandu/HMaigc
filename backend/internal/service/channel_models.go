@@ -87,7 +87,7 @@ func (s *Service) AdminChannelModels(actor *model.User, channelID string) ([]Adm
 	for index := range items {
 		result[index] = AdminChannelModelView{
 			ChannelModel:         items[index],
-			ProviderCapabilities: publicProviderModelCapabilities(channel.InterfaceType, items[index].ModelKey),
+			ProviderCapabilities: publicProviderModelCapabilities(channel.InterfaceType, items[index].ModelKey, items[index].Capability),
 			WatermarkCapability:  publicWatermarkCapability(*channel, items[index]),
 		}
 	}
@@ -171,6 +171,9 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	if capability == "" {
 		return nil, BadAuthRequest("请选择模型能力")
 	}
+	if capability == "vision" && channel.InterfaceType != model.ChannelInterfaceChatCompletion && channel.InterfaceType != model.ChannelInterfaceOpenAIResponse {
+		return nil, BadAuthRequest("视觉理解模型仅支持 Chat Completions 或 Responses 接口")
+	}
 	accessPolicy := req.AccessPolicy
 	if accessPolicy == "" {
 		return nil, BadAuthRequest("请选择模型使用权限")
@@ -188,12 +191,15 @@ func (s *Service) SaveAdminChannelModel(actor *model.User, channelID string, id 
 	if billingMode == "per_second" && capability != "video" {
 		return nil, BadAuthRequest("只有视频模型可以按秒计费")
 	}
-	if billingMode == "token_usage" && capability != "text" {
-		return nil, BadAuthRequest("只有文本模型可以按 Token 用量计费")
+	if billingMode == "token_usage" && capability != "text" && capability != "vision" {
+		return nil, BadAuthRequest("只有文本或视觉理解模型可以按 Token 用量计费")
 	}
 	if billingMode == "token_usage" {
-		if !kuaiziModelSupportsTokenUsageBilling(modelKey) {
-			return nil, BadAuthRequest("Token 用量计费仅支持筷子托管 DeepSeek 文本模型")
+		if channel.InterfaceType != model.ChannelInterfaceChatCompletion && channel.InterfaceType != model.ChannelInterfaceOpenAIResponse {
+			return nil, BadAuthRequest("Token 用量计费需要 Chat Completions 或 Responses 接口")
+		}
+		if capability == "vision" && modelInputImageTokenCeiling(modelKey) <= 0 {
+			return nil, BadAuthRequest("视觉模型缺少已声明的图片 Token 上限")
 		}
 	}
 	priceStrategy := strings.TrimSpace(req.PriceStrategy)
@@ -465,7 +471,7 @@ func buildChannelModelPriceTiers(item *model.ChannelModel, requests []ChannelMod
 	configured := make(map[string]bool, len(baseRequests))
 	variants := []string{"standard"}
 	var managedSpec *ProviderModelSpec
-	if _, spec, managed := kuaiziProviderFamilyForModel(item.ModelKey); managed && spec.Capability == "video" {
+	if _, spec, managed := kuaiziProviderFamilyForModel(item.ModelKey); managed && (spec.Capability == "video" || (spec.Capability == "image" && len(spec.Qualities) > 0)) {
 		managedSpec = &spec
 		variants = providerPricingInputVariants(spec)
 		allowed = make(map[string]bool, len(spec.Resolutions))
@@ -489,7 +495,7 @@ func buildChannelModelPriceTiers(item *model.ChannelModel, requests []ChannelMod
 			inputVariant = "standard"
 		}
 		if !allowedVariants[inputVariant] {
-			return nil, BadAuthRequest("价格输入类型无效：" + inputVariant)
+			return nil, BadAuthRequest("价格变体无效：" + inputVariant)
 		}
 		key := channelModelPriceTierKey(resolution, inputVariant)
 		if configured[key] {

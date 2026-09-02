@@ -137,9 +137,14 @@ func TestPublicChannelPublishesProviderModelCapabilities(t *testing.T) {
 		PriceStrategy: "video_resolution", PriceConfigured: true, Enabled: true,
 		PriceTiers: []model.ChannelModelPriceTier{
 			{Resolution: "480P", InputVariant: "standard", UnitPriceMicrocredits: 1},
+			{Resolution: "480P", InputVariant: "standard_audio", UnitPriceMicrocredits: 1},
 			{Resolution: "480P", InputVariant: "reference_video", UnitPriceMicrocredits: 1},
 			{Resolution: "720P", InputVariant: "standard", UnitPriceMicrocredits: 1},
+			{Resolution: "720P", InputVariant: "standard_audio", UnitPriceMicrocredits: 1},
 			{Resolution: "720P", InputVariant: "reference_video", UnitPriceMicrocredits: 1},
+			{Resolution: "1080P", InputVariant: "standard", UnitPriceMicrocredits: 1},
+			{Resolution: "1080P", InputVariant: "standard_audio", UnitPriceMicrocredits: 1},
+			{Resolution: "1080P", InputVariant: "reference_video", UnitPriceMicrocredits: 1},
 		},
 	}
 
@@ -151,8 +156,28 @@ func TestPublicChannelPublishesProviderModelCapabilities(t *testing.T) {
 	if catalog.ModelCosts[0].WatermarkCapability != model.WatermarkCapabilityControlled || capabilities.WatermarkCapability != model.WatermarkCapabilityControlled {
 		t.Fatalf("seedance watermark capabilities = model %q provider %q", catalog.ModelCosts[0].WatermarkCapability, capabilities.WatermarkCapability)
 	}
-	if capabilities.DurationMax != 30 || capabilities.MaxImages != 30 || capabilities.MaxVideos != 10 || capabilities.MaxAudios != 10 || !capabilities.SupportsAudioOnly || !capabilities.RequiresAdaptiveFrames {
+	if capabilities.DurationMax != 30 || capabilities.MaxImages != 30 || capabilities.MaxImagesWithVideo != 30 || capabilities.MaxVideos != 10 || capabilities.MaxAudios != 10 || !capabilities.SupportsAudioOnly || !capabilities.RequiresAdaptiveFrames {
 		t.Fatalf("provider capabilities = %#v", capabilities)
+	}
+	if len(capabilities.Durations) != 27 || capabilities.Durations[0] != 4 || capabilities.Durations[len(capabilities.Durations)-1] != 30 {
+		t.Fatalf("provider durations = %#v", capabilities.Durations)
+	}
+	if !capabilities.SupportsTextToVideo || !capabilities.SupportsImageToVideo || !capabilities.SupportsReferenceVideo ||
+		!capabilities.SupportsNativeAudio || !capabilities.SupportsDialogue || !capabilities.SupportsVoiceReference ||
+		capabilities.SupportsLipSync || capabilities.SupportsIndependentAudio {
+		t.Fatalf("provider media delivery capabilities = %#v", capabilities)
+	}
+	if strings.Join(capabilities.AdaptiveRatioModes, ",") != "text,image,first_last_frame,image_reference,omni_reference" || strings.Join(capabilities.RequiredAdaptiveRatioModes, ",") != "first_last_frame" {
+		t.Fatalf("provider adaptive-ratio modes = allowed %#v required %#v", capabilities.AdaptiveRatioModes, capabilities.RequiredAdaptiveRatioModes)
+	}
+	if strings.Join(capabilities.GenerationModes, ",") != "text,image,first_last_frame,image_reference,omni_reference" {
+		t.Fatalf("provider generation modes = %#v", capabilities.GenerationModes)
+	}
+	if strings.Join(capabilities.Resolutions, ",") != "480p,720p,1080p" {
+		t.Fatalf("provider resolutions = %#v", capabilities.Resolutions)
+	}
+	if strings.Join(capabilities.InputVariants, ",") != "standard,standard_audio,reference_video" {
+		t.Fatalf("provider pricing variants = %#v", capabilities.InputVariants)
 	}
 	encoded, err := json.Marshal(capabilities)
 	if err != nil {
@@ -163,17 +188,148 @@ func TestPublicChannelPublishesProviderModelCapabilities(t *testing.T) {
 	}
 }
 
+func TestDirectMediaInterfacesPublishExactCapabilities(t *testing.T) {
+	tests := []struct {
+		name          string
+		interfaceType model.ChannelInterfaceType
+		modelKey      string
+		assert        func(*testing.T, *PublicProviderCapabilities)
+	}{
+		{
+			name: "MiniMax H3 video", interfaceType: model.ChannelInterfaceMiniMaxVideo, modelKey: miniMaxH3Model,
+			assert: func(t *testing.T, capabilities *PublicProviderCapabilities) {
+				t.Helper()
+				if len(capabilities.Durations) != 12 || capabilities.Durations[0] != 4 || capabilities.Durations[11] != 15 {
+					t.Fatalf("durations = %#v", capabilities.Durations)
+				}
+				if !capabilities.SupportsTextToVideo || !capabilities.SupportsImageToVideo || !capabilities.SupportsReferenceVideo ||
+					capabilities.SupportsNativeAudio || capabilities.SupportsDialogue || !capabilities.SupportsVoiceReference ||
+					capabilities.SupportsLipSync || capabilities.SupportsIndependentAudio {
+					t.Fatalf("MiniMax capabilities = %#v", capabilities)
+				}
+				if strings.Join(capabilities.InputVariants, ",") != "standard" {
+					t.Fatalf("MiniMax pricing variants = %#v", capabilities.InputVariants)
+				}
+				if strings.Join(capabilities.GenerationModes, ",") != "text,image,first_last_frame,image_reference,omni_reference" {
+					t.Fatalf("MiniMax generation modes = %#v", capabilities.GenerationModes)
+				}
+				if strings.Join(capabilities.AdaptiveRatioModes, ",") != "image,first_last_frame,image_reference,omni_reference" || strings.Join(capabilities.RequiredAdaptiveRatioModes, ",") != strings.Join(capabilities.AdaptiveRatioModes, ",") {
+					t.Fatalf("MiniMax adaptive-ratio modes = allowed %#v required %#v", capabilities.AdaptiveRatioModes, capabilities.RequiredAdaptiveRatioModes)
+				}
+			},
+		},
+		{
+			name: "Kling direct video", interfaceType: model.ChannelInterfaceKlingVideo, modelKey: "kling-v2-6",
+			assert: func(t *testing.T, capabilities *PublicProviderCapabilities) {
+				t.Helper()
+				if len(capabilities.Durations) != 2 || capabilities.Durations[0] != 5 || capabilities.Durations[1] != 10 || !capabilities.SupportsTextToVideo ||
+					!capabilities.SupportsImageToVideo || capabilities.SupportsReferenceVideo || capabilities.SupportsNativeAudio ||
+					capabilities.SupportsDialogue || capabilities.SupportsVoiceReference || capabilities.SupportsLipSync || capabilities.SupportsIndependentAudio {
+					t.Fatalf("Kling capabilities = %#v", capabilities)
+				}
+				if strings.Join(capabilities.AdaptiveRatioModes, ",") != "image,first_last_frame" || strings.Join(capabilities.RequiredAdaptiveRatioModes, ",") != "image,first_last_frame" {
+					t.Fatalf("Kling adaptive-ratio modes = allowed %#v required %#v", capabilities.AdaptiveRatioModes, capabilities.RequiredAdaptiveRatioModes)
+				}
+				if strings.Join(capabilities.GenerationModes, ",") != "text,image,first_last_frame" {
+					t.Fatalf("Kling generation modes = %#v", capabilities.GenerationModes)
+				}
+			},
+		},
+		{
+			name: "MiniMax speech", interfaceType: model.ChannelInterfaceMiniMaxSpeech, modelKey: "speech-2.6-hd",
+			assert: func(t *testing.T, capabilities *PublicProviderCapabilities) {
+				t.Helper()
+				if capabilities.Capability != "audio" || !capabilities.SupportsDialogue || !capabilities.SupportsIndependentAudio ||
+					capabilities.SupportsTextToVideo || capabilities.SupportsImageToVideo || capabilities.SupportsReferenceVideo ||
+					capabilities.SupportsNativeAudio || capabilities.SupportsVoiceReference || capabilities.SupportsLipSync {
+					t.Fatalf("speech capabilities = %#v", capabilities)
+				}
+				if len(capabilities.GenerationModes) != 0 {
+					t.Fatalf("speech generation modes = %#v", capabilities.GenerationModes)
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			capabilities := publicProviderModelCapabilities(test.interfaceType, test.modelKey, capabilityForChannel(model.ModelChannel{InterfaceType: test.interfaceType}))
+			if capabilities == nil {
+				t.Fatal("provider capabilities missing")
+			}
+			test.assert(t, capabilities)
+		})
+	}
+}
+
+func TestDirectChatInterfacesPublishExplicitVisionCapabilities(t *testing.T) {
+	for _, interfaceType := range []model.ChannelInterfaceType{model.ChannelInterfaceChatCompletion, model.ChannelInterfaceOpenAIResponse} {
+		capabilities := publicProviderModelCapabilities(interfaceType, "deepseek-v4-flash-vision-exp", "vision")
+		if capabilities == nil || capabilities.Capability != "vision" || capabilities.MaxInputImageTokens != 384 || !capabilities.SupportsTokenUsageBilling {
+			t.Fatalf("%s vision capabilities = %#v", interfaceType, capabilities)
+		}
+		if capabilities.SupportsTextToVideo || capabilities.SupportsImageToVideo || capabilities.SupportsReferenceVideo || len(capabilities.GenerationModes) != 0 {
+			t.Fatalf("%s vision model claimed media generation features: %#v", interfaceType, capabilities)
+		}
+	}
+	if got := publicProviderModelCapabilities(model.ChannelInterfaceChatCompletion, "custom-chat", "text"); got == nil || got.Capability != "text" || !got.SupportsTokenUsageBilling {
+		t.Fatalf("generic direct text capabilities = %#v", got)
+	}
+	if got := publicProviderModelCapabilities(model.ChannelInterfaceChatCompletion, "custom-vision", "vision"); got == nil || got.SupportsTokenUsageBilling || got.MaxInputImageTokens != 0 {
+		t.Fatalf("undeclared direct vision capabilities = %#v", got)
+	}
+}
+
+func TestSaveAdminChannelModelAllowsVisionOnlyOnChatCompatibleInterfaces(t *testing.T) {
+	for _, testCase := range []struct {
+		name          string
+		interfaceType model.ChannelInterfaceType
+		wantError     bool
+	}{
+		{name: "chat completions", interfaceType: model.ChannelInterfaceChatCompletion},
+		{name: "responses", interfaceType: model.ChannelInterfaceOpenAIResponse},
+		{name: "image interface", interfaceType: model.ChannelInterfaceOpenAIImage, wantError: true},
+		{name: "video interface", interfaceType: model.ChannelInterfaceNewAPIVideo, wantError: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.AutoMigrate(&model.ModelChannel{}, &model.ChannelModel{}, &model.ChannelModelPriceTier{}, &model.AdminAuditEvent{}); err != nil {
+				t.Fatal(err)
+			}
+			channel := model.ModelChannel{ID: "vision-channel", Scope: model.ChannelScopeSystem, Enabled: true, Name: "Vision", InterfaceType: testCase.interfaceType, ModelsJSON: "[]"}
+			if err := db.Create(&channel).Error; err != nil {
+				t.Fatal(err)
+			}
+			svc := &Service{repo: repository.New(db), dataDir: t.TempDir()}
+			enabled := true
+			saved, saveErr := svc.SaveAdminChannelModel(&model.User{ID: "admin", Role: model.UserRoleAdmin}, channel.ID, "", ChannelModelRequest{
+				ModelKey: "deepseek-v4-flash-vision-exp", DisplayName: "DeepSeek Vision", BrandKey: "deepseek",
+				AccessPolicy: model.ModelAccessAuthenticated, Capability: "vision", BillingMode: "token_usage",
+				PriceStrategy: "token", PriceConfigured: true, Enabled: &enabled,
+			})
+			if testCase.wantError {
+				if saveErr == nil {
+					t.Fatalf("vision model was accepted for %s", testCase.interfaceType)
+				}
+				return
+			}
+			if saveErr != nil || saved == nil || saved.Capability != "vision" {
+				t.Fatalf("saved vision model = %#v, error = %v", saved, saveErr)
+			}
+		})
+	}
+}
+
 func TestPublicChannelPublishesImageParameterCapabilities(t *testing.T) {
 	channel := model.ModelChannel{ID: "channel-image", Scope: model.ChannelScopeSystem, Enabled: true}
 	item := model.ChannelModel{
 		ID: "gpt-image2", ChannelID: channel.ID, ProviderCredentialID: "image-credential", ModelKey: "kz_gpt_image2", DisplayName: "GPT Image 2",
 		AccessPolicy: model.ModelAccessAuthenticated, Capability: "image", BillingMode: "fixed_request",
 		PriceStrategy: "image_resolution", PriceConfigured: true, Enabled: true,
-		PriceTiers: []model.ChannelModelPriceTier{
-			{Resolution: "1K", UnitPriceMicrocredits: 1},
-			{Resolution: "2K", UnitPriceMicrocredits: 1},
-			{Resolution: "4K", UnitPriceMicrocredits: 1},
-		},
+		PriceTiers: gptImage2TestPriceTiers("gpt-image2", 1),
 	}
 
 	catalog := publicChannel(channel, false, []model.ChannelModel{item}, false)
@@ -208,7 +364,7 @@ func TestPublicChannelPublishesAPIMartImageParameterCapabilities(t *testing.T) {
 		t.Fatalf("APIMart image provider capabilities missing: %#v", catalog.ModelCosts)
 	}
 	capabilities := catalog.ModelCosts[0].ProviderCapabilities
-	if capabilities.ModelKey != "gpt-image-2" || capabilities.UpstreamMode != "gpt-image-2" || capabilities.Capability != "image" {
+	if capabilities.ProviderFamily != "apimart" || capabilities.ModelKey != "gpt-image-2" || capabilities.UpstreamMode != "gpt-image-2" || capabilities.Capability != "image" {
 		t.Fatalf("APIMart image identity capabilities = %#v", capabilities)
 	}
 	if strings.Join(capabilities.Resolutions, ",") != "1K,2K,4K" || len(capabilities.Qualities) != 0 {
@@ -222,6 +378,15 @@ func TestPublicChannelPublishesAPIMartImageParameterCapabilities(t *testing.T) {
 	}
 	if catalog.ModelCosts[0].WatermarkCapability != model.WatermarkCapabilityUnsupported || capabilities.WatermarkCapability != model.WatermarkCapabilityUnsupported {
 		t.Fatalf("APIMart image watermark capabilities = model %q provider %q", catalog.ModelCosts[0].WatermarkCapability, capabilities.WatermarkCapability)
+	}
+	encoded, err := json.Marshal(capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"referenceVideoResolutions", "generatedAudioResolutions", "durations", "generationModes", "adaptiveRatioModes", "requiredAdaptiveRatioModes", "tools"} {
+		if strings.Contains(string(encoded), `"`+field+`":null`) {
+			t.Fatalf("APIMart capability field %s encoded as null: %s", field, encoded)
+		}
 	}
 }
 
@@ -404,7 +569,7 @@ func TestSaveAdminChannelModelPersistsAccessPolicyAndAuditAtomically(t *testing.
 	}
 }
 
-func TestSaveAdminChannelModelRejectsTokenBillingForUnmanagedTextModel(t *testing.T) {
+func TestSaveAdminChannelModelAllowsResponseUsageBillingForDirectTextModel(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -419,12 +584,12 @@ func TestSaveAdminChannelModelRejectsTokenBillingForUnmanagedTextModel(t *testin
 	svc := &Service{repo: repository.New(db), dataDir: t.TempDir()}
 	admin := &model.User{ID: "admin-1", Role: model.UserRoleAdmin}
 	enabled := true
-	_, err = svc.SaveAdminChannelModel(admin, channel.ID, "", ChannelModelRequest{
+	saved, err := svc.SaveAdminChannelModel(admin, channel.ID, "", ChannelModelRequest{
 		ModelKey: "custom-text-model", DisplayName: "Custom Text", BrandKey: "deepseek",
 		AccessPolicy: model.ModelAccessAuthenticated, Capability: "text", BillingMode: "token_usage", PriceStrategy: "token",
 		PriceConfigured: true, Enabled: &enabled,
 	})
-	if err == nil || !strings.Contains(err.Error(), "筷子托管") {
-		t.Fatalf("unmanaged token billing error = %v", err)
+	if err != nil || saved == nil || saved.BillingMode != "token_usage" || saved.PriceStrategy != "token" {
+		t.Fatalf("direct token-billed text model = %#v, error = %v", saved, err)
 	}
 }

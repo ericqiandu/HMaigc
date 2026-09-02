@@ -65,22 +65,27 @@ func TestBuildChannelModelPriceTiersAcceptsOnlyVideoGenerationResolutions(t *tes
 	}
 }
 
-func TestBuildSeedancePriceTiersRequiresResolutionAndReferenceVariant(t *testing.T) {
+func TestBuildSeedancePriceTiersRequiresEveryPublishedInputVariant(t *testing.T) {
 	item := &model.ChannelModel{
 		ID: "seedance-25", ModelKey: "doubao-seedance-2-5-260628",
 		PriceStrategy: "video_resolution", PriceConfigured: true, PriceVersion: 2,
 	}
 	requests := []ChannelModelPriceTierRequest{
 		{Resolution: "480P", InputVariant: "standard", UnitPriceMicrocredits: 670_000},
+		{Resolution: "480P", InputVariant: "standard_audio", UnitPriceMicrocredits: 670_000},
 		{Resolution: "480P", InputVariant: "reference_video", UnitPriceMicrocredits: 720_000},
 		{Resolution: "720P", InputVariant: "standard", UnitPriceMicrocredits: 1_510_000},
+		{Resolution: "720P", InputVariant: "standard_audio", UnitPriceMicrocredits: 1_510_000},
 		{Resolution: "720P", InputVariant: "reference_video", UnitPriceMicrocredits: 1_630_000},
+		{Resolution: "1080P", InputVariant: "standard", UnitPriceMicrocredits: 3_740_000},
+		{Resolution: "1080P", InputVariant: "standard_audio", UnitPriceMicrocredits: 3_740_000},
+		{Resolution: "1080P", InputVariant: "reference_video", UnitPriceMicrocredits: 4_000_000},
 	}
 	if _, err := buildChannelModelPriceTiers(item, requests); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := buildChannelModelPriceTiers(item, requests[:3]); err == nil {
-		t.Fatal("incomplete Seedance four-tier price was accepted")
+	if _, err := buildChannelModelPriceTiers(item, requests[:8]); err == nil {
+		t.Fatal("incomplete Seedance input-variant price matrix was accepted")
 	}
 }
 

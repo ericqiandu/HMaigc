@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { collectJavaScriptImportClosure, collectStaticAssetClosure } from "../scripts/bundle-budget-domain.mjs";
+import {
+    collectJavaScriptImportClosure,
+    collectStaticAssetClosure,
+    evaluateJavaScriptRequestBudget,
+} from "../scripts/bundle-budget-domain.mjs";
 
 describe("bundle budget import closure", () => {
     test("counts every unique JavaScript dependency once and excludes non-JavaScript assets", () => {
@@ -44,5 +48,23 @@ describe("bundle budget import closure", () => {
         };
 
         expect(collectStaticAssetClosure(manifest, ["src/pages/canvas/project.tsx"])).toEqual(["assets/canvas-texture.webp", "assets/project-font.woff2"]);
+    });
+});
+
+describe("bundle budget request limits", () => {
+    test("fails when the JavaScript closure exceeds the configured request count", () => {
+        expect(evaluateJavaScriptRequestBudget(["a.js", "b.js", "c.js", "d.js"], 3)).toEqual({
+            requestCount: 4,
+            maxRequests: 3,
+            passed: false,
+        });
+    });
+
+    test("passes when the JavaScript closure stays within the configured request count", () => {
+        expect(evaluateJavaScriptRequestBudget(["a.js", "b.js", "c.js"], 3)).toEqual({
+            requestCount: 3,
+            maxRequests: 3,
+            passed: true,
+        });
     });
 });

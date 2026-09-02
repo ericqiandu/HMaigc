@@ -13,6 +13,8 @@ import (
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/service"
+
+	"gorm.io/gorm"
 )
 
 func TestAgentRuntimeHTTPCreatesScopedThreadAndRejectsMalformedRequests(t *testing.T) {
@@ -23,6 +25,7 @@ func TestAgentRuntimeHTTPCreatesScopedThreadAndRejectsMalformedRequests(t *testi
 	svc := service.New(repository.New(fixture.db), t.TempDir())
 	RegisterAgentRuntimeRoutes(fixture.router.Group("/api"), svc)
 	createAgentRuntimeHandlerCanvas(t, fixture, "handler-agent-canvas")
+	configureAgentRuntimeHandlerDefaultVision(t, svc, fixture.db)
 
 	if response := fixture.request(http.MethodPost, "/api/agent/threads", `{"canvasId":"handler-agent-canvas"}`, "", ""); response.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous status = %d, body = %s", response.Code, response.Body.String())
@@ -58,6 +61,100 @@ func TestAgentRuntimeHTTPCreatesScopedThreadAndRejectsMalformedRequests(t *testi
 	}
 }
 
+func TestAgentLocalRuntimeHTTPIsStrictScopedAndCASProtected(t *testing.T) {
+	fixture := openProviderAccountHandlerFixture(t)
+	if err := database.EnsureAgentRuntimeIntegritySchema(fixture.db); err != nil {
+		t.Fatal(err)
+	}
+	svc := service.New(repository.New(fixture.db), t.TempDir())
+	RegisterAgentRuntimeRoutes(fixture.router.Group("/api"), svc)
+	createAgentRuntimeHandlerCanvas(t, fixture, "handler-agent-local-canvas")
+	configureAgentRuntimeHandlerDefaultVision(t, svc, fixture.db)
+
+	startPath := "/api/agent/local/runs"
+	startBody := `{"canvasId":"handler-agent-local-canvas","externalThreadId":"codex-thread-handler","clientRequestId":"local-turn-1","userMessage":"读取当前画布","maxSteps":8,"configuration":{"generationModels":{},"skillDirs":[],"attachments":[],"executionMode":"automatic"}}`
+	if response := fixture.request(http.MethodPost, startPath, startBody, "", ""); response.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous local start status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if response := fixture.request(http.MethodPost, startPath, strings.TrimSuffix(startBody, "}")+`,"unexpected":true}`, fixture.userCookie, ""); response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown local start field status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if response := fixture.request(http.MethodPost, startPath, startBody+` {}`, fixture.userCookie, ""); response.Code != http.StatusBadRequest {
+		t.Fatalf("trailing local start status = %d, body = %s", response.Code, response.Body.String())
+	}
+	oversizedBody := strings.Replace(startBody, "读取当前画布", strings.Repeat("x", agentRuntimeRequestLimit), 1)
+	if response := fixture.request(http.MethodPost, startPath, oversizedBody, fixture.userCookie, ""); response.Code != http.StatusBadRequest {
+		t.Fatalf("oversized local start status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	startedResponse := fixture.request(http.MethodPost, startPath, startBody, fixture.userCookie, "")
+	if startedResponse.Code != http.StatusOK {
+		t.Fatalf("local start status = %d, body = %s", startedResponse.Code, startedResponse.Body.String())
+	}
+	var startedEnvelope struct {
+		Data service.AgentRuntimeView `json:"data"`
+	}
+	if err := json.Unmarshal(startedResponse.Body.Bytes(), &startedEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	started := startedEnvelope.Data
+	if started.Run.ID == "" || started.Run.ReasoningHost != agentruntime.ReasoningHostLocalCodex ||
+		started.State.Status != agentruntime.RunRunning || started.State.StateVersion != 2 {
+		t.Fatalf("local start facts = %#v", started)
+	}
+
+	decisionPath := "/api/agent/local/runs/" + started.Run.ID + "/decisions"
+	decisionBody := `{"clientRequestId":"local-decision-1","expectedStateVersion":2,"decision":{"kind":"tool_call","toolCall":{"toolCallId":"handler-local-read","toolName":"canvas.read","actionVersion":1,"arguments":{"canvasId":"handler-agent-local-canvas","selectedNodeIds":[],"includeViewport":true},"expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}}`
+	if response := fixture.request(http.MethodPost, decisionPath, strings.TrimSuffix(decisionBody, "}")+`,"unexpected":true}`, fixture.userCookie, ""); response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown local decision field status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if response := fixture.request(http.MethodPost, decisionPath, decisionBody, fixture.adminCookie, ""); response.Code != http.StatusNotFound {
+		t.Fatalf("cross-user local decision status = %d, body = %s", response.Code, response.Body.String())
+	}
+	decidedResponse := fixture.request(http.MethodPost, decisionPath, decisionBody, fixture.userCookie, "")
+	if decidedResponse.Code != http.StatusOK {
+		t.Fatalf("local decision status = %d, body = %s", decidedResponse.Code, decidedResponse.Body.String())
+	}
+
+	staleBody := `{"clientRequestId":"local-decision-stale","expectedStateVersion":2,"decision":{"kind":"final","final":{"message":"不应成功","expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}}`
+	stale := fixture.request(http.MethodPost, decisionPath, staleBody, fixture.userCookie, "")
+	if stale.Code != http.StatusConflict || !strings.Contains(stale.Body.String(), `"latestStateVersion":4`) {
+		t.Fatalf("stale local decision status = %d, body = %s", stale.Code, stale.Body.String())
+	}
+}
+
+func configureAgentRuntimeHandlerDefaultVision(t *testing.T, svc *service.Service, db *gorm.DB) {
+	t.Helper()
+	now := time.Now().UTC()
+	channel := model.ModelChannel{
+		ID: "handler-agent-vision-channel", Scope: model.ChannelScopeSystem, Enabled: true, Name: "Agent Vision",
+		BaseURL: "https://api.deepseek.com", APIKey: "handler-vision-secret", APIFormat: "openai",
+		InterfaceType: model.ChannelInterfaceChatCompletion, CreatedAt: now, UpdatedAt: now,
+	}
+	item := model.ChannelModel{
+		ID: "handler-agent-vision-model", ChannelID: channel.ID, ModelKey: "deepseek-v4-flash-vision-exp", DisplayName: "DeepSeek Vision",
+		AccessPolicy: model.ModelAccessAuthenticated, Capability: "vision", BillingMode: "token_usage", PriceStrategy: "token",
+		PriceConfigured: true, Enabled: true, PriceVersion: 3, CreatedAt: now, UpdatedAt: now,
+	}
+	pricing := model.ModelPricing{
+		ID: "handler-agent-vision-pricing", ChannelID: channel.ID, Model: item.ModelKey, Capability: "vision", Currency: "CNY",
+		InputPerMillionMicros: 1_000_000, CachedPerMillionMicros: 20_000, OutputPerMillionMicros: 2_000_000,
+		MaxOutputTokens: 8_192, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&channel).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&pricing).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateAgentDefaultVisionModelSetting(&model.User{ID: "handler-admin", Role: model.UserRoleAdmin}, service.UpdateAgentDefaultVisionModelRequest{ChannelModelID: item.ID}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAgentRuntimeHTTPReadsPersistedRunAndResumesSSEAfterSequence(t *testing.T) {
 	fixture := openProviderAccountHandlerFixture(t)
 	if err := database.EnsureAgentRuntimeIntegritySchema(fixture.db); err != nil {
@@ -84,7 +181,8 @@ func TestAgentRuntimeHTTPReadsPersistedRunAndResumesSSEAfterSequence(t *testing.
 	}
 	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "frozen-agent-model", ModelKey: "agent-model",
-		MaxSteps: 6, ToolSchemaVersion: 2, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: "读取事件",
+		MaxSteps: 6, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion: agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion, UserMessage: "读取事件",
 		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
@@ -124,7 +222,7 @@ func TestAgentRuntimeHTTPReadsPersistedRunAndResumesSSEAfterSequence(t *testing.
 		t.Fatalf("events content type = %q", contentType)
 	}
 	if body := events.Body.String(); !strings.Contains(body, "id: 1\n") || !strings.Contains(body, "event: run.started\n") ||
-		!strings.Contains(body, `"protocolVersion":2`) || !strings.Contains(body, `"threadId":"`+scope.ThreadID+`"`) ||
+		!strings.Contains(body, `"protocolVersion":`+strconv.Itoa(agentruntime.CloudAgentUIProtocolVersion)) || !strings.Contains(body, `"threadId":"`+scope.ThreadID+`"`) ||
 		!strings.Contains(body, `"runId":"`+scope.RunID+`"`) || !strings.Contains(body, `"sequence":1`) {
 		t.Fatalf("events body = %s", body)
 	}
@@ -132,6 +230,50 @@ func TestAgentRuntimeHTTPReadsPersistedRunAndResumesSSEAfterSequence(t *testing.
 	after := fixture.request(http.MethodGet, "/api/agent/runs/"+scope.RunID+"/events?afterSequence="+strconv.FormatInt(1, 10), "", fixture.userCookie, "")
 	if after.Code != http.StatusOK || strings.Contains(after.Body.String(), "id: 1\n") {
 		t.Fatalf("resumed events status = %d, body = %s", after.Code, after.Body.String())
+	}
+}
+
+func TestAgentApprovalRejectsMalformedIdentityBeforeRunLookup(t *testing.T) {
+	fixture := openProviderAccountHandlerFixture(t)
+	if err := database.EnsureAgentRuntimeIntegritySchema(fixture.db); err != nil {
+		t.Fatal(err)
+	}
+	RegisterAgentRuntimeRoutes(fixture.router.Group("/api"), service.New(repository.New(fixture.db), t.TempDir()))
+
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{name: "empty tool call", body: `{"toolCallId":"","actionVersion":1,"proposalHash":"` + strings.Repeat("a", 64) + `","decision":"approved"}`},
+		{name: "invalid action version", body: `{"toolCallId":"call-1","actionVersion":0,"proposalHash":"` + strings.Repeat("a", 64) + `","decision":"approved"}`},
+		{name: "invalid proposal hash", body: `{"toolCallId":"call-1","actionVersion":1,"proposalHash":"ABC","decision":"approved"}`},
+		{name: "invalid decision", body: `{"toolCallId":"call-1","actionVersion":1,"proposalHash":"` + strings.Repeat("a", 64) + `","decision":"allow"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := fixture.request(http.MethodPost, "/api/agent/runs/missing-run/approvals", test.body, fixture.userCookie, "")
+			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"errorCode":"agent_approval_invalid"`) {
+				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestAgentEventV5DoesNotRegisterRetiredProductionGraphRoutes(t *testing.T) {
+	fixture := openProviderAccountHandlerFixture(t)
+	RegisterAgentRuntimeRoutes(fixture.router.Group("/api"), service.New(repository.New(fixture.db), t.TempDir()))
+
+	for _, request := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{method: http.MethodPost, path: "/api/agent/runs/run-1/stages/stage-1/reviews", body: `{}`},
+		{method: http.MethodGet, path: "/api/agent/runs/run-1/artifacts/artifact-1/revisions/revision-1"},
+	} {
+		response := fixture.request(request.method, request.path, request.body, fixture.userCookie, "")
+		if response.Code != http.StatusNotFound || strings.TrimSpace(response.Body.String()) != "404 page not found" {
+			t.Fatalf("retired route %s %s returned status=%d body=%s", request.method, request.path, response.Code, response.Body.String())
+		}
 	}
 }
 
@@ -156,7 +298,8 @@ func TestAgentRuntimeHTTPReplaysCompletedToolLifecycleFromEarlierCursor(t *testi
 	}
 	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "handler-agent-model", ModelKey: "agent-model", MaxSteps: 6,
-		ToolSchemaVersion: 2, RuntimeVersion: 2, PolicyVersion: 1, UserMessage: "读取并更新画布",
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion, UserMessage: "读取并更新画布",
 		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic}, Now: now,
 	}); err != nil {
 		t.Fatal(err)
@@ -169,8 +312,8 @@ func TestAgentRuntimeHTTPReplaysCompletedToolLifecycleFromEarlierCursor(t *testi
 	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
 		Kind: agentruntime.DecisionToolCall,
 		ToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "handler-tool-replay-call", ToolName: agentruntime.ToolCanvasCommit,
-			ActionVersion: 1, Arguments: json.RawMessage(`{"expectedRevision":12}`),
+			ToolCallID: "handler-tool-replay-call", ToolName: agentruntime.ToolCanvasRead,
+			ActionVersion: 1, Arguments: json.RawMessage(`{"canvasId":"handler-agent-tool-replay-canvas","selectedNodeIds":[],"includeViewport":true}`),
 			ExpectedDelivery: agentruntime.ExpectedDelivery{
 				Kind:               agentruntime.DeliveryAnswer,
 				CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactFinalMessage}},
@@ -185,7 +328,7 @@ func TestAgentRuntimeHTTPReplaysCompletedToolLifecycleFromEarlierCursor(t *testi
 	}
 	resolved, err := agentruntime.ResolveTool(requested.State, agentruntime.ToolResolution{
 		ToolCallID: "handler-tool-replay-call", ActionVersion: 1, Succeeded: true,
-		Output: json.RawMessage(`{"canvasId":"handler-agent-tool-replay-canvas","committedRevision":13}`),
+		Output: json.RawMessage(`{"canvasId":"handler-agent-tool-replay-canvas","revision":13}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -490,7 +633,8 @@ func createWaitingClarificationHandlerRun(t *testing.T, svc *service.Service, re
 	}
 	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "handler-agent-model", ModelKey: "agent-model", MaxSteps: 6,
-		ToolSchemaVersion: 2, RuntimeVersion: 2, PolicyVersion: 1, UserMessage: "生成汽车广告剧本",
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion, UserMessage: "生成汽车广告剧本",
 		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
 	}); err != nil {
 		t.Fatal(err)
@@ -534,7 +678,8 @@ func createAgentRuntimeHistoryRun(t *testing.T, svc *service.Service, repo *repo
 	}
 	if _, err := repo.InitializeAgentRun(repository.InitializeAgentRunInput{
 		Scope: scope, ModelRecordID: "history-model-record", ModelKey: "history-model",
-		MaxSteps: 8, ToolSchemaVersion: 2, RuntimeVersion: 1, PolicyVersion: 1, UserMessage: userMessage,
+		MaxSteps: 8, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion: agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion, UserMessage: userMessage,
 		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
 	}); err != nil {
 		t.Fatal(err)

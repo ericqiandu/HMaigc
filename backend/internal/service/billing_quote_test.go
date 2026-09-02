@@ -159,12 +159,13 @@ func TestQuoteTaskBillingPricesFixedVideoBatchWithoutWalletWrites(t *testing.T) 
 
 func TestQuoteTaskBillingPricesImageResolutionBatch(t *testing.T) {
 	item := model.ChannelModel{
-		ID: "image", ChannelID: "channel", ModelKey: "gpt-image-2", Capability: "image",
+		ID: "image", ChannelID: "channel", ModelKey: kuaiziGPTImage2Model, Capability: "image",
 		AccessPolicy: model.ModelAccessAuthenticated, BillingMode: "fixed_request", PriceStrategy: "image_resolution",
 		PriceConfigured: true, Enabled: true, PriceVersion: 3,
 		PriceTiers: []model.ChannelModelPriceTier{
-			{ID: "image-1k", Resolution: "1K", UnitPriceMicrocredits: 398_000},
-			{ID: "image-2k", Resolution: "2K", UnitPriceMicrocredits: 803_000},
+			{ID: "image-2k-low", Resolution: "2K", InputVariant: "low", UnitPriceMicrocredits: 117_000},
+			{ID: "image-2k-medium", Resolution: "2K", InputVariant: "medium", UnitPriceMicrocredits: 1_043_900},
+			{ID: "image-2k-high", Resolution: "2K", InputVariant: "high", UnitPriceMicrocredits: 4_173_000},
 		},
 	}
 	svc, _ := newBillingQuoteTestService(t, item)
@@ -178,11 +179,24 @@ func TestQuoteTaskBillingPricesImageResolutionBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if quote.PerTaskAmountMicrocredits != 803_000 || quote.AmountMicrocredits != 2_409_000 || quote.TaskCount != 3 {
+	if quote.PerTaskAmountMicrocredits != 1_043_900 || quote.AmountMicrocredits != 3_131_700 || quote.TaskCount != 3 {
 		t.Fatalf("image quote = %#v", quote)
 	}
-	if quote.PricingResolution != "2K" || quote.Quantity != 1 {
+	if quote.PricingResolution != "2K" || quote.PricingInputVariant != "medium" || quote.Quantity != 1 {
 		t.Fatalf("image pricing facts = %#v", quote)
+	}
+
+	highQuote, err := svc.QuoteTaskBilling("user", TaskBillingQuoteRequest{
+		Type: "canvas_image", Operation: "generate", BatchCount: 1,
+		Input: TaskBillingQuoteInput{Mode: "image", Config: TaskBillingQuoteConfig{
+			ChannelID: "channel", Model: item.ModelKey, Size: "2048x2048", Quality: "high",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if highQuote.PerTaskAmountMicrocredits != 4_173_000 || highQuote.PricingInputVariant != "high" {
+		t.Fatalf("high-quality quote = %#v", highQuote)
 	}
 }
 

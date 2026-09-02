@@ -23,16 +23,63 @@ const (
 type ToolName string
 
 const (
+	ToolCanvasRead     ToolName = "canvas.read"
+	ToolCanvasApplyOps ToolName = "canvas.apply_ops"
+	ToolAssetsRead     ToolName = "assets.read"
+	ToolAssetsPublish  ToolName = "assets.publish"
+	ToolMediaGenerate  ToolName = "media.generate"
+	ToolSkillsLoad     ToolName = "skills.load"
+
+	// Retired tool identities remain available only for decoding historical
+	// audit facts. They are never valid for the current schema.
 	ToolSkillLoad        ToolName = "skill.load"
 	ToolProductionPlan   ToolName = "production.plan"
 	ToolProductionRender ToolName = "production.render"
 	ToolCanvasCommit     ToolName = "canvas.commit"
+	ToolMediaAssemble    ToolName = "media.assemble"
 )
 
 func (name ToolName) Valid() bool {
-	switch name {
-	case ToolSkillLoad, ToolProductionPlan, ToolProductionRender, ToolCanvasCommit:
-		return true
+	return name.ValidForToolSchema(CurrentToolSchemaVersion)
+}
+
+func (name ToolName) Known() bool {
+	return name.ValidForToolSchema(CurrentToolSchemaVersion) ||
+		name.ValidForToolSchema(RetiredCloudToolSchemaVersion) ||
+		name.ValidForToolSchema(ProductionToolSchemaVersion) ||
+		name.ValidForToolSchema(LegacyToolSchemaVersion)
+}
+
+func (name ToolName) ValidForToolSchema(toolSchemaVersion int) bool {
+	switch toolSchemaVersion {
+	case LegacyToolSchemaVersion:
+		switch name {
+		case ToolSkillLoad, ToolProductionPlan, ToolProductionRender, ToolCanvasCommit:
+			return true
+		default:
+			return false
+		}
+	case ProductionToolSchemaVersion:
+		switch name {
+		case ToolSkillLoad, ToolSpecialistDelegate, ToolVisionAnalyze, ToolMediaGenerate, ToolCanvasProject, ToolMediaAssemble:
+			return true
+		default:
+			return false
+		}
+	case RetiredCloudToolSchemaVersion:
+		switch name {
+		case ToolCanvasRead, ToolCanvasApplyOps, ToolAssetsRead, ToolAssetsPublish, ToolMediaGenerate, ToolSkillsLoad:
+			return true
+		default:
+			return false
+		}
+	case CurrentToolSchemaVersion:
+		switch name {
+		case ToolCanvasRead, ToolCanvasApplyOps, ToolAssetsRead, ToolAssetsPublish, ToolMediaGenerate, ToolVisionAnalyze, ToolSkillsLoad:
+			return true
+		default:
+			return false
+		}
 	default:
 		return false
 	}
@@ -86,6 +133,13 @@ type ClarificationDecision struct {
 }
 
 func ParseModelDecision(payload []byte) (ModelDecision, error) {
+	return ParseModelDecisionForToolSchema(payload, CurrentToolSchemaVersion)
+}
+
+func ParseModelDecisionForToolSchema(payload []byte, toolSchemaVersion int) (ModelDecision, error) {
+	if toolSchemaVersion != CurrentToolSchemaVersion {
+		return ModelDecision{}, errors.New("agent tool schema version is invalid")
+	}
 	if len(payload) == 0 || len(payload) > modelDecisionLimit {
 		return ModelDecision{}, errors.New("agent model decision size is invalid")
 	}
@@ -99,16 +153,20 @@ func ParseModelDecision(payload []byte) (ModelDecision, error) {
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return ModelDecision{}, errors.New("agent model decision must contain one json document")
 	}
-	if err := decision.Validate(); err != nil {
+	if err := decision.ValidateForToolSchema(toolSchemaVersion); err != nil {
 		return ModelDecision{}, err
-	}
-	if decision.ToolCall != nil && !decision.ToolCall.ToolName.Valid() {
-		return ModelDecision{}, errors.New("agent tool call identity is invalid")
 	}
 	return decision, nil
 }
 
 func (decision ModelDecision) Validate() error {
+	return decision.ValidateForToolSchema(CurrentToolSchemaVersion)
+}
+
+func (decision ModelDecision) ValidateForToolSchema(toolSchemaVersion int) error {
+	if toolSchemaVersion != CurrentToolSchemaVersion {
+		return errors.New("agent tool schema version is invalid")
+	}
 	switch decision.Kind {
 	case DecisionFinal:
 		if decision.Final == nil || decision.ToolCall != nil || decision.Clarification != nil {
@@ -125,21 +183,21 @@ func (decision ModelDecision) Validate() error {
 		}
 		call := decision.ToolCall
 		call.ToolCallID = strings.TrimSpace(call.ToolCallID)
-		if call.ToolCallID == "" || len(call.ToolCallID) > 120 || !call.ToolName.Valid() || call.ActionVersion < 1 {
+		if call.ToolCallID == "" || len(call.ToolCallID) > 120 || !call.ToolName.ValidForToolSchema(toolSchemaVersion) || call.ActionVersion < 1 {
 			return errors.New("agent tool call identity is invalid")
 		}
 		if err := call.ExpectedDelivery.Validate(); err != nil {
 			return err
 		}
-		arguments := bytes.TrimSpace(call.Arguments)
-		if len(arguments) == 0 || bytes.Equal(arguments, []byte("null")) || arguments[0] != '{' || !json.Valid(arguments) {
+		arguments, err := DecodeCapabilityArguments(call.ToolName, call.Arguments)
+		if err != nil {
 			return errors.New("agent tool call arguments are invalid")
 		}
-		var compact bytes.Buffer
-		if err := json.Compact(&compact, arguments); err != nil {
+		canonical, err := json.Marshal(arguments)
+		if err != nil {
 			return errors.New("agent tool call arguments are invalid")
 		}
-		call.Arguments = append(call.Arguments[:0], compact.Bytes()...)
+		call.Arguments = append(call.Arguments[:0], canonical...)
 		return nil
 	case DecisionClarificationRequest:
 		if decision.Clarification == nil || decision.Final != nil || decision.ToolCall != nil {

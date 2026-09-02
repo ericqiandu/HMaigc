@@ -1,17 +1,33 @@
 import { Alert, App, Button, Input, Modal, Table, Tag } from "antd";
-import { ArchiveRestore, CircleAlert, CloudDownload, DatabaseBackup, RefreshCw, RotateCcw, ServerCog, ShieldCheck } from "lucide-react";
+import { ArchiveRestore, CircleAlert, CloudDownload, DatabaseBackup, Globe2, RefreshCw, RotateCcw, ServerCog, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AdminPageFrame } from "@/pages/admin/components/admin-shell";
 import { AdminContentSection, AdminDataLayout } from "@/pages/admin/components/admin-data-layout";
 import { AdminContentError, AdminContentSkeleton, AdminTableEmpty } from "@/pages/admin/components/admin-ui";
-import { actionLabels, backupColumns, createOperationColumns, formatLogTime, formatTime, OperationActionButton, OperationStatusTag, OverviewMetric, releaseCheckDetail, shortCommit } from "@/pages/admin/operations/operations-presenters";
+import { OperationActivePanel } from "@/pages/admin/operations/operation-active-panel";
+import { operationControlIdempotencyKey } from "@/pages/admin/operations/operations-control";
 import {
+    actionLabels,
+    backupColumns,
+    createOperationColumns,
+    formatLogTime,
+    formatTime,
+    OperationActionButton,
+    OperationStatusTag,
+    OverviewMetric,
+    presentPublicVerification,
+    releaseCheckDetail,
+    shortCommit,
+} from "@/pages/admin/operations/operations-presenters";
+import {
+    cancelOperation,
     getOperation,
     getOperationsOverview,
     listOperationBackups,
     listOperationLogs,
     listOperations,
+    recoverOperation,
     startOperation,
     type OperationsAction,
     type OperationsBackup,
@@ -21,7 +37,9 @@ import {
 } from "@/services/api/operations";
 
 type PendingAction = {
-    action: OperationsAction;
+    action: OperationsAction | "cancel" | "recover";
+    idempotencyKey: string;
+    operationId?: string;
     title: string;
     description: string;
     targetVersion?: string;
@@ -143,6 +161,7 @@ export default function OperationsPage() {
             }
             setPendingAction({
                 action,
+                idempotencyKey: crypto.randomUUID(),
                 title: `升级到 ${targetVersion}`,
                 description: `控制器将先核对当前版本 ${current || "未知"}，拉取不可变镜像、停止业务写入、创建一致性备份，再启动并验活新版本。失败时自动恢复原版本。`,
                 targetVersion,
@@ -152,6 +171,7 @@ export default function OperationsPage() {
         } else if (action === "rollback") {
             setPendingAction({
                 action,
+                idempotencyKey: crypto.randomUUID(),
                 title: `回滚到 ${overview.previousVersion || "上一版本"}`,
                 description: "控制器会先为当前版本创建安全备份，再恢复升级前的数据库、资源卷和镜像。该操作会短暂停止业务服务。",
                 expectedConfirmation: "ROLLBACK",
@@ -161,6 +181,7 @@ export default function OperationsPage() {
         } else if (action === "backup") {
             setPendingAction({
                 action,
+                idempotencyKey: crypto.randomUUID(),
                 title: "创建一致性备份",
                 description: "控制器会短暂停止 Web 与业务后端写入，校验 PostgreSQL 与资源卷备份后恢复当前版本。",
                 expectedConfirmation: "BACKUP",
@@ -169,12 +190,30 @@ export default function OperationsPage() {
         } else {
             setPendingAction({
                 action,
+                idempotencyKey: crypto.randomUUID(),
                 title: "执行生产环境校验",
-                description: "检查当前运行版本、依赖服务、业务健康接口和 SPA 深链接，不会修改业务数据。",
+                description: "校验生产配置与 Docker 基础依赖，并检查每个生产 Origin 的画布入口及当前版本全部 CDN 清单资源；不会修改业务数据或回滚业务版本。",
                 expectedConfirmation: "VERIFY",
-                impacts: ["仅读取当前运行环境", "检查依赖、健康接口与 SPA 深链接", "不会修改业务数据或重启服务"],
+                impacts: ["仅读取当前运行环境", "检查生产画布入口与 CDN 发布清单", "失败只记录环境故障，不修改或回滚业务版本"],
             });
         }
+        setConfirmation("");
+    };
+
+    const openControlAction = async (action: "cancel" | "recover", operation: OperationsRecord) => {
+        const stopping = action === "cancel";
+        setPendingAction({
+            action,
+            idempotencyKey: operationControlIdempotencyKey(action, operation.id),
+            operationId: operation.id,
+            title: stopping ? "安全停止运维任务" : "恢复运维任务",
+            description: stopping ? "控制器会持久化停止命令；Runner 只会在安全点停止，并如实保留当时的服务状态与检查点。" : "控制器会先证明旧 Runner 已停止，再基于持久检查点启动新 generation；无法确定安全动作时会继续显式失败。",
+            expectedConfirmation: `${stopping ? "STOP" : "RECOVER"} ${operation.id}`,
+            impacts: stopping
+                ? ["不会强杀正在写入的阶段", "到达安全点后停止后续输出", "保留日志、检查点和已产生的备份事实"]
+                : ["确认旧 Runner 不再拥有生产写入权", `执行恢复动作：${operation.recoveryAction || "由持久事实决定"}`, "恢复结果与服务状态会继续写入审计记录"],
+            danger: stopping,
+        });
         setConfirmation("");
     };
 
@@ -182,16 +221,21 @@ export default function OperationsPage() {
         if (!pendingAction || confirmation !== pendingAction.expectedConfirmation) return;
         setSubmitting(true);
         try {
-            const operation = await startOperation({
-                action: pendingAction.action,
-                targetVersion: pendingAction.targetVersion,
-                confirmation,
-                idempotencyKey: crypto.randomUUID(),
-            });
+            const operation =
+                pendingAction.action === "cancel"
+                    ? await cancelOperation(pendingAction.operationId || "", { confirmation, idempotencyKey: pendingAction.idempotencyKey })
+                    : pendingAction.action === "recover"
+                      ? await recoverOperation(pendingAction.operationId || "", { confirmation, idempotencyKey: pendingAction.idempotencyKey })
+                      : await startOperation({
+                            action: pendingAction.action,
+                            targetVersion: pendingAction.targetVersion,
+                            confirmation,
+                            idempotencyKey: pendingAction.idempotencyKey,
+                        });
             setPendingAction(null);
             setConfirmation("");
             setSelectedOperationId(operation.id);
-            message.success("运维任务已进入独立控制器队列");
+            message.success(pendingAction.action === "cancel" ? "控制器已持久化安全停止请求" : pendingAction.action === "recover" ? "恢复 Runner 已进入独立控制器队列" : "运维任务已进入独立控制器队列");
             await loadDashboard(true);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "创建运维任务失败");
@@ -202,8 +246,8 @@ export default function OperationsPage() {
 
     const operationColumns = useMemo(() => createOperationColumns(setSelectedOperationId), []);
     const activeOperation = overview?.activeOperation;
-    const activeOperationDescription = activeOperation ? `${actionLabels[activeOperation.action]} · ${activeOperation.phase || "等待控制器响应"} · ${activeOperation.actorDisplayName}` : "";
     const hasDashboardData = overview !== null;
+    const publicVerification = overview ? presentPublicVerification(overview.publicVerification) : null;
 
     return (
         <AdminPageFrame
@@ -229,7 +273,7 @@ export default function OperationsPage() {
                 ) : !hasDashboardData ? null : (
                     <>
                         <AdminContentSection className="operations-overview-section" title="运行状态概览" description="集中查看控制器、版本、备份与回滚恢复点。">
-                            <div className="operations-overview-grid grid grid-cols-1 gap-px md:grid-cols-2 xl:grid-cols-4" aria-label="运维状态概览">
+                            <div className="operations-overview-grid grid grid-cols-1 gap-px md:grid-cols-2 xl:grid-cols-5" aria-label="运维状态概览">
                                 <OverviewMetric
                                     icon={<ServerCog className="operations-metric-icon-svg size-4" />}
                                     label="控制器"
@@ -258,6 +302,13 @@ export default function OperationsPage() {
                                     detail={overview ? `${overview.rollbackStatus}${overview.rollbackReady ? ` · 目标 ${overview.previousVersion}` : ""}` : "等待状态"}
                                     tone={overview?.rollbackReady ? "success" : "neutral"}
                                 />
+                                <OverviewMetric
+                                    icon={<Globe2 className="operations-metric-icon-svg size-4" />}
+                                    label="公网校验"
+                                    value={publicVerification?.label || "--"}
+                                    detail={publicVerification?.detail || "等待状态"}
+                                    tone={publicVerification?.tone || "neutral"}
+                                />
                             </div>
                         </AdminContentSection>
 
@@ -278,18 +329,13 @@ export default function OperationsPage() {
                             }
                         >
                             {activeOperation ? (
-                                <div className="operations-active-operation" role="status" aria-live="polite">
-                                    <span className="operations-active-operation-icon">
-                                        <RefreshCw className="operations-active-operation-icon-svg size-4 animate-spin motion-reduce:animate-none" />
-                                    </span>
-                                    <span className="operations-active-operation-copy">
-                                        <strong className="operations-active-operation-title">当前任务正在执行</strong>
-                                        <span className="operations-active-operation-description">{activeOperationDescription}</span>
-                                    </span>
-                                    <button className="operations-active-operation-link" type="button" onClick={() => setSelectedOperationId(activeOperation.id)}>
-                                        查看实时日志
-                                    </button>
-                                </div>
+                                <OperationActivePanel
+                                    operation={activeOperation}
+                                    submitting={submitting}
+                                    onCancel={(operation) => openControlAction("cancel", operation)}
+                                    onRecover={(operation) => openControlAction("recover", operation)}
+                                    onViewLogs={(operation) => setSelectedOperationId(operation.id)}
+                                />
                             ) : null}
                             <div className="operations-actions-grid grid grid-cols-1 gap-px bg-border/60 sm:grid-cols-2 xl:grid-cols-4">
                                 <OperationActionButton
@@ -319,7 +365,7 @@ export default function OperationsPage() {
                                 <OperationActionButton
                                     icon={<ShieldCheck className="operations-action-icon-svg size-4" />}
                                     title="环境校验"
-                                    description="版本、健康与深链接"
+                                    description="生产入口与 CDN 清单"
                                     disabled={hasActiveOperation || !overview?.release.currentVersion}
                                     disabledReason={hasActiveOperation ? "已有运维任务正在执行" : "尚未识别当前运行版本"}
                                     onClick={() => openAction("verify")}

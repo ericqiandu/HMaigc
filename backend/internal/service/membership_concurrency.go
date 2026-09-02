@@ -23,6 +23,7 @@ func taskConcurrencyCapability(taskType string) (string, error) {
 		taskType == "canvas_text",
 		taskType == "agent_session",
 		taskType == agentRuntimeModelTaskType,
+		taskType == agentVisionTaskType,
 		taskType == "agent_storyboard",
 		taskType == "agent_storyboard_rows":
 		return taskCapabilityOther, nil
@@ -32,7 +33,7 @@ func taskConcurrencyCapability(taskType string) (string, error) {
 }
 
 func (s *Service) membershipActiveTaskPolicy(userID string, billingScope billingAccountScope, taskType string, runtimePolicy RuntimePolicySetting) (repository.ActiveTaskPolicy, string, error) {
-	capability, err := taskConcurrencyCapability(taskType)
+	concurrencyClass, err := taskConcurrencyCapability(taskType)
 	if err != nil {
 		return repository.ActiveTaskPolicy{}, "", err
 	}
@@ -41,7 +42,7 @@ func (s *Service) membershipActiveTaskPolicy(userID string, billingScope billing
 		return repository.ActiveTaskPolicy{}, "", err
 	}
 	capabilityLimit := runtimePolicy.Task.ActiveTaskLimit
-	switch capability {
+	switch concurrencyClass {
 	case taskCapabilityImage:
 		capabilityLimit = entitlement.ImageConcurrency
 	case taskCapabilityVideo:
@@ -53,12 +54,26 @@ func (s *Service) membershipActiveTaskPolicy(userID string, billingScope billing
 	totalLimit := entitlement.ImageConcurrency + entitlement.VideoConcurrency + runtimePolicy.Task.ActiveTaskLimit
 	billingTeamID := billingScope.TeamID
 	return repository.ActiveTaskPolicy{
-		TotalLimit:      totalLimit,
-		Capability:      capability,
-		CapabilityLimit: capabilityLimit,
-		Unlimited:       entitlement.UnlimitedTaskQueue,
-		BillingTeamID:   &billingTeamID,
-	}, capability, nil
+		TotalLimit:       totalLimit,
+		ConcurrencyClass: concurrencyClass,
+		Capabilities:     concurrencyClassCapabilities(concurrencyClass),
+		ClassLimit:       capabilityLimit,
+		Unlimited:        entitlement.UnlimitedTaskQueue,
+		BillingTeamID:    &billingTeamID,
+	}, concurrencyClass, nil
+}
+
+func concurrencyClassCapabilities(concurrencyClass string) []string {
+	switch concurrencyClass {
+	case taskCapabilityImage:
+		return []string{"image"}
+	case taskCapabilityVideo:
+		return []string{"video"}
+	case taskCapabilityOther:
+		return []string{"audio", "text", "vision"}
+	default:
+		return nil
+	}
 }
 
 func capabilityLimitMessage(capability string, limit int) string {

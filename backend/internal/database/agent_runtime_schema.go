@@ -25,12 +25,24 @@ type agentRuntimeIntegrityIndex struct {
 
 var agentRuntimeIntegrityIndexes = []agentRuntimeIntegrityIndex{
 	{
+		name: "idx_agent_threads_local_external", table: "agent_threads", columns: "tenant_kind,tenant_id,canvas_id,external_thread_id", predicate: "reasoning_host = 'local_codex' AND external_thread_id <> ''", unique: true,
+		createSQL: `CREATE UNIQUE INDEX idx_agent_threads_local_external ON agent_threads(tenant_kind, tenant_id, canvas_id, external_thread_id) WHERE reasoning_host = 'local_codex' AND external_thread_id <> ''`,
+	},
+	{
 		name: "idx_agent_runs_thread_client_request", table: "agent_runs", columns: "thread_id,client_request_id", unique: true,
 		createSQL: `CREATE UNIQUE INDEX idx_agent_runs_thread_client_request ON agent_runs(thread_id, client_request_id)`,
 	},
 	{
+		name: "idx_agent_runs_runtime_retirement", table: "agent_runs", columns: "runtime_version,status,created_at,id",
+		createSQL: `CREATE INDEX idx_agent_runs_runtime_retirement ON agent_runs(runtime_version, status, created_at, id)`,
+	},
+	{
 		name: "idx_agent_run_events_run_sequence", table: "agent_run_events", columns: "run_id,sequence", unique: true,
 		createSQL: `CREATE UNIQUE INDEX idx_agent_run_events_run_sequence ON agent_run_events(run_id, sequence)`,
+	},
+	{
+		name: "idx_agent_external_decisions_run_client", table: "agent_external_decisions", columns: "run_id,client_request_id", unique: true,
+		createSQL: `CREATE UNIQUE INDEX idx_agent_external_decisions_run_client ON agent_external_decisions(run_id, client_request_id)`,
 	},
 	{
 		name: "idx_agent_checkpoints_run_sequence", table: "agent_checkpoints", columns: "run_id,sequence", unique: true,
@@ -51,6 +63,18 @@ var agentRuntimeIntegrityIndexes = []agentRuntimeIntegrityIndex{
 	{
 		name: "idx_agent_tool_calls_action", table: "agent_tool_calls", columns: "run_id,tool_call_id,action_version", unique: true,
 		createSQL: `CREATE UNIQUE INDEX idx_agent_tool_calls_action ON agent_tool_calls(run_id, tool_call_id, action_version)`,
+	},
+	{
+		name: "idx_agent_tool_calls_run_proposal", table: "agent_tool_calls", columns: "run_id,approval_proposal_hash", predicate: "approval_proposal_hash <> ''", unique: true,
+		createSQL: `CREATE UNIQUE INDEX idx_agent_tool_calls_run_proposal ON agent_tool_calls(run_id, approval_proposal_hash) WHERE approval_proposal_hash <> ''`,
+	},
+	{
+		name: "idx_agent_tool_calls_capability_idempotency", table: "agent_tool_calls", columns: "tool_name,capability_idempotency_key,status,updated_at", predicate: "capability_idempotency_key <> ''",
+		createSQL: `CREATE INDEX idx_agent_tool_calls_capability_idempotency ON agent_tool_calls(tool_name, capability_idempotency_key, status, updated_at) WHERE capability_idempotency_key <> ''`,
+	},
+	{
+		name: "idx_agent_tool_calls_capability_owner", table: "agent_tool_calls", columns: "capability_idempotency_key", predicate: "capability_idempotency_key <> ''", unique: true,
+		createSQL: `CREATE UNIQUE INDEX idx_agent_tool_calls_capability_owner ON agent_tool_calls(capability_idempotency_key) WHERE capability_idempotency_key <> ''`,
 	},
 	{
 		name: "idx_agent_threads_scope", table: "agent_threads", columns: "tenant_kind,tenant_id,canvas_id,updated_at",
@@ -119,8 +143,8 @@ func EnsureAgentRuntimeIntegritySchema(db *gorm.DB) error {
 
 const (
 	retiredAgentToolSchemaFailureCode            = "tool_schema_retired"
-	retiredAgentRuntimeContractFailureCode       = "runtime_contract_retired"
-	legacyAgentToolSchemaVersion                 = 2
+	retiredAgentRuntimeContractFailureCode       = agentruntime.FailureRuntimeSchemaRetired
+	legacyAgentToolSchemaVersion                 = agentruntime.LegacyToolSchemaVersion
 	agentRuntimeMigrationTargetToolSchemaVersion = 3
 	legacyAgentModelTaskOperationPrefix          = "agent_model:"
 	agentRuntimeMigrationEventPayloadLimit       = 256 * 1024
@@ -239,6 +263,9 @@ func canonicalAgentRuntimePredicate(value string) string {
 }
 
 func rejectAgentRuntimeIntegrityConflicts(db *gorm.DB) error {
+	if err := rejectAgentRuntimeReasoningSourceConflicts(db); err != nil {
+		return err
+	}
 	type duplicate struct {
 		First  string `gorm:"column:first_value"`
 		Second string `gorm:"column:second_value"`
@@ -255,12 +282,16 @@ func rejectAgentRuntimeIntegrityConflicts(db *gorm.DB) error {
 		groupSQL  string
 		label     string
 	}{
+		{"agent_threads", "tenant_kind AS first_value, tenant_id AS second_value, canvas_id AS third_value, external_thread_id AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "reasoning_host = 'local_codex' AND external_thread_id <> ''", "tenant_kind, tenant_id, canvas_id, external_thread_id", "agent local external thread"},
 		{"agent_runs", "thread_id AS first_value, client_request_id AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "thread_id, client_request_id", "agent run request"},
 		{"agent_run_events", "run_id AS first_value, CAST(sequence AS TEXT) AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, sequence", "agent run event"},
+		{"agent_external_decisions", "run_id AS first_value, client_request_id AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, client_request_id", "agent external decision receipt"},
 		{"agent_checkpoints", "run_id AS first_value, CAST(sequence AS TEXT) AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, sequence", "agent checkpoint"},
 		{"agent_timeline_items", "run_id AS first_value, CAST(ordinal AS TEXT) AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, ordinal", "agent timeline ordinal"},
 		{"agent_timeline_items", "run_id AS first_value, CAST(source_event_sequence AS TEXT) AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, source_event_sequence", "agent timeline source event"},
 		{"agent_tool_calls", "run_id AS first_value, tool_call_id AS second_value, CAST(action_version AS TEXT) AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "run_id, tool_call_id, action_version", "agent tool action"},
+		{"agent_tool_calls", "run_id AS first_value, approval_proposal_hash AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "approval_proposal_hash <> ''", "run_id, approval_proposal_hash", "agent approval proposal"},
+		{"agent_tool_calls", "capability_idempotency_key AS first_value, '' AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "capability_idempotency_key <> ''", "capability_idempotency_key", "agent commercial capability identity"},
 		{"agent_production_plan_versions", "tenant_kind AS first_value, tenant_id AS second_value, domain_project_id AS third_value, canvas_id AS fourth_value, plan_key AS fifth_value, CAST(version AS TEXT) AS sixth_value, COUNT(*) AS count", "", "tenant_kind, tenant_id, domain_project_id, canvas_id, plan_key, version", "agent production plan version"},
 		{"agent_production_artifacts", "plan_version_id AS first_value, reference_key AS second_value, shot_key AS third_value, kind AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "", "plan_version_id, reference_key, shot_key, kind", "agent production artifact"},
 		{"agent_production_artifacts", "task_id AS first_value, '' AS second_value, '' AS third_value, '' AS fourth_value, '' AS fifth_value, '' AS sixth_value, COUNT(*) AS count", "task_id <> ''", "task_id", "agent production task"},
@@ -285,6 +316,49 @@ func rejectAgentRuntimeIntegrityConflicts(db *gorm.DB) error {
 		if result.RowsAffected > 0 {
 			return fmt.Errorf("%s facts conflict: scope=%s/%s/%s/%s/%s/%s rows=%d", check.label, conflict.First, conflict.Second, conflict.Third, conflict.Fourth, conflict.Fifth, conflict.Sixth, conflict.Count)
 		}
+	}
+	return nil
+}
+
+func rejectAgentRuntimeReasoningSourceConflicts(db *gorm.DB) error {
+	type invalidSource struct {
+		ThreadID         string `gorm:"column:thread_id"`
+		RunID            string `gorm:"column:run_id"`
+		ThreadHost       string `gorm:"column:thread_host"`
+		RunHost          string `gorm:"column:run_host"`
+		ExternalThreadID string `gorm:"column:external_thread_id"`
+	}
+	var invalid invalidSource
+	result := db.Raw(`
+		SELECT id AS thread_id, '' AS run_id, reasoning_host AS thread_host, '' AS run_host, external_thread_id
+		FROM agent_threads
+		WHERE reasoning_host NOT IN ('managed', 'local_codex')
+		   OR (reasoning_host = 'managed' AND external_thread_id <> '')
+		   OR (reasoning_host = 'local_codex' AND (external_thread_id = '' OR external_thread_id <> TRIM(external_thread_id)))
+		ORDER BY id
+		LIMIT 1`).Scan(&invalid)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		return fmt.Errorf("agent reasoning host facts are invalid: thread=%s host=%s external_thread_id=%s", invalid.ThreadID, invalid.ThreadHost, invalid.ExternalThreadID)
+	}
+	invalid = invalidSource{}
+	result = db.Raw(`
+		SELECT agent_threads.id AS thread_id, agent_runs.id AS run_id,
+		       agent_threads.reasoning_host AS thread_host, agent_runs.reasoning_host AS run_host,
+		       agent_threads.external_thread_id AS external_thread_id
+		FROM agent_runs
+		JOIN agent_threads ON agent_threads.id = agent_runs.thread_id
+		WHERE agent_runs.reasoning_host NOT IN ('managed', 'local_codex')
+		   OR agent_runs.reasoning_host <> agent_threads.reasoning_host
+		ORDER BY agent_runs.id
+		LIMIT 1`).Scan(&invalid)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		return fmt.Errorf("agent reasoning host facts are invalid: thread=%s run=%s thread_host=%s run_host=%s", invalid.ThreadID, invalid.RunID, invalid.ThreadHost, invalid.RunHost)
 	}
 	return nil
 }

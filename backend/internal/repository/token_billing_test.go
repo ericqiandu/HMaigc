@@ -368,8 +368,12 @@ func reserveTokenBillingFixture(t *testing.T, repo *Repository, db *gorm.DB, ord
 
 func assertTokenBillingSettlement(t *testing.T, db *gorm.DB, orderID string, wantAvailable int64, wantReserved int64, wantConsumed int64, wantReleased int64) {
 	t.Helper()
+	var order model.BillingOrder
+	if err := db.Select("user_id").First(&order, "id = ?", orderID).Error; err != nil {
+		t.Fatal(err)
+	}
 	var account model.CreditAccount
-	if err := db.First(&account, "user_id = ?", "token-user").Error; err != nil {
+	if err := db.First(&account, "user_id = ?", order.UserID).Error; err != nil {
 		t.Fatal(err)
 	}
 	if account.AvailableMicrocredits != wantAvailable || account.ReservedMicrocredits != wantReserved {

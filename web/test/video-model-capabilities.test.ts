@@ -3,15 +3,58 @@ import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { hasPublishedVideoModel, normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoRatiosForMode, videoResolutionsForMode } from "../src/lib/video-model-capabilities";
+import { hasPublishedVideoModel, normalizeVideoConfigForModel, resolveVideoModelCapabilities, videoModelMetadataPatch, videoRatiosForMode, videoResolutionsForMode, videoSupportsGeneratedAudio } from "../src/lib/video-model-capabilities";
 import { VideoSettingsPanel, validateVideoDuration, videoSecondsLabel } from "../src/components/video-settings-panel";
 import { canvasThemes } from "../src/lib/canvas-theme";
 import { defaultConfig, type AiConfig } from "../src/stores/use-config-store";
 import { seedanceReferenceError } from "../src/lib/seedance-video";
 import { normalizedPricingTierKey, specificationsForModel } from "../src/pages/admin/model-pricing/pricing-specifications";
 
-function miniMaxConfig(overrides: Partial<AiConfig> = {}): AiConfig {
+function miniMaxConfig(overrides: Partial<AiConfig> = {}, publishCapabilities = true): AiConfig {
     const model = "MiniMax-H3";
+    const providerCapabilities = {
+        providerFamily: "minimax",
+        modelKey: model,
+        displayName: model,
+        upstreamMode: model,
+        capability: "video",
+        resolutions: ["768p", "2k"],
+        resolutionPixels: {},
+        inputVariants: ["standard"] as Array<"standard">,
+        referenceVideoResolutions: ["768p", "2k"],
+        generatedAudioResolutions: [],
+        ratios: ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+        qualities: [],
+        outputCounts: [1, 2, 4],
+        durations: Array.from({ length: 12 }, (_, index) => index + 4),
+        durationMin: 4,
+        durationMax: 15,
+        supportsSmartDuration: false,
+        supportsTextToVideo: true,
+        supportsImageToVideo: true,
+        supportsReferenceVideo: true,
+        supportsNativeAudio: false,
+        supportsDialogue: false,
+        supportsVoiceReference: true,
+        supportsLipSync: false,
+        supportsIndependentAudio: false,
+        supportsGeneratedAudio: false,
+        supportsGeneratedAudioWithReferenceVideo: false,
+        watermarkCapability: "controlled" as const,
+        supportsAudioOnly: false,
+        requiresAdaptiveFrames: true,
+        generationModes: ["text", "image", "first_last_frame", "image_reference", "omni_reference"],
+        adaptiveRatioModes: ["image", "first_last_frame", "image_reference", "omni_reference"],
+        requiredAdaptiveRatioModes: ["image", "first_last_frame", "image_reference", "omni_reference"],
+        maxImages: 9,
+        maxImagesWithVideo: 9,
+        maxVideos: 3,
+        maxAudios: 3,
+        maxVideoDurationSeconds: 0,
+        maxAudioDurationSeconds: 0,
+        tools: [],
+        supportsTokenUsageBilling: false,
+    };
     return {
         ...defaultConfig,
         model,
@@ -42,6 +85,7 @@ function miniMaxConfig(overrides: Partial<AiConfig> = {}): AiConfig {
                         priceStrategy: "video_resolution",
                         unitPriceMicrocredits: 1,
                         priceTiers: [],
+                        providerCapabilities: publishCapabilities ? providerCapabilities : undefined,
                     },
                 ],
             },
@@ -60,21 +104,34 @@ function seedanceConfig(model: string, overrides: Partial<AiConfig> = {}): AiCon
         displayName: is25 ? "Seedance 2.5" : isPro ? "Seedance 2.0 Pro" : model.includes("fast") ? "Seedance 2.0 Fast" : "Seedance 2.0 Mini",
         upstreamMode: model,
         capability: "video",
-        resolutions: is25 || isMini ? ["480p", "720p"] : isPro ? ["480p", "720p", "1080p", "4k"] : ["480p", "720p", "1080p"],
+        resolutions: is25 ? ["480p", "720p", "1080p"] : isMini ? ["480p", "720p"] : isPro ? ["480p", "720p", "1080p", "4k"] : ["480p", "720p"],
         resolutionPixels: {},
         inputVariants: ["standard", "reference_video"] as Array<"standard" | "reference_video">,
-        referenceVideoResolutions: is25 || isMini ? ["480p", "720p"] : isPro ? ["480p", "720p", "1080p", "4k"] : ["480p", "720p", "1080p"],
+        referenceVideoResolutions: is25 ? ["480p", "720p", "1080p"] : isMini ? ["480p", "720p"] : isPro ? ["480p", "720p", "1080p", "4k"] : ["480p", "720p"],
         generatedAudioResolutions: [],
         ratios: ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"],
         qualities: [],
         outputCounts: [1, 2, 4],
+        durations: Array.from({ length: (is25 ? 30 : 15) - 4 + 1 }, (_, index) => index + 4),
         durationMin: 4,
         durationMax: is25 ? 30 : 15,
         supportsSmartDuration: true,
+        supportsTextToVideo: true,
+        supportsImageToVideo: true,
+        supportsReferenceVideo: true,
+        supportsNativeAudio: true,
+        supportsDialogue: true,
+        supportsVoiceReference: true,
+        supportsLipSync: false,
+        supportsIndependentAudio: false,
         supportsGeneratedAudio: true,
+        supportsGeneratedAudioWithReferenceVideo: true,
         watermarkCapability: "controlled" as const,
         supportsAudioOnly: is25,
         requiresAdaptiveFrames: is25,
+        generationModes: ["text", "image", "first_last_frame", "image_reference", "omni_reference"],
+        adaptiveRatioModes: ["text", "image", "first_last_frame", "image_reference", "omni_reference"],
+        requiredAdaptiveRatioModes: is25 ? ["first_last_frame"] : [],
         maxImages: is25 ? 30 : 9,
         maxImagesWithVideo: is25 ? 30 : 9,
         maxVideos: is25 ? 10 : 3,
@@ -82,6 +139,7 @@ function seedanceConfig(model: string, overrides: Partial<AiConfig> = {}): AiCon
         maxVideoDurationSeconds: is25 ? 30 : 15,
         maxAudioDurationSeconds: is25 ? 30 : 15,
         tools: is25 ? [] : ["web_search"],
+        supportsTokenUsageBilling: false,
     };
     return {
         ...defaultConfig,
@@ -138,13 +196,26 @@ function kuaiziKlingConfig(overrides: Partial<AiConfig> = {}): AiConfig {
         ratios: ["16:9", "9:16", "1:1"],
         qualities: ["std", "pro", "4k"],
         outputCounts: [1],
+        durations: Array.from({ length: 13 }, (_, index) => index + 3),
         durationMin: 3,
         durationMax: 15,
         supportsSmartDuration: false,
+        supportsTextToVideo: true,
+        supportsImageToVideo: true,
+        supportsReferenceVideo: true,
+        supportsNativeAudio: true,
+        supportsDialogue: true,
+        supportsVoiceReference: false,
+        supportsLipSync: false,
+        supportsIndependentAudio: false,
         supportsGeneratedAudio: true,
+        supportsGeneratedAudioWithReferenceVideo: false,
         watermarkCapability: "unsupported" as const,
         supportsAudioOnly: false,
         requiresAdaptiveFrames: false,
+        generationModes: ["text", "image", "first_last_frame", "image_reference", "omni_reference"],
+        adaptiveRatioModes: [],
+        requiredAdaptiveRatioModes: [],
         maxImages: 7,
         maxImagesWithVideo: 4,
         maxVideos: 1,
@@ -152,6 +223,7 @@ function kuaiziKlingConfig(overrides: Partial<AiConfig> = {}): AiConfig {
         maxVideoDurationSeconds: 10,
         maxAudioDurationSeconds: 0,
         tools: [],
+        supportsTokenUsageBilling: false,
     };
     return {
         ...defaultConfig,
@@ -200,12 +272,25 @@ describe("筷子 Kling 3 Omni 视频能力", () => {
 
     test("从后台发布契约读取模式、时长、音频与单任务限制", () => {
         const capabilities = resolveVideoModelCapabilities(kuaiziKlingConfig());
-        expect(capabilities.id).toBe("kuaizi-kling");
+        expect(capabilities.id).toBe("kling");
         expect(capabilities.resolutions.map((option) => option.value)).toEqual(["std", "pro", "4k"]);
         expect(capabilities.customDurationRange).toEqual({ min: 3, max: 15 });
         expect(capabilities.outputCounts).toEqual([1]);
         expect(capabilities.supportsGeneratedAudio).toBe(true);
+        expect(capabilities.supportsNativeAudio).toBe(true);
+        expect(capabilities.supportsDialogue).toBe(true);
+        expect(capabilities.supportsVoiceReference).toBe(false);
+        expect(capabilities.supportsLipSync).toBe(false);
         expect(normalizeVideoConfigForModel(kuaiziKlingConfig({ vquality: "pro" }), "text").vquality).toBe("pro");
+    });
+
+    test("原生音频声明必须同时满足视频生成音频契约", () => {
+        const config = kuaiziKlingConfig();
+        const providerCapabilities = config.channels[0].modelCosts?.[0].providerCapabilities;
+        if (!providerCapabilities) throw new Error("测试模型缺少供应商能力");
+        providerCapabilities.supportsGeneratedAudio = false;
+
+        expect(() => resolveVideoModelCapabilities(config)).toThrow("后台视频能力契约不完整");
     });
 
     test("4K 不在后台有声分辨率目录时强制关闭同步音频", () => {
@@ -213,10 +298,18 @@ describe("筷子 Kling 3 Omni 视频能力", () => {
         expect(normalizeVideoConfigForModel(kuaiziKlingConfig({ vquality: "pro", videoGenerateAudio: "true" }), "text").videoGenerateAudio).toBe("true");
     });
 
+    test("参考视频同步音频只服从后台组合能力而不从计费档推断", () => {
+        const kling = resolveVideoModelCapabilities(kuaiziKlingConfig());
+        const seedance = resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-260128"));
+
+        expect(videoSupportsGeneratedAudio(kling, "omni_reference", "pro")).toBe(false);
+        expect(videoSupportsGeneratedAudio(seedance, "omni_reference", "720p")).toBe(true);
+    });
+
     test("参考视频模式只开放上游允许的 std 与 pro", () => {
         const capabilities = resolveVideoModelCapabilities(kuaiziKlingConfig());
         expect(videoResolutionsForMode(capabilities, "omni_reference").map((option) => option.value)).toEqual(["std", "pro"]);
-        expect(normalizeVideoConfigForModel(kuaiziKlingConfig({ vquality: "4k", videoSeconds: "12" }), "omni_reference")).toMatchObject({ vquality: "std", videoSeconds: "10", videoGenerateAudio: "false" });
+        expect(normalizeVideoConfigForModel(kuaiziKlingConfig({ vquality: "4k", videoSeconds: "12" }), "omni_reference")).toMatchObject({ vquality: "std", videoSeconds: "12", videoGenerateAudio: "false" });
     });
 
     test("定价规格不生成上游禁止的 4k 参考视频组合", () => {
@@ -229,6 +322,50 @@ describe("筷子 Kling 3 Omni 视频能力", () => {
 });
 
 describe("MiniMax H3 视频能力", () => {
+    test("系统视频模型缺少后台能力契约时显式失败", () => {
+        expect(() => resolveVideoModelCapabilities(miniMaxConfig({}, false))).toThrow("缺少后台发布的视频能力契约");
+    });
+
+    test("只开放后台精确发布的生成模式，不从图片能力推导额外模式", () => {
+        const config = miniMaxConfig();
+        const providerCapabilities = config.channels[0].modelCosts?.[0].providerCapabilities;
+        if (!providerCapabilities) throw new Error("测试模型缺少供应商能力");
+        providerCapabilities.generationModes = ["text", "image", "first_last_frame"];
+        providerCapabilities.supportsReferenceVideo = false;
+        providerCapabilities.referenceVideoResolutions = [];
+        providerCapabilities.maxVideos = 0;
+        providerCapabilities.adaptiveRatioModes = ["image", "first_last_frame"];
+        providerCapabilities.requiredAdaptiveRatioModes = ["image", "first_last_frame"];
+
+        expect(resolveVideoModelCapabilities(config).supportedGenerationModes).toEqual(["text", "image", "first_last_frame"]);
+    });
+
+    test("参考视频清晰度必须属于模型输出清晰度", () => {
+        const config = miniMaxConfig();
+        const providerCapabilities = config.channels[0].modelCosts?.[0].providerCapabilities;
+        if (!providerCapabilities) throw new Error("测试模型缺少供应商能力");
+        providerCapabilities.referenceVideoResolutions = ["1080p"];
+
+        expect(() => resolveVideoModelCapabilities(config)).toThrow("后台视频能力契约不完整");
+    });
+
+    test("节点携带后台未开放的生成模式时显式失败", () => {
+        const config = miniMaxConfig();
+        const providerCapabilities = config.channels[0].modelCosts?.[0].providerCapabilities;
+        if (!providerCapabilities) throw new Error("测试模型缺少供应商能力");
+        providerCapabilities.generationModes = ["text"];
+        providerCapabilities.supportsImageToVideo = false;
+        providerCapabilities.supportsReferenceVideo = false;
+        providerCapabilities.referenceVideoResolutions = [];
+        providerCapabilities.adaptiveRatioModes = [];
+        providerCapabilities.requiredAdaptiveRatioModes = [];
+        providerCapabilities.requiresAdaptiveFrames = false;
+        providerCapabilities.ratios = ["16:9"];
+        providerCapabilities.maxVideos = 0;
+
+        expect(() => normalizeVideoConfigForModel(config, "image")).toThrow("未开放生成模式 image");
+    });
+
     test("新视频节点默认使用 16:9 与 720P", () => {
         const normalized = normalizeVideoConfigForModel(seedanceConfig("doubao-seedance-2-0-fast-260128"), "text");
         expect(normalized).toMatchObject({ size: "16:9", vquality: "720p" });
@@ -255,6 +392,12 @@ describe("MiniMax H3 视频能力", () => {
     test("MiniMax H3 接受 4 至 15 秒内的自定义整数", () => {
         const normalized = normalizeVideoConfigForModel(miniMaxConfig({ videoSeconds: "7" }), "text");
         expect(normalized.videoSeconds).toBe("7");
+    });
+
+    test("MiniMax H3 仅在非文本模式强制自适应比例", () => {
+        const capabilities = resolveVideoModelCapabilities(miniMaxConfig());
+        expect(videoRatiosForMode(capabilities, "text").map((option) => option.value)).not.toContain("adaptive");
+        expect(videoRatiosForMode(capabilities, "image").map((option) => option.value)).toEqual(["adaptive"]);
     });
 });
 
@@ -335,21 +478,61 @@ describe("画布视频设置", () => {
         expect(markup).not.toContain("videoWatermark");
         expect(markup).not.toContain('role="switch"');
     });
+
+    test("服务端未公布参考素材时长上限时不展示零秒限制", () => {
+        const markup = renderToStaticMarkup(
+            createElement(VideoSettingsPanel, {
+                config: miniMaxConfig(),
+                onConfigChange: () => undefined,
+                theme: canvasThemes.dark,
+                showTitle: false,
+                generationMode: "image_reference",
+            }),
+        );
+
+        expect(markup).not.toContain("视频累计不超过 0 秒");
+        expect(markup).not.toContain("音频累计不超过 0 秒");
+    });
 });
 
 describe("Seedance 2.0 分辨率能力", () => {
+    test("Agent 视频节点切换模型时原子替换渠道与原始模型名", () => {
+        const model = "doubao-seedance-2-0-mini-260615";
+        const patch = videoModelMetadataPatch(seedanceConfig(model), `seedance::${model}`, "text");
+
+        expect(patch).toMatchObject({ channelId: "seedance", model });
+    });
+
     test("Fast、Pro 与 Mini 都支持 1、2、4 条并行任务", () => {
         expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-fast-260128")).outputCounts).toEqual([1, 2, 4]);
         expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-260128")).outputCounts).toEqual([1, 2, 4]);
         expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-mini-260615")).outputCounts).toEqual([1, 2, 4]);
     });
 
-    test("Fast 开放 480P、720P 与 1080P", () => {
-        expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-fast-260128")).resolutions.map((option) => option.value)).toEqual(["480p", "720p", "1080p"]);
+    test("Fast 只开放供应商支持的 480P 与 720P", () => {
+        expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-fast-260128")).resolutions.map((option) => option.value)).toEqual(["480p", "720p"]);
     });
 
     test("Mini 只开放供应商支持的 480P 与 720P", () => {
         expect(resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-0-mini-260615")).resolutions.map((option) => option.value)).toEqual(["480p", "720p"]);
+    });
+
+    test("Mini 未单列有声分辨率时为全部已发布分辨率生成有声定价规格", () => {
+        const config = seedanceConfig("doubao-seedance-2-0-mini-260615");
+        const providerCapabilities = config.channels[0].modelCosts?.[0].providerCapabilities;
+        if (!providerCapabilities) throw new Error("测试模型缺少供应商能力");
+        providerCapabilities.inputVariants = ["standard", "standard_audio", "reference_video"];
+
+        const specifications = specificationsForModel({ modelKey: "doubao-seedance-2-0-mini-260615", priceStrategy: "video_resolution", providerCapabilities });
+
+        expect(specifications.map((item) => item.key)).toEqual([
+            "480p::standard",
+            "480p::standard_audio",
+            "480p::reference_video",
+            "720p::standard",
+            "720p::standard_audio",
+            "720p::reference_video",
+        ]);
     });
 
     test("Pro 开放 480P、720P、1080P 与 4K", () => {
@@ -370,14 +553,14 @@ describe("Seedance 2.0 分辨率能力", () => {
         expect(normalized.videoSeconds).toBe("7");
     });
 
-    test("Seedance 2.5 只开放 480P/720P、最长 30 秒且关闭兼容接口不支持的超分", () => {
+    test("Seedance 2.5 开放 480P/720P/1080P、最长 30 秒且关闭独立超分", () => {
         const config = seedanceConfig("doubao-seedance-2-5-260628", { videoSeconds: "30", vquality: "1080p", videoSuperResolutionEnabled: "true" });
         const capabilities = resolveVideoModelCapabilities(config);
-        expect(capabilities.resolutions.map((option) => option.value)).toEqual(["480p", "720p"]);
+        expect(capabilities.resolutions.map((option) => option.value)).toEqual(["480p", "720p", "1080p"]);
         expect(capabilities.customDurationRange).toEqual({ min: 4, max: 30 });
         expect(capabilities.supportsSuperResolution).toBe(false);
         const normalized = normalizeVideoConfigForModel(config, "first_last_frame");
-        expect(normalized).toMatchObject({ videoSeconds: "30", vquality: "720p", size: "adaptive", videoSuperResolutionEnabled: "false" });
+        expect(normalized).toMatchObject({ videoSeconds: "30", vquality: "1080p", size: "adaptive", videoSuperResolutionEnabled: "false" });
     });
 
     test("只有 2.5 首尾帧强制自适应比例，2.0 保留兼容接口支持的画幅", () => {
@@ -385,6 +568,8 @@ describe("Seedance 2.0 分辨率能力", () => {
         const seedance25 = resolveVideoModelCapabilities(seedanceConfig("doubao-seedance-2-5-260628"));
         expect(videoRatiosForMode(seedance20, "first_last_frame").map((option) => option.value)).toContain("16:9");
         expect(videoRatiosForMode(seedance25, "first_last_frame").map((option) => option.value)).toEqual(["adaptive"]);
+        expect(videoRatiosForMode(seedance25, "text").map((option) => option.value)).toContain("adaptive");
+        expect(videoRatiosForMode(seedance25, "image_reference").map((option) => option.value)).toContain("16:9");
     });
 
     test("动态能力公开各型号素材配额和联网搜索支持", () => {

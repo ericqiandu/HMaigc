@@ -1,143 +1,111 @@
-import { isMiniMaxH3VideoConfig, miniMaxH3DurationOptions, miniMaxH3ResolutionOptions, normalizeMiniMaxH3Duration, normalizeMiniMaxH3Resolution } from "@/lib/minimax-h3-video";
-import { isKlingVideoConfig, klingDurationOptions, klingRatioOptions, klingResolutionOptions, normalizeKlingDuration, normalizeKlingResolution } from "@/lib/kling-video";
-import { isSeedanceVideoConfig, normalizeResolutionToken, normalizeSeedanceRatio } from "@/lib/seedance-video";
-import { normalizeVideoDuration, normalizeVideoResolution, VIDEO_DURATION_OPTIONS } from "@/lib/video-generation-options";
-import { configuredModelMatchesCapability, modelOptionName, resolveModelRequestConfig, type AiConfig, type ProviderModelCapabilities, type WatermarkCapability } from "@/stores/use-config-store";
+import { normalizeResolutionToken } from "@/lib/seedance-video";
+import {
+    configuredModelMatchesCapability,
+    modelOptionName,
+    resolveModelRequestConfig,
+    type AiConfig,
+    type ProviderModelCapabilities,
+    type WatermarkCapability,
+} from "@/stores/use-config-store";
 import type { CanvasVideoGenerationMode } from "@/types/canvas";
 
 export type VideoParameterOption = Readonly<{ value: string; label: string }>;
 
 export type VideoModelCapabilities = Readonly<{
-    id: "kling" | "kuaizi-kling" | "minimax-h3" | "seedance" | "standard";
+    id: string;
     resolutions: readonly VideoParameterOption[];
+    referenceVideoResolutions: readonly string[];
     ratios: readonly VideoParameterOption[];
     durations: readonly number[];
     customDurationRange?: Readonly<{ min: number; max: number }>;
     outputCounts: readonly number[];
     supportedGenerationModes: readonly CanvasVideoGenerationMode[];
     supportsGeneratedAudio: boolean;
+    supportsNativeAudio: boolean;
+    supportsDialogue: boolean;
+    supportsVoiceReference: boolean;
+    supportsLipSync: boolean;
+    supportsIndependentAudio: boolean;
+    supportsGeneratedAudioWithReferenceVideo: boolean;
     generatedAudioResolutions: readonly string[];
     watermarkCapability: WatermarkCapability;
     supportsSuperResolution: boolean;
-    referenceLimits?: Readonly<{ images: number; imagesWithVideo: number; videos: number; audios: number; totalVideoDurationSeconds: number; totalAudioDurationSeconds: number }>;
+    referenceLimits?: Readonly<{
+        images: number;
+        imagesWithVideo: number;
+        videos: number;
+        audios: number;
+        totalVideoDurationSeconds: number;
+        totalAudioDurationSeconds: number;
+    }>;
     supportedTools: readonly string[];
-    requiresAdaptiveFrameRatio?: boolean;
+    adaptiveRatioModes: readonly CanvasVideoGenerationMode[];
+    requiredAdaptiveRatioModes: readonly CanvasVideoGenerationMode[];
+    inputVariants: readonly ("standard" | "standard_audio" | "reference_video")[];
     unsupportedReasons: Readonly<Partial<Record<"generatedAudio" | "superResolution", string>>>;
 }>;
-
-const standardResolutionOptions = [
-    { value: "480p", label: "480P" },
-    { value: "720p", label: "720P" },
-    { value: "1080p", label: "1080P" },
-] as const;
-
-const standardRatioOptions = [
-    { value: "adaptive", label: "Auto" },
-    { value: "16:9", label: "16:9" },
-    { value: "4:3", label: "4:3" },
-    { value: "1:1", label: "1:1" },
-    { value: "3:4", label: "3:4" },
-    { value: "9:16", label: "9:16" },
-    { value: "21:9", label: "21:9" },
-] as const;
-
-const miniMaxH3Capabilities: VideoModelCapabilities = {
-    id: "minimax-h3",
-    resolutions: miniMaxH3ResolutionOptions,
-    ratios: standardRatioOptions,
-    durations: miniMaxH3DurationOptions,
-    customDurationRange: { min: 4, max: 15 },
-    outputCounts: [1, 2, 4],
-    supportedGenerationModes: ["text", "image", "first_last_frame", "image_reference", "omni_reference"],
-    supportsGeneratedAudio: false,
-    generatedAudioResolutions: [],
-    watermarkCapability: "controlled",
-    supportsSuperResolution: false,
-    supportedTools: [],
-    unsupportedReasons: {
-        generatedAudio: "MiniMax H3 接口不提供同步生成音频参数",
-        superResolution: "MiniMax H3 使用模型原生 768P / 2K 输出，不支持独立超分任务",
-    },
-};
-
-const klingCapabilities: VideoModelCapabilities = {
-    id: "kling",
-    resolutions: klingResolutionOptions,
-    ratios: klingRatioOptions,
-    durations: klingDurationOptions,
-    outputCounts: [1, 2, 4],
-    supportedGenerationModes: ["text", "image", "first_last_frame"],
-    supportsGeneratedAudio: false,
-    generatedAudioResolutions: [],
-    watermarkCapability: "unsupported",
-    supportsSuperResolution: false,
-    supportedTools: [],
-    unsupportedReasons: {
-        generatedAudio: "当前可灵视频接口不支持同步生成音频",
-        superResolution: "可灵视频使用模型原生输出，不支持独立超分任务",
-    },
-};
 
 export function hasPublishedVideoModel(config: AiConfig) {
     return configuredModelMatchesCapability(config, config.model || config.videoModel, "video");
 }
 
 export function resolveVideoModelCapabilities(config: AiConfig): VideoModelCapabilities {
-    if (isKlingVideoConfig(config)) return { ...klingCapabilities, watermarkCapability: selectedModelWatermarkCapability(config) };
-    if (isMiniMaxH3VideoConfig(config)) return { ...miniMaxH3Capabilities, watermarkCapability: selectedModelWatermarkCapability(config) };
     const model = modelOptionName(config.model || config.videoModel);
-    const publishedCapabilities = resolvePublishedVideoProviderCapabilities(config, model);
-    if (publishedCapabilities || isSeedanceVideoConfig(config)) {
-        const providerCapabilities = publishedCapabilities || resolveSeedanceProviderCapabilities(config, model);
-        assertCompletePublishedVideoCapabilities(providerCapabilities, model);
-        const kuaiziKling = providerCapabilities.providerFamily === "kling";
-        return {
-            id: kuaiziKling ? "kuaizi-kling" : "seedance",
-            resolutions: providerCapabilities.resolutions.map((value) => ({ value, label: value.toUpperCase() })),
-            ratios: providerCapabilities.ratios.map((value) => ({ value, label: value === "adaptive" ? "Auto" : value })),
-            durations: Array.from({ length: providerCapabilities.durationMax - providerCapabilities.durationMin + 1 }, (_, index) => providerCapabilities.durationMin + index),
-            customDurationRange: { min: providerCapabilities.durationMin, max: providerCapabilities.durationMax },
-            outputCounts: providerCapabilities.outputCounts,
-            supportedGenerationModes: ["text", "image", "first_last_frame", "image_reference", "omni_reference"],
-            supportsGeneratedAudio: providerCapabilities.supportsGeneratedAudio,
-            generatedAudioResolutions: providerCapabilities.generatedAudioResolutions,
-            watermarkCapability: providerCapabilities.watermarkCapability,
-            supportsSuperResolution: false,
-            referenceLimits: {
-                images: providerCapabilities.maxImages,
-                imagesWithVideo: providerCapabilities.maxImagesWithVideo || providerCapabilities.maxImages,
-                videos: providerCapabilities.maxVideos,
-                audios: providerCapabilities.maxAudios,
-                totalVideoDurationSeconds: providerCapabilities.maxVideoDurationSeconds,
-                totalAudioDurationSeconds: providerCapabilities.maxAudioDurationSeconds,
-            },
-            supportedTools: providerCapabilities.tools,
-            requiresAdaptiveFrameRatio: providerCapabilities.requiresAdaptiveFrames,
-            unsupportedReasons: { generatedAudio: kuaiziKling ? "Kling 携带参考视频时不支持同步生成音频" : undefined, superResolution: "筷子兼容接口不支持独立超分参数" },
-        };
-    }
+    const providerCapabilities = resolvePublishedVideoProviderCapabilities(config, model);
+    if (!providerCapabilities) throw new Error(`模型 ${model} 缺少后台发布的视频能力契约`);
+    assertCompletePublishedVideoCapabilities(providerCapabilities, model);
+    const generationModes = parseVideoGenerationModes(providerCapabilities.generationModes, model);
+    const adaptiveRatioModes = parseVideoGenerationModes(providerCapabilities.adaptiveRatioModes, model);
+    const requiredAdaptiveRatioModes = parseVideoGenerationModes(providerCapabilities.requiredAdaptiveRatioModes, model);
+
     return {
-        id: "standard",
-        resolutions: standardResolutionOptions,
-        ratios: standardRatioOptions,
-        durations: VIDEO_DURATION_OPTIONS,
-        outputCounts: [1, 2, 4],
-        supportedGenerationModes: ["text", "image", "first_last_frame", "image_reference", "omni_reference"],
-        supportsGeneratedAudio: true,
-        generatedAudioResolutions: [],
-        watermarkCapability: selectedModelWatermarkCapability(config),
-        supportsSuperResolution: true,
-        supportedTools: [],
-        unsupportedReasons: {},
+        id: providerCapabilities.providerFamily,
+        resolutions: providerCapabilities.resolutions.map(parameterOption),
+        referenceVideoResolutions: [...providerCapabilities.referenceVideoResolutions],
+        ratios: providerCapabilities.ratios.map(parameterOption),
+        durations: [...providerCapabilities.durations],
+        customDurationRange: continuousDurationRange(providerCapabilities.durations),
+        outputCounts: [...providerCapabilities.outputCounts],
+        supportedGenerationModes: generationModes,
+        supportsGeneratedAudio: providerCapabilities.supportsGeneratedAudio,
+        supportsNativeAudio: providerCapabilities.supportsNativeAudio,
+        supportsDialogue: providerCapabilities.supportsDialogue,
+        supportsVoiceReference: providerCapabilities.supportsVoiceReference,
+        supportsLipSync: providerCapabilities.supportsLipSync,
+        supportsIndependentAudio: providerCapabilities.supportsIndependentAudio,
+        supportsGeneratedAudioWithReferenceVideo: providerCapabilities.supportsGeneratedAudioWithReferenceVideo,
+        generatedAudioResolutions: [...providerCapabilities.generatedAudioResolutions],
+        watermarkCapability: providerCapabilities.watermarkCapability,
+        supportsSuperResolution: false,
+        referenceLimits: {
+            images: providerCapabilities.maxImages,
+            imagesWithVideo: providerCapabilities.maxImagesWithVideo,
+            videos: providerCapabilities.maxVideos,
+            audios: providerCapabilities.maxAudios,
+            totalVideoDurationSeconds: providerCapabilities.maxVideoDurationSeconds,
+            totalAudioDurationSeconds: providerCapabilities.maxAudioDurationSeconds,
+        },
+        supportedTools: [...providerCapabilities.tools],
+        adaptiveRatioModes,
+        requiredAdaptiveRatioModes,
+        inputVariants: [...providerCapabilities.inputVariants],
+        unsupportedReasons: {
+            generatedAudio: providerCapabilities.supportsNativeAudio ? undefined : "当前模型的服务端能力契约未开放同步生成音频",
+            superResolution: "当前模型的服务端能力契约未开放独立超分",
+        },
     };
 }
 
-function selectedModelWatermarkCapability(config: AiConfig): WatermarkCapability {
-    const resolved = resolveModelRequestConfig(config, config.model || config.videoModel);
-    const channel = config.channels.find((candidate) => candidate.id === resolved.channelId);
-    const capability = channel?.modelCosts?.find((candidate) => candidate.model === modelOptionName(config.model || config.videoModel))?.watermarkCapability;
-    if (!capability) throw new Error("当前视频模型缺少后台发布的水印能力契约");
-    return capability;
+function parameterOption(value: string): VideoParameterOption {
+    return { value, label: value === "adaptive" ? "Auto" : value.toUpperCase() };
+}
+
+function continuousDurationRange(durations: readonly number[]) {
+    if (durations.length === 0) return undefined;
+    for (let index = 1; index < durations.length; index += 1) {
+        if (durations[index] !== durations[index - 1] + 1) return undefined;
+    }
+    return { min: durations[0], max: durations[durations.length - 1] };
 }
 
 function resolvePublishedVideoProviderCapabilities(config: AiConfig, model: string): ProviderModelCapabilities | undefined {
@@ -145,7 +113,7 @@ function resolvePublishedVideoProviderCapabilities(config: AiConfig, model: stri
     const channel = config.channels.find((candidate) => candidate.id === resolved.channelId);
     const capabilities = channel?.modelCosts?.find((candidate) => candidate.model === model)?.providerCapabilities;
     if (!capabilities) return undefined;
-    if (!capabilities || capabilities.modelKey !== model || capabilities.capability !== "video") {
+    if (capabilities.modelKey !== model || capabilities.capability !== "video") {
         throw new Error(`模型 ${model} 缺少后台发布的视频能力契约`);
     }
     return capabilities;
@@ -158,35 +126,159 @@ export function resolveSeedanceProviderCapabilities(config: AiConfig, model: str
 }
 
 function assertCompletePublishedVideoCapabilities(capabilities: ProviderModelCapabilities, model: string) {
-    if (!capabilities.providerFamily || !capabilities.resolutions.length || !capabilities.ratios.length || !capabilities.outputCounts.length || capabilities.durationMin <= 0 || capabilities.durationMax < capabilities.durationMin) {
+    const arrayFieldsAreValid =
+        isStringArray(capabilities.resolutions) &&
+        isStringArray(capabilities.referenceVideoResolutions) &&
+        isStringArray(capabilities.generatedAudioResolutions) &&
+        isStringArray(capabilities.ratios) &&
+        isStringArray(capabilities.qualities) &&
+        isPositiveIntegerArray(capabilities.outputCounts) &&
+        isPositiveIntegerArray(capabilities.durations) &&
+        isStringArray(capabilities.inputVariants) &&
+        isStringArray(capabilities.generationModes) &&
+        isStringArray(capabilities.adaptiveRatioModes) &&
+        isStringArray(capabilities.requiredAdaptiveRatioModes) &&
+        isStringArray(capabilities.tools);
+    const booleanFieldsAreValid = [
+        capabilities.supportsSmartDuration,
+        capabilities.supportsTextToVideo,
+        capabilities.supportsImageToVideo,
+        capabilities.supportsReferenceVideo,
+        capabilities.supportsNativeAudio,
+        capabilities.supportsDialogue,
+        capabilities.supportsVoiceReference,
+        capabilities.supportsLipSync,
+        capabilities.supportsIndependentAudio,
+        capabilities.supportsGeneratedAudio,
+        capabilities.supportsGeneratedAudioWithReferenceVideo,
+        capabilities.supportsAudioOnly,
+        capabilities.requiresAdaptiveFrames,
+        capabilities.supportsTokenUsageBilling,
+    ].every((value) => typeof value === "boolean");
+    if (!arrayFieldsAreValid || !booleanFieldsAreValid) {
+        throw new Error(`模型 ${model} 的后台视频能力契约不完整`);
+    }
+    const durationsAreOrdered = capabilities.durations.every(
+        (duration, index) => Number.isInteger(duration) && duration > 0 && (index === 0 || duration > capabilities.durations[index - 1]),
+    );
+    const countsAreValid = capabilities.outputCounts.every((count) => Number.isInteger(count) && count > 0);
+    const inputVariantsAreValid = capabilities.inputVariants.every(
+        (variant) => variant === "standard" || variant === "standard_audio" || variant === "reference_video",
+    );
+    const limitsAreValid = [
+        capabilities.maxImages,
+        capabilities.maxImagesWithVideo,
+        capabilities.maxVideos,
+        capabilities.maxAudios,
+        capabilities.maxVideoDurationSeconds,
+        capabilities.maxAudioDurationSeconds,
+    ].every((value) => Number.isInteger(value) && value >= 0);
+    const durationBoundsMatch =
+        capabilities.durations.length > 0 &&
+        capabilities.durationMin === capabilities.durations[0] &&
+        capabilities.durationMax === capabilities.durations[capabilities.durations.length - 1];
+    const supportedModes = parseVideoGenerationModes(capabilities.generationModes, model);
+    const modesAreUnique = new Set(supportedModes).size === supportedModes.length;
+    const modeFlagsAreConsistent =
+        capabilities.supportsTextToVideo === supportedModes.includes("text") &&
+        capabilities.supportsImageToVideo ===
+            supportedModes.some((mode) => mode === "image" || mode === "first_last_frame" || mode === "image_reference") &&
+        capabilities.supportsReferenceVideo === supportedModes.includes("omni_reference");
+    const adaptiveModesAreValid = capabilities.adaptiveRatioModes.every(
+        (mode) => isCanvasVideoGenerationMode(mode) && supportedModes.includes(mode),
+    );
+    const requiredAdaptiveModesAreValid = capabilities.requiredAdaptiveRatioModes.every(
+        (mode) => isCanvasVideoGenerationMode(mode) && capabilities.adaptiveRatioModes.includes(mode),
+    );
+    const adaptiveContractIsValid =
+        adaptiveModesAreValid &&
+        requiredAdaptiveModesAreValid &&
+        new Set(capabilities.adaptiveRatioModes).size === capabilities.adaptiveRatioModes.length &&
+        new Set(capabilities.requiredAdaptiveRatioModes).size === capabilities.requiredAdaptiveRatioModes.length &&
+        capabilities.ratios.includes("adaptive") === (capabilities.adaptiveRatioModes.length > 0) &&
+        capabilities.requiresAdaptiveFrames === (capabilities.requiredAdaptiveRatioModes.length > 0) &&
+        supportedModes.every(
+            (mode) =>
+                capabilities.requiredAdaptiveRatioModes.includes(mode) ||
+                capabilities.adaptiveRatioModes.includes(mode) ||
+                capabilities.ratios.some((ratio) => ratio !== "adaptive"),
+        );
+    const referenceVideoContractIsValid =
+        !capabilities.supportsReferenceVideo ||
+        (capabilities.maxVideos > 0 &&
+            capabilities.referenceVideoResolutions.length > 0 &&
+            valuesBelongToCapabilities(capabilities.referenceVideoResolutions, capabilities.resolutions));
+    const voiceReferenceContractIsValid = !capabilities.supportsVoiceReference || capabilities.maxAudios > 0;
+    const nativeAudioContractIsValid = !capabilities.supportsNativeAudio || capabilities.supportsGeneratedAudio;
+    const generatedAudioResolutionsAreValid = valuesBelongToCapabilities(capabilities.generatedAudioResolutions, capabilities.resolutions);
+    const referenceVideoAudioContractIsValid =
+        !capabilities.supportsGeneratedAudioWithReferenceVideo ||
+        (capabilities.supportsReferenceVideo && capabilities.supportsNativeAudio && capabilities.supportsGeneratedAudio);
+    if (
+        !capabilities.providerFamily ||
+        !capabilities.resolutions.length ||
+        !capabilities.ratios.length ||
+        !capabilities.outputCounts.length ||
+        !durationsAreOrdered ||
+        !countsAreValid ||
+        !inputVariantsAreValid ||
+        !limitsAreValid ||
+        !durationBoundsMatch ||
+        !modesAreUnique ||
+        !modeFlagsAreConsistent ||
+        !adaptiveContractIsValid ||
+        !referenceVideoContractIsValid ||
+        !voiceReferenceContractIsValid ||
+        !nativeAudioContractIsValid ||
+        !generatedAudioResolutionsAreValid ||
+        !referenceVideoAudioContractIsValid ||
+        (!capabilities.supportsTextToVideo && !capabilities.supportsImageToVideo)
+    ) {
         throw new Error(`模型 ${model} 的后台视频能力契约不完整`);
     }
 }
 
+function valuesBelongToCapabilities(values: readonly string[], capabilities: readonly string[]) {
+    const normalizedCapabilities = new Set(capabilities.map((value) => value.trim().toLowerCase()));
+    return values.every((value) => normalizedCapabilities.has(value.trim().toLowerCase()));
+}
+
+function isStringArray(value: unknown): value is string[] {
+    return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isPositiveIntegerArray(value: unknown): value is number[] {
+    return Array.isArray(value) && value.every((item) => Number.isInteger(item) && item > 0);
+}
+
+function isCanvasVideoGenerationMode(value: string): value is CanvasVideoGenerationMode {
+    return value === "text" || value === "image" || value === "first_last_frame" || value === "image_reference" || value === "omni_reference";
+}
+
+function parseVideoGenerationModes(values: readonly string[], model: string): CanvasVideoGenerationMode[] {
+    return values.map((value) => {
+        if (!isCanvasVideoGenerationMode(value)) {
+            throw new Error(`模型 ${model} 的后台视频能力契约包含未知生成模式 ${value}`);
+        }
+        return value;
+    });
+}
+
 export function normalizeVideoConfigForModel(config: AiConfig, generationMode?: CanvasVideoGenerationMode): AiConfig {
     const capabilities = resolveVideoModelCapabilities(config);
+    if (generationMode && !capabilities.supportedGenerationModes.includes(generationMode)) {
+        throw new Error(`模型 ${modelOptionName(config.model || config.videoModel)} 未开放生成模式 ${generationMode}`);
+    }
     const resolutionOptions = videoResolutionsForMode(capabilities, generationMode);
-    const normalizedResolution =
-        capabilities.id === "kling"
-            ? normalizeKlingResolution(config.vquality)
-            : capabilities.id === "minimax-h3"
-              ? normalizeMiniMaxH3Resolution(config.vquality)
-              : capabilities.id === "seedance" || capabilities.id === "kuaizi-kling"
-                ? normalizePublishedCapabilityResolution(config.vquality, resolutionOptions)
-                : `${normalizeVideoResolution(config.vquality)}p`;
-    const normalizedDuration =
-        capabilities.id === "kling"
-            ? normalizeKlingDuration(config.videoSeconds)
-            : capabilities.id === "minimax-h3"
-              ? normalizeMiniMaxH3Duration(config.videoSeconds)
-              : capabilities.id === "seedance" || capabilities.id === "kuaizi-kling"
-                ? normalizePublishedCapabilityDuration(config.videoSeconds, capabilities, generationMode)
-                : Number(normalizeVideoDuration(config.videoSeconds));
-    const normalizedRatio = capabilities.id === "seedance" || capabilities.id === "kuaizi-kling" ? normalizePublishedCapabilityRatio(config.size, capabilities) : normalizeSeedanceRatio(config.size);
+    const normalizedResolution = normalizePublishedCapabilityResolution(config.vquality, resolutionOptions);
+    const normalizedDuration = normalizePublishedCapabilityDuration(config.videoSeconds, capabilities);
+    const normalizedRatio = normalizePublishedCapabilityRatio(config.size, capabilities);
     const ratioOptions = videoRatiosForMode(capabilities, generationMode);
     const supportedRatio = ratioOptions.some((option) => option.value === normalizedRatio) ? normalizedRatio : ratioOptions[0].value;
     const requestedCount = Math.max(1, Math.floor(Math.abs(Number(config.count)) || 1));
-    const normalizedCount = capabilities.outputCounts.reduce((nearest, option) => (Math.abs(option - requestedCount) < Math.abs(nearest - requestedCount) ? option : nearest), capabilities.outputCounts[0]);
+    const normalizedCount = capabilities.outputCounts.reduce((nearest, option) =>
+        Math.abs(option - requestedCount) < Math.abs(nearest - requestedCount) ? option : nearest,
+    );
     return {
         ...config,
         vquality: normalizedResolution,
@@ -201,18 +293,23 @@ export function normalizeVideoConfigForModel(config: AiConfig, generationMode?: 
 
 function normalizePublishedCapabilityResolution(value: string, options: readonly VideoParameterOption[]) {
     const requested = value.trim().toLowerCase();
-    if (options.some((option) => option.value === requested)) return requested;
+    const exact = options.find((option) => option.value.toLowerCase() === requested);
+    if (exact) return exact.value;
     const normalized = normalizeResolutionToken(requested);
-    if (options.some((option) => option.value === normalized)) return normalized;
-    return options.find((option) => option.value === "720p")?.value || options[0].value;
+    const normalizedOption = options.find((option) => option.value.toLowerCase() === normalized);
+    if (normalizedOption) return normalizedOption.value;
+    return options.find((option) => option.value.toLowerCase() === "720p")?.value ?? options[0].value;
 }
 
-function normalizePublishedCapabilityDuration(value: string, capabilities: VideoModelCapabilities, mode?: CanvasVideoGenerationMode) {
+function normalizePublishedCapabilityDuration(value: string, capabilities: VideoModelCapabilities) {
     const requested = Math.round(Number(value));
-    const range = capabilities.customDurationRange;
-    if (!range) throw new Error("当前模型缺少生成时长能力契约");
-    const max = capabilities.id === "kuaizi-kling" && mode === "omni_reference" ? Math.min(range.max, 10) : range.max;
-    return Math.max(range.min, Math.min(max, Number.isFinite(requested) ? requested : range.min));
+    const candidate = Number.isFinite(requested) ? requested : capabilities.durations[0];
+    if (capabilities.customDurationRange) {
+        return Math.max(capabilities.customDurationRange.min, Math.min(capabilities.customDurationRange.max, candidate));
+    }
+    return capabilities.durations.reduce((nearest, option) =>
+        Math.abs(option - candidate) < Math.abs(nearest - candidate) ? option : nearest,
+    );
 }
 
 function normalizePublishedCapabilityRatio(value: string, capabilities: VideoModelCapabilities) {
@@ -226,24 +323,30 @@ function normalizePublishedCapabilityRatio(value: string, capabilities: VideoMod
         return parts ? [{ value: option.value, ratio: Number(parts[1]) / Number(parts[2]) }] : [];
     });
     if (!numericOptions.length || !Number.isFinite(requestedRatio)) return capabilities.ratios[0].value;
-    return numericOptions.reduce((nearest, option) => (Math.abs(option.ratio - requestedRatio) < Math.abs(nearest.ratio - requestedRatio) ? option : nearest)).value;
+    return numericOptions.reduce((nearest, option) =>
+        Math.abs(option.ratio - requestedRatio) < Math.abs(nearest.ratio - requestedRatio) ? option : nearest,
+    ).value;
 }
 
 export function videoRatiosForMode(capabilities: VideoModelCapabilities, mode?: CanvasVideoGenerationMode) {
-    if (capabilities.id === "kling" && mode && mode !== "text") return [{ value: "adaptive", label: "Auto" }] as const;
-    if (capabilities.requiresAdaptiveFrameRatio && mode === "first_last_frame") return [{ value: "adaptive", label: "Auto" }] as const;
-    if (capabilities.id !== "minimax-h3") return capabilities.ratios;
-    if (!mode || mode === "text") return capabilities.ratios.filter((option) => option.value !== "adaptive");
-    return capabilities.ratios.filter((option) => option.value === "adaptive");
+    if (mode && capabilities.requiredAdaptiveRatioModes.includes(mode)) {
+        return capabilities.ratios.filter((option) => option.value === "adaptive");
+    }
+    if (mode && !capabilities.adaptiveRatioModes.includes(mode)) {
+        return capabilities.ratios.filter((option) => option.value !== "adaptive");
+    }
+    return capabilities.ratios;
 }
 
 export function videoResolutionsForMode(capabilities: VideoModelCapabilities, mode?: CanvasVideoGenerationMode) {
-    if (capabilities.id !== "kuaizi-kling" || mode !== "omni_reference") return capabilities.resolutions;
-    return capabilities.resolutions.filter((option) => option.value !== "4k");
+    if (mode !== "omni_reference") return capabilities.resolutions;
+    const allowed = new Set(capabilities.referenceVideoResolutions.map((resolution) => resolution.toLowerCase()));
+    return capabilities.resolutions.filter((option) => allowed.has(option.value.toLowerCase()));
 }
 
 export function videoSupportsGeneratedAudio(capabilities: VideoModelCapabilities, mode?: CanvasVideoGenerationMode, resolution?: string) {
-    if (!capabilities.supportsGeneratedAudio || (capabilities.id === "kuaizi-kling" && mode === "omni_reference")) return false;
+    if (!capabilities.supportsGeneratedAudio || !capabilities.supportsNativeAudio) return false;
+    if (mode === "omni_reference" && !capabilities.supportsGeneratedAudioWithReferenceVideo) return false;
     if (!resolution || capabilities.generatedAudioResolutions.length === 0) return true;
     const requested = resolution.trim().toLowerCase();
     return capabilities.generatedAudioResolutions.some((candidate) => candidate.trim().toLowerCase() === requested);
@@ -252,10 +355,15 @@ export function videoSupportsGeneratedAudio(capabilities: VideoModelCapabilities
 export function videoModelMetadataPatch(config: AiConfig, model: string, generationMode?: CanvasVideoGenerationMode) {
     const nextConfig = { ...config, model };
     const capabilities = resolveVideoModelCapabilities(nextConfig);
-    const effectiveMode = generationMode && capabilities.supportedGenerationModes.includes(generationMode) ? generationMode : "text";
+    const effectiveMode =
+        generationMode && capabilities.supportedGenerationModes.includes(generationMode)
+            ? generationMode
+            : capabilities.supportedGenerationModes[0];
     const normalized = normalizeVideoConfigForModel(nextConfig, effectiveMode);
+    const requestConfig = resolveModelRequestConfig(config, model);
     return {
-        model,
+        channelId: requestConfig.channelId,
+        model: requestConfig.model,
         videoGenerationMode: effectiveMode,
         size: normalized.size,
         seconds: normalized.videoSeconds,

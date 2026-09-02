@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/agentruntime"
@@ -36,13 +37,30 @@ func (s *Service) advanceAgentRun(scope agentruntime.Scope, wakeup agentRunWakeu
 		return nil, Forbidden("当前用户没有继续执行 Agent 的画布权限")
 	}
 	for transitionCount := 0; transitionCount < agentRuntimeAdvanceTransitionLimit; transitionCount++ {
-		view, err := s.readAgentRuntimeView(scope)
+		view, err := s.readAgentRuntimeStateView(scope)
 		if err != nil {
 			return nil, err
 		}
 		previousVersion := view.State.StateVersion
+		expiration, expired, expirationErr := agentruntime.ExpireRuntimeAt(view.State, time.Now().UTC())
+		if expirationErr != nil {
+			return nil, expirationErr
+		}
+		if expired {
+			return s.commitAgentRuntimeState(scope, view.State, expiration)
+		}
 		switch view.State.Status {
 		case agentruntime.RunQueued, agentruntime.RunRunning:
+			switch view.Run.ReasoningHost {
+			case agentruntime.ReasoningHostManaged:
+				// Managed runs continue by scheduling the next authoritative model step.
+			case agentruntime.ReasoningHostLocalCodex:
+				// External reasoning resumes only when the browser bridge submits the
+				// next decision. Tool completion must never create a cloud model task.
+				return s.agentRuntimeProgressForCurrentState(scope, view.State)
+			default:
+				return nil, errors.New("agent reasoning host is invalid")
+			}
 			progress, stepErr := s.resumeAgentRuntimeStep(scope)
 			if stepErr != nil {
 				return s.handleAgentRunAdvanceError(scope, view.State, stepErr)
@@ -54,7 +72,7 @@ func (s *Service) advanceAgentRun(scope agentruntime.Scope, wakeup agentRunWakeu
 			if view.State.PendingToolCall == nil {
 				return nil, errors.New("agent runtime pending tool facts are missing")
 			}
-			_, found := agentruntime.ToolPolicyFor(view.State.PendingToolCall.ToolName)
+			_, found := agentruntime.ToolPolicyForSchema(view.State.PendingToolCall.ToolName, view.Run.ToolSchemaVersion)
 			if !found {
 				return nil, errors.New("agent runtime tool policy is unavailable")
 			}
@@ -108,9 +126,42 @@ func validateAgentRunWakeup(wakeup agentRunWakeup) error {
 }
 
 func (s *Service) advanceAgentRunReference(reference repository.ActiveAgentRunReference, wakeup agentRunWakeup) error {
+	return s.advanceAgentRunReferenceWithTaskFence(reference, "", wakeup)
+}
+
+func (s *Service) advanceAgentRunTaskReference(reference repository.ActiveAgentRunReference, taskID string, wakeup agentRunWakeup) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return errors.New("agent runtime task wakeup identity is invalid")
+	}
+	return s.advanceAgentRunReferenceWithTaskFence(reference, taskID, wakeup)
+}
+
+func (s *Service) advanceAgentRunReferenceWithTaskFence(reference repository.ActiveAgentRunReference, taskID string, wakeup agentRunWakeup) error {
+	release, acquired, err := s.coordinator.acquire(context.Background(), "agent-run-advance:"+reference.RunID, 1, 30*time.Second)
+	if err != nil {
+		return err
+	}
+	if !acquired {
+		return errors.New("agent runtime advance is already in progress")
+	}
+	defer release()
 	scope, terminated, err := s.authorizeActiveAgentRun(reference)
 	if err != nil || terminated {
 		return err
+	}
+	if taskID != "" {
+		state, loadErr := s.repo.LoadAgentCheckpoint(scope)
+		if loadErr != nil {
+			return loadErr
+		}
+		expectedTaskID, expectedErr := expectedAgentTaskID(state, scope, wakeup)
+		if expectedErr != nil {
+			return expectedErr
+		}
+		if expectedTaskID != taskID {
+			return nil
+		}
 	}
 	_, err = s.advanceAgentRun(scope, wakeup)
 	return err
@@ -138,16 +189,7 @@ func (s *Service) RecoverStaleAgentRuns(now time.Time, limit int) error {
 	}
 	var recoveryErrors []error
 	for _, reference := range references {
-		release, acquired, acquireErr := s.coordinator.acquire(context.Background(), "agent-run-recovery:"+reference.RunID, 1, 30*time.Second)
-		if acquireErr != nil {
-			recoveryErrors = append(recoveryErrors, fmt.Errorf("acquire agent run recovery %s: %w", reference.RunID, acquireErr))
-			continue
-		}
-		if !acquired {
-			continue
-		}
 		recoverErr := s.advanceAgentRunReference(reference, agentWakeStaleRecovery)
-		release()
 		if recoverErr != nil {
 			recoveryErrors = append(recoveryErrors, fmt.Errorf("recover agent run %s: %w", reference.RunID, recoverErr))
 		}

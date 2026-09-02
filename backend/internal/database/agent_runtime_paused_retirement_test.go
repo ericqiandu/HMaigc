@@ -667,8 +667,8 @@ func createIncompatiblePausedRunFixture(
 	run := model.AgentRun{
 		ID: runID, ThreadID: threadID, ActorUserID: thread.CreatedByUserID, ClientRequestID: "request-" + runID,
 		Status: status, LastEventSequence: sequence, StateVersion: stateVersion, StepNumber: state.StepNumber, MaxSteps: state.MaxSteps,
-		ModelRecordID: "model-record", ModelKey: "agent-model", ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
-		RuntimeVersion: agentruntime.CurrentRuntimeVersion - 1, PolicyVersion: agentruntime.CurrentPolicyVersion - 1,
+		ModelRecordID: "model-record", ModelKey: "agent-model", ToolSchemaVersion: agentruntime.LegacyToolSchemaVersion,
+		RuntimeVersion: agentruntime.LegacyRuntimeVersion, PolicyVersion: agentruntime.LegacyPolicyVersion,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&run).Error; err != nil {

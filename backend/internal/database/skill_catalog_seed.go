@@ -47,7 +47,8 @@ func seedFirstPartySkills(db *gorm.DB) error {
 			publishedAt := now
 			version = model.SkillVersion{
 				ID: versionID, SkillID: skillID, Version: builtin.Version, Instructions: builtin.Instructions,
-				Checksum: builtin.Checksum, Changelog: builtin.Changelog, CreatedBy: "system", PublishedAt: &publishedAt, CreatedAt: now,
+				Checksum: builtin.Checksum, CapabilityManifestJSON: builtin.CapabilityManifestJSON,
+				Changelog: builtin.Changelog, CreatedBy: "system", PublishedAt: &publishedAt, CreatedAt: now,
 			}
 			if err := db.Create(&version).Error; err != nil {
 				return fmt.Errorf("发布第一方技能 %s v%d 失败: %w", builtin.Dir, builtin.Version, err)
@@ -77,6 +78,7 @@ func seedFirstPartySkills(db *gorm.DB) error {
 func publishedSkillVersionMatches(version model.SkillVersion, builtin skillcatalog.BuiltinSkill, versionID string, skillID string) bool {
 	return version.ID == versionID && version.SkillID == skillID && version.Version == builtin.Version &&
 		version.Checksum == builtin.Checksum && version.Instructions == builtin.Instructions &&
+		version.CapabilityManifestJSON == builtin.CapabilityManifestJSON &&
 		version.Changelog == builtin.Changelog && version.CreatedBy == "system" && version.PublishedAt != nil
 }
 

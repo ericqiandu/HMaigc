@@ -1,6 +1,10 @@
 import { localForageStorage } from "@/lib/localforage-storage";
-import { parseClarificationHistory, parsePendingClarification, type AgentClarificationAnswerInput, type AgentCompletedClarification, type AgentPendingClarification } from "./agent-clarification";
+import { isAgentToolName, parseAgentCapabilityArguments, parseAgentCapabilityResult, type AgentCapabilityArguments, type AgentToolName } from "./agent-capabilities";
+import { parseClarificationHistory, parsePendingClarification, type AgentClarificationAnswerInput, type AgentClarificationRequest, type AgentCompletedClarification, type AgentPendingClarification } from "./agent-clarification";
 import { array, exactObject, flag, integer, object, text } from "./strict-contract";
+
+export { parseAgentCapabilityArguments, parseAgentCapabilityResult } from "./agent-capabilities";
+export type { AgentCanvasOperation, AgentCanvasPoint, AgentCanvasViewport, AgentCapabilityArguments, AgentToolName, AgentVisionAnalyzeResult } from "./agent-capabilities";
 
 export type {
     AgentClarificationAnswer,
@@ -14,21 +18,10 @@ export type {
 } from "./agent-clarification";
 
 export type AgentRunStatus = "queued" | "running" | "waiting_input" | "waiting_approval" | "waiting_tool" | "succeeded" | "failed" | "cancelled";
-export type AgentRuntimeEventKind =
-    | "run.started"
-    | "run.completed"
-    | "run.failed"
-    | "run.interrupted"
-    | "item.started"
-    | "item.delta"
-    | "item.completed"
-    | "item.failed"
-    | "approval.requested"
-    | "approval.resolved"
-    | "state.snapshot";
-export type AgentToolName = "skill.load" | "production.plan" | "production.render" | "canvas.commit";
+export type AgentReasoningHost = "managed" | "local_codex";
+export type AgentRuntimeEventKind = "run.started" | "run.completed" | "run.failed" | "run.interrupted" | "item.started" | "item.delta" | "item.completed" | "item.failed" | "approval.requested" | "approval.resolved" | "state.snapshot";
 export type AgentArtifactKind = "image" | "video" | "audio" | "text" | "canvas_revision";
-export type AgentDeliveryFact = "final_message" | "canvas_revision" | "artifact";
+export type AgentDeliveryFact = "final_message" | "canvas_revision" | "artifact" | "artifact_revision" | "resource" | "task_backed_resource" | "canvas_bound_resource" | "publication";
 
 export type AgentExpectedDelivery = {
     kind: "answer" | "canvas_change" | "generated_asset" | "mixed";
@@ -36,16 +29,39 @@ export type AgentExpectedDelivery = {
     targetCanvasId?: string;
     completionCriteria: Array<{ fact: AgentDeliveryFact; artifact?: AgentArtifactKind }>;
 };
-export type AgentToolCall = { toolCallId: string; toolName: AgentToolName; actionVersion: number; arguments: Record<string, unknown>; expectedDelivery: AgentExpectedDelivery };
+export type AgentToolCall = { toolCallId: string; toolName: AgentToolName; actionVersion: number; arguments: AgentCapabilityArguments; expectedDelivery: AgentExpectedDelivery };
+export type AgentModelDecision = { kind: "final"; final: { message: string; expectedDelivery: AgentExpectedDelivery } } | { kind: "tool_call"; toolCall: AgentToolCall } | { kind: "clarification_request"; clarification: AgentClarificationRequest };
+export type AgentApprovalEffect = { kind: "canvas_mutation" | "asset_publish" | "media_generation" | "vision_analysis"; summary: string; targetIds: string[] };
+export type AgentApprovalCostQuote = { modelRecordId: string; modelKey: string; priceVersion: number; amountMicrocredits: number };
+export type AgentPendingApproval = {
+    toolCallId: string;
+    toolName: AgentToolName;
+    actionVersion: number;
+    proposalHash: string;
+    expiresAt: string;
+    effect: AgentApprovalEffect;
+    quote?: AgentApprovalCostQuote;
+};
+export type AgentApprovalSubmission = {
+    toolCallId: string;
+    actionVersion: number;
+    proposalHash: string;
+    decision: "approved" | "rejected";
+};
 export type AgentDeliveryVerification = { status: "satisfied" | "repairable" | "failed"; rationale: string; missingCriteria?: Array<{ fact: string; artifact?: string }> };
 export type AgentRuntimeGenerationModelSelection = { channelId: string; model: string };
 export type AgentRuntimeGenerationModelSelections = { image?: AgentRuntimeGenerationModelSelection; video?: AgentRuntimeGenerationModelSelection };
+export type AgentRuntimeFrozenVisionModelSelection = AgentRuntimeGenerationModelSelection & { modelRecordId: string; priceVersion: number };
+export type AgentRuntimeRunGenerationModelSelections = AgentRuntimeGenerationModelSelections & {
+    audio?: AgentRuntimeGenerationModelSelection;
+    vision?: AgentRuntimeFrozenVisionModelSelection;
+};
 export type AgentRuntimeResourceReference = { resourceId: string; name: string };
 export type AgentRuntimeFrozenResource = AgentRuntimeResourceReference & { mimeType: string; width?: number; height?: number };
 export type AgentRuntimeExecutionMode = "guided" | "automatic";
 export type AgentRuntimeStartConfiguration = { generationModels: AgentRuntimeGenerationModelSelections; skillDirs: string[]; attachments: AgentRuntimeResourceReference[]; executionMode: AgentRuntimeExecutionMode };
 export type AgentRuntimeSkillSelection = { dir: string; name: string; description: string; instructions: string; version: number; checksum: string };
-export type AgentRuntimeRunConfiguration = { generationModels: AgentRuntimeGenerationModelSelections; skills: AgentRuntimeSkillSelection[]; attachments: AgentRuntimeFrozenResource[]; executionMode: AgentRuntimeExecutionMode | "historical" };
+export type AgentRuntimeRunConfiguration = { generationModels: AgentRuntimeRunGenerationModelSelections; skills: AgentRuntimeSkillSelection[]; attachments: AgentRuntimeFrozenResource[]; executionMode: AgentRuntimeExecutionMode | "historical" };
 export type AgentRuntimeState = {
     stateVersion: number;
     stepNumber: number;
@@ -68,6 +84,7 @@ export type AgentRuntimeView = {
     run: {
         id: string;
         threadId: string;
+        reasoningHost: AgentReasoningHost;
         actorUserId: string;
         clientRequestId: string;
         status: AgentRunStatus;
@@ -85,6 +102,7 @@ export type AgentRuntimeView = {
         completedAt?: string;
     };
     state: AgentRuntimeState;
+    pendingApproval?: AgentPendingApproval;
 };
 export type AgentTimelineItemKind = "user_message" | "agent_message" | "status" | "clarification" | "tool_call" | "tool_result" | "approval" | "artifact" | "error";
 export type AgentTimelineItemStatus = "in_progress" | "completed" | "failed" | "declined" | "interrupted";
@@ -95,7 +113,7 @@ export type AgentRunEventPayload = {
     failureCode?: string;
     item?: { kind: AgentTimelineItemKind; status: AgentTimelineItemStatus; content: AgentTimelineItemContent };
 };
-type AgentUIEventBase = { protocolVersion: 2; threadId: string; runId: string; sequence: number; createdAt: string };
+type AgentUIEventBase = { protocolVersion: 5; threadId: string; runId: string; sequence: number; createdAt: string };
 export type AgentRuntimeEvent =
     | (AgentUIEventBase & { kind: "run.started" | "state.snapshot"; itemId?: string; payload: AgentRunEventPayload })
     | (AgentUIEventBase & { kind: "run.completed" | "run.failed" | "run.interrupted"; itemId: string; payload: AgentRunEventPayload & { item: NonNullable<AgentRunEventPayload["item"]> } })
@@ -155,34 +173,46 @@ export type AgentRuntimeClient = {
     getRun: (runId: string) => Promise<AgentRuntimeView>;
     steer: (runId: string, input: { clientRequestId: string; message: string; expectedStateVersion: number }) => Promise<AgentRuntimeView>;
     interrupt: (runId: string, input: { expectedStateVersion: number }) => Promise<AgentRuntimeView>;
-    submitApproval: (runId: string, input: { toolCallId: string; actionVersion: number; decision: "approved" | "rejected" }) => Promise<AgentRuntimeView>;
+    submitApproval: (runId: string, input: { toolCallId: string; actionVersion: number; decision: "approved" | "rejected"; proposalHash: string }) => Promise<AgentRuntimeView>;
     submitClarificationResponse: (runId: string, requestId: string, input: { expectedStateVersion: number; questionId: string; answer: AgentClarificationAnswerInput; complete: boolean }) => Promise<AgentRuntimeView>;
     subscribe: (runId: string, afterSequence: number, handlers: { onOpen?: () => void; onEvent: (event: AgentRuntimeEvent) => void; onError: (error?: Error) => void }) => () => void;
+};
+export type AgentLocalRunStartInput = {
+    canvasId: string;
+    externalThreadId: string;
+    clientRequestId: string;
+    userMessage: string;
+    maxSteps: number;
+    configuration: AgentRuntimeStartConfiguration;
+};
+export type AgentLocalDecisionInput = {
+    clientRequestId: string;
+    expectedStateVersion: number;
+    decision: AgentModelDecision;
+};
+export type AgentLocalRuntimeClient = {
+    startRun: (input: AgentLocalRunStartInput) => Promise<AgentRuntimeView>;
+    submitDecision: (runId: string, input: AgentLocalDecisionInput) => Promise<AgentRuntimeView>;
+    interrupt: (runId: string, input: { expectedStateVersion: number }) => Promise<AgentRuntimeView>;
 };
 
 const runStatuses = new Set<AgentRunStatus>(["queued", "running", "waiting_input", "waiting_approval", "waiting_tool", "succeeded", "failed", "cancelled"]);
 const terminalRunStatuses = new Set<AgentRunStatus>(["succeeded", "failed", "cancelled"]);
-const eventKinds = new Set<AgentRuntimeEventKind>([
-    "run.started",
-    "run.completed",
-    "run.failed",
-    "run.interrupted",
-    "item.started",
-    "item.delta",
-    "item.completed",
-    "item.failed",
-    "approval.requested",
-    "approval.resolved",
-    "state.snapshot",
-]);
+const eventKinds = new Set<AgentRuntimeEventKind>(["run.started", "run.completed", "run.failed", "run.interrupted", "item.started", "item.delta", "item.completed", "item.failed", "approval.requested", "approval.resolved", "state.snapshot"]);
 const runEventKinds = new Set<AgentRuntimeEventKind>(["run.started", "run.completed", "run.failed", "run.interrupted", "state.snapshot"]);
 const timelineItemKinds = new Set<AgentTimelineItemKind>(["user_message", "agent_message", "status", "clarification", "tool_call", "tool_result", "approval", "artifact", "error"]);
 const timelineItemStatuses = new Set<AgentTimelineItemStatus>(["in_progress", "completed", "failed", "declined", "interrupted"]);
-const toolNames = new Set<AgentToolName>(["skill.load", "production.plan", "production.render", "canvas.commit"]);
-const deliveryFacts = new Set(["final_message", "canvas_revision", "artifact"]);
+const deliveryFacts = new Set(["final_message", "canvas_revision", "artifact", "artifact_revision", "resource", "task_backed_resource", "canvas_bound_resource", "publication"]);
 const artifactKinds = new Set(["image", "video", "audio", "text", "canvas_revision"]);
 const isoInstantPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/;
 const baseURL = String(import.meta.env.VITE_CANVAS_BACKEND_URL || "/api").replace(/\/+$/, "");
+const currentRuntimeVersion = 5;
+const currentPolicyVersion = 5;
+const currentToolSchemaVersion = 8;
+const currentAgentUIProtocolVersion = 5;
+const retiredRuntimeVersion = 3;
+const retiredPolicyVersion = 3;
+const retiredToolSchemaVersion = 4;
 
 export class AgentRuntimeRequestError extends Error {
     readonly status: number;
@@ -199,12 +229,13 @@ export class AgentRuntimeRequestError extends Error {
 }
 
 export function parseAgentRuntimeView(value: unknown): AgentRuntimeView {
-    const root = object(value, "Agent Runtime");
+    const root = exactObject(value, "Agent Runtime", ["run", "state", "pendingApproval"]);
     const run = object(root.run, "Agent run");
     const state = parseState(root.state);
     const parsedRun: AgentRuntimeView["run"] = {
         id: text(run.id, "run.id"),
         threadId: text(run.threadId, "run.threadId"),
+        reasoningHost: parseReasoningHost(run.reasoningHost),
         actorUserId: text(run.actorUserId, "run.actorUserId"),
         clientRequestId: text(run.clientRequestId, "run.clientRequestId"),
         status: runStatus(run.status),
@@ -222,25 +253,121 @@ export function parseAgentRuntimeView(value: unknown): AgentRuntimeView {
     };
     if (run.completedAt !== undefined) parsedRun.completedAt = text(run.completedAt, "run.completedAt");
     if (parsedRun.status !== state.status) throw new Error("Agent run 与 checkpoint 状态冲突");
+    if (parsedRun.reasoningHost === "managed" && (!parsedRun.modelRecordId || !parsedRun.modelKey)) {
+        throw new Error("managed Agent run 缺少模型来源事实");
+    }
+    if (parsedRun.reasoningHost === "local_codex" && (parsedRun.modelRecordId || parsedRun.modelKey)) {
+        throw new Error("local_codex Agent run 不得携带云端模型来源");
+    }
     if (parsedRun.stateVersion !== state.stateVersion || parsedRun.stepNumber !== state.stepNumber || parsedRun.maxSteps !== state.maxSteps) {
         throw new Error("Agent run 与 checkpoint 版本事实冲突");
     }
-    if (
-        state.configuration.executionMode === "historical" &&
-        (!terminalRunStatuses.has(parsedRun.status) || parsedRun.toolSchemaVersion !== 1 || parsedRun.runtimeVersion !== 1 || parsedRun.policyVersion !== 1 || parsedRun.completedAt === undefined)
-    ) {
+    const isTerminal = terminalRunStatuses.has(parsedRun.status) && parsedRun.completedAt !== undefined;
+    const isCurrentContract = parsedRun.runtimeVersion === currentRuntimeVersion && parsedRun.policyVersion === currentPolicyVersion && parsedRun.toolSchemaVersion === currentToolSchemaVersion;
+    const isRetiredReadOnlyContract = isTerminal && parsedRun.runtimeVersion === retiredRuntimeVersion && parsedRun.policyVersion === retiredPolicyVersion && parsedRun.toolSchemaVersion === retiredToolSchemaVersion;
+    if (state.configuration.executionMode === "historical" && (!isTerminal || parsedRun.toolSchemaVersion !== 1 || parsedRun.runtimeVersion !== 1 || parsedRun.policyVersion !== 1)) {
         throw new Error("historical 执行模式仅允许首代已终结 Agent 运行");
     }
-    return { run: parsedRun, state };
+    if (state.configuration.executionMode !== "historical" && !isCurrentContract && !isRetiredReadOnlyContract) {
+        throw new Error(`不受支持的 Agent Runtime 合同: ${parsedRun.runtimeVersion}/${parsedRun.policyVersion}/${parsedRun.toolSchemaVersion}`);
+    }
+    if (isCurrentContract && parsedRun.reasoningHost === "managed" && !state.configuration.generationModels.vision) {
+        throw new Error("当前 Agent Run 缺少服务端冻结的 vision 模型");
+    }
+    const pendingApproval = root.pendingApproval === undefined ? undefined : parsePendingApproval(root.pendingApproval);
+    if (state.status === "waiting_approval") {
+        if (
+            !pendingApproval ||
+            !state.pendingToolCall ||
+            pendingApproval.toolCallId !== state.pendingToolCall.toolCallId ||
+            pendingApproval.toolName !== state.pendingToolCall.toolName ||
+            pendingApproval.actionVersion !== state.pendingToolCall.actionVersion
+        ) {
+            throw new Error("Agent 等待审批状态缺少完全一致的冻结提案");
+        }
+        const expectedEffectKind = approvalEffectKindForTool(state.pendingToolCall.toolName);
+        if (!expectedEffectKind || pendingApproval.effect.kind !== expectedEffectKind) {
+            throw new Error("Agent 审批影响与冻结工具不一致");
+        }
+        if (state.pendingToolCall.toolName === "vision.analyze") {
+            const argumentsValue = state.pendingToolCall.arguments;
+            const frozenVision = state.configuration.generationModels.vision;
+            if (
+                !("detail" in argumentsValue) ||
+                !frozenVision ||
+                !pendingApproval.quote ||
+                argumentsValue.modelRecordId !== frozenVision.modelRecordId ||
+                argumentsValue.modelKey !== frozenVision.model ||
+                pendingApproval.quote.modelRecordId !== frozenVision.modelRecordId ||
+                pendingApproval.quote.modelKey !== frozenVision.model ||
+                pendingApproval.quote.priceVersion !== frozenVision.priceVersion
+            ) {
+                throw new Error("视觉理解审批与 Run 冻结模型或报价不一致");
+            }
+        }
+    } else if (pendingApproval) {
+        throw new Error("Agent 非等待审批状态携带了冻结提案");
+    }
+    return { run: parsedRun, state, ...(pendingApproval ? { pendingApproval } : {}) };
+}
+
+function approvalEffectKindForTool(toolName: AgentToolName): AgentApprovalEffect["kind"] | undefined {
+    if (toolName === "canvas.apply_ops") return "canvas_mutation";
+    if (toolName === "assets.publish") return "asset_publish";
+    if (toolName === "media.generate") return "media_generation";
+    if (toolName === "vision.analyze") return "vision_analysis";
+    return undefined;
+}
+
+function parseReasoningHost(value: unknown): AgentReasoningHost {
+    if (value === "managed" || value === "local_codex") return value;
+    throw new Error(`run.reasoningHost 不受支持: ${String(value)}`);
+}
+
+function parsePendingApproval(value: unknown): AgentPendingApproval {
+    const source = exactObject(value, "pendingApproval", ["toolCallId", "toolName", "actionVersion", "proposalHash", "expiresAt", "effect", "quote"]);
+    if (!isAgentToolName(source.toolName)) throw new Error(`不受支持的审批工具: ${String(source.toolName)}`);
+    const proposalHash = text(source.proposalHash, "pendingApproval.proposalHash");
+    if (!/^[0-9a-f]{64}$/.test(proposalHash)) throw new Error("pendingApproval.proposalHash 必须是 SHA-256");
+    const effectSource = exactObject(source.effect, "pendingApproval.effect", ["kind", "summary", "targetIds"]);
+    const kind = effectSource.kind;
+    if (kind !== "canvas_mutation" && kind !== "asset_publish" && kind !== "media_generation" && kind !== "vision_analysis") {
+        throw new Error(`不受支持的审批影响类型: ${String(kind)}`);
+    }
+    const targetIds = array(effectSource.targetIds, "pendingApproval.effect.targetIds").map((target, index) => text(target, `pendingApproval.effect.targetIds[${index}]`));
+    if (!targetIds.length || new Set(targetIds).size !== targetIds.length) throw new Error("pendingApproval.effect.targetIds 必须非空且唯一");
+    const quote = source.quote === undefined ? undefined : parseApprovalCostQuote(source.quote);
+    const paidTool = source.toolName === "media.generate" || source.toolName === "vision.analyze";
+    if (paidTool && !quote) throw new Error(`${source.toolName} 审批缺少服务端冻结报价`);
+    if (!paidTool && quote) throw new Error("非付费工具审批不得携带冻结报价");
+    return {
+        toolCallId: text(source.toolCallId, "pendingApproval.toolCallId"),
+        toolName: source.toolName,
+        actionVersion: integer(source.actionVersion, "pendingApproval.actionVersion"),
+        proposalHash,
+        expiresAt: isoInstant(source.expiresAt, "pendingApproval.expiresAt"),
+        effect: { kind, summary: text(effectSource.summary, "pendingApproval.effect.summary"), targetIds },
+        ...(quote ? { quote } : {}),
+    };
+}
+
+function parseApprovalCostQuote(value: unknown): AgentApprovalCostQuote {
+    const source = exactObject(value, "pendingApproval.quote", ["modelRecordId", "modelKey", "priceVersion", "amountMicrocredits"]);
+    return {
+        modelRecordId: text(source.modelRecordId, "pendingApproval.quote.modelRecordId"),
+        modelKey: text(source.modelKey, "pendingApproval.quote.modelKey"),
+        priceVersion: integer(source.priceVersion, "pendingApproval.quote.priceVersion"),
+        amountMicrocredits: integer(source.amountMicrocredits, "pendingApproval.quote.amountMicrocredits"),
+    };
 }
 
 export function parseAgentRuntimeEvent(value: unknown): AgentRuntimeEvent {
     const source = exactObject(value, "Agent event", ["protocolVersion", "threadId", "runId", "sequence", "kind", "itemId", "itemKind", "payload", "createdAt"]);
-    if (source.protocolVersion !== 2) throw new Error(`不受支持的 Agent UI 协议版本: ${String(source.protocolVersion)}`);
+    if (source.protocolVersion !== currentAgentUIProtocolVersion) throw new Error(`不受支持的 Agent UI 协议版本: ${String(source.protocolVersion)}`);
     const kind = source.kind;
     if (typeof kind !== "string" || !eventKinds.has(kind as AgentRuntimeEventKind)) throw new Error(`不受支持的 Agent 事件: ${String(kind)}`);
-    const base = {
-        protocolVersion: 2 as const,
+    const base: AgentUIEventBase = {
+        protocolVersion: currentAgentUIProtocolVersion,
         threadId: text(source.threadId, "event.threadId"),
         runId: text(source.runId, "event.runId"),
         sequence: integer(source.sequence, "event.sequence"),
@@ -258,13 +385,14 @@ export function parseAgentRuntimeEvent(value: unknown): AgentRuntimeEvent {
         if (itemId !== undefined) event.itemId = itemId;
         return event;
     }
-    const payload = object(source.payload, "event.payload");
-    rejectTransientMediaLocator(payload, "event.payload");
+    const itemId = text(source.itemId, "event.itemId");
+    const itemKind = timelineItemKind(source.itemKind, "event.itemKind");
+    const payload = parseTimelineContent(source.payload, "event.payload", itemKind);
     return {
         ...base,
         kind: kind as "item.started" | "item.delta" | "item.completed" | "item.failed" | "approval.requested" | "approval.resolved",
-        itemId: text(source.itemId, "event.itemId"),
-        itemKind: timelineItemKind(source.itemKind, "event.itemKind"),
+        itemId,
+        itemKind,
         payload,
     };
 }
@@ -376,9 +504,135 @@ function parseRunEventPayload(value: unknown): AgentRunEventPayload {
 }
 
 function parseTimelineContent(value: unknown, label: string, kind: AgentTimelineItemKind): AgentTimelineItemContent {
-    const content = kind === "artifact" ? exactObject(value, label, ["artifactId", "kind", "planKey", "planVersion", "referenceKey", "shotKey", "resourceId", "status"]) : object(value, label);
+    const source = object(value, label);
+    let content: AgentTimelineItemContent;
+    if (source.contentType !== undefined) {
+        content = parseAgentV5TimelineContent(source, label, kind);
+    } else {
+        content = kind === "artifact" ? exactObject(source, label, ["artifactId", "kind", "planKey", "planVersion", "referenceKey", "shotKey", "resourceId", "status"]) : kind === "tool_call" ? parseToolTimelineActivity(source, label) : source;
+    }
     rejectTransientMediaLocator(content, label);
     return content;
+}
+
+function parseToolTimelineActivity(value: unknown, label: string): AgentTimelineItemContent {
+    const source = exactObject(value, label, ["toolCallId", "toolName", "actionVersion", "started", "succeeded", "errorCode", "output", "decision"]);
+    const content: AgentTimelineItemContent = {
+        toolCallId: text(source.toolCallId, `${label}.toolCallId`),
+        actionVersion: integer(source.actionVersion, `${label}.actionVersion`),
+    };
+    if (source.toolName !== undefined) {
+        if (!isAgentToolName(source.toolName)) throw new Error(`${label}.toolName 不受支持: ${String(source.toolName)}`);
+        content.toolName = source.toolName;
+    }
+    if (source.started !== undefined) content.started = flag(source.started, `${label}.started`);
+    if (source.succeeded !== undefined) content.succeeded = flag(source.succeeded, `${label}.succeeded`);
+    if (source.errorCode !== undefined) content.errorCode = text(source.errorCode, `${label}.errorCode`);
+    if (source.output !== undefined) {
+        const output = object(source.output, `${label}.output`);
+        content.output = content.toolName === "vision.analyze" ? { ...parseAgentCapabilityResult("vision.analyze", output) } : output;
+    }
+    if (source.decision !== undefined) content.decision = enumText(source.decision, `${label}.decision`, ["approved", "rejected"]);
+
+    const transitionFacts = [content.started, content.succeeded, content.decision].filter((fact) => fact !== undefined);
+    if (transitionFacts.length > 1) throw new Error(`${label} 同时包含多个工具状态变更事实`);
+    if (content.started === false) throw new Error(`${label}.started 只能为 true`);
+    if (content.output !== undefined && content.succeeded !== true) throw new Error(`${label}.output 缺少成功事实`);
+    if (content.errorCode !== undefined && content.succeeded !== false) throw new Error(`${label}.errorCode 缺少失败事实`);
+    return content;
+}
+
+function parseAgentV5TimelineContent(source: Record<string, unknown>, label: string, kind: AgentTimelineItemKind): AgentTimelineItemContent {
+    if (source.contentType === "stage_review_resolution" || source.contentType === "artifact_review") {
+        throw new Error(`${label} 使用了 Agent UI v5 已退役的生产图事件: ${source.contentType}`);
+    }
+    if (source.contentType === "media_assembly") {
+        if (kind !== "tool_call") throw new Error(`${label} 的媒体装配内容与 item kind 不一致`);
+        return parseMediaAssemblyTimelineContent(source, label);
+    }
+    if (source.contentType === "asset_publication") {
+        if (kind !== "artifact") throw new Error(`${label} 的资产入库内容与 item kind 不一致`);
+        const content = exactObject(source, label, ["contentType", "publicationId", "artifactRevisionId", "resourceId", "assetId", "assetVersionId", "projectAssetLinkId", "representationId", "publicationPurpose", "targetCategory", "targetBindingKey"]);
+        return {
+            contentType: "asset_publication",
+            publicationId: text(content.publicationId, `${label}.publicationId`),
+            artifactRevisionId: text(content.artifactRevisionId, `${label}.artifactRevisionId`),
+            resourceId: text(content.resourceId, `${label}.resourceId`),
+            assetId: text(content.assetId, `${label}.assetId`),
+            assetVersionId: text(content.assetVersionId, `${label}.assetVersionId`),
+            projectAssetLinkId: text(content.projectAssetLinkId, `${label}.projectAssetLinkId`),
+            representationId: text(content.representationId, `${label}.representationId`),
+            publicationPurpose: text(content.publicationPurpose, `${label}.publicationPurpose`),
+            targetCategory: enumText(content.targetCategory, `${label}.targetCategory`, ["character", "environment", "wardrobe", "prop", "weapon", "style", "other"]),
+            targetBindingKey: text(content.targetBindingKey, `${label}.targetBindingKey`),
+        };
+    }
+    if (source.contentType === "asset_publication_failed") {
+        if (kind !== "artifact") throw new Error(`${label} 的资产入库失败内容与 item kind 不一致`);
+        const content = exactObject(source, label, ["contentType", "publicationId", "artifactRevisionId", "errorCode"]);
+        return {
+            contentType: "asset_publication_failed",
+            publicationId: text(content.publicationId, `${label}.publicationId`),
+            artifactRevisionId: text(content.artifactRevisionId, `${label}.artifactRevisionId`),
+            errorCode: text(content.errorCode, `${label}.errorCode`),
+        };
+    }
+    throw new Error(`${label} 包含不受支持的 Agent UI v5 内容类型: ${String(source.contentType)}`);
+}
+
+function parseMediaAssemblyTimelineContent(source: Record<string, unknown>, label: string): AgentTimelineItemContent {
+    const content = exactObject(source, label, ["contentType", "toolCallId", "actionVersion", "taskId", "taskStatus", "stage", "clipCount", "audioMode", "output", "planRevision", "final", "errorCode"]);
+    const taskStatus = enumText(content.taskStatus, `${label}.taskStatus`, ["queued", "running", "succeeded", "failed", "cancelled"]);
+    const audioMode = enumText(content.audioMode, `${label}.audioMode`, ["none", "native", "independent"]);
+    const outputSource = exactObject(content.output, `${label}.output`, ["artifactKey", "container", "videoCodec", "audioCodec", "width", "height", "frameRate"]);
+    const output = {
+        artifactKey: text(outputSource.artifactKey, `${label}.output.artifactKey`),
+        container: enumText(outputSource.container, `${label}.output.container`, ["mp4"]),
+        videoCodec: enumText(outputSource.videoCodec, `${label}.output.videoCodec`, ["h264"]),
+        audioCodec: enumText(outputSource.audioCodec, `${label}.output.audioCodec`, ["none", "aac"]),
+        width: integer(outputSource.width, `${label}.output.width`),
+        height: integer(outputSource.height, `${label}.output.height`),
+        frameRate: integer(outputSource.frameRate, `${label}.output.frameRate`),
+    };
+    if ((audioMode === "none") !== (output.audioCodec === "none")) throw new Error(`${label}.output.audioCodec 与声音模式冲突`);
+    const result: AgentTimelineItemContent = {
+        contentType: "media_assembly",
+        toolCallId: text(content.toolCallId, `${label}.toolCallId`),
+        actionVersion: integer(content.actionVersion, `${label}.actionVersion`),
+        taskId: text(content.taskId, `${label}.taskId`),
+        taskStatus,
+        stage: text(content.stage, `${label}.stage`),
+        clipCount: integer(content.clipCount, `${label}.clipCount`),
+        audioMode,
+        output,
+        planRevision: parseTimelineRevisionRef(content.planRevision, `${label}.planRevision`),
+    };
+    if (content.final !== undefined) {
+        const final = exactObject(content.final, `${label}.final`, ["artifactRevision", "resourceId", "adopted"]);
+        result.final = {
+            artifactRevision: parseTimelineRevisionRef(final.artifactRevision, `${label}.final.artifactRevision`),
+            resourceId: text(final.resourceId, `${label}.final.resourceId`),
+            adopted: flag(final.adopted, `${label}.final.adopted`),
+        };
+    }
+    if (content.errorCode !== undefined) result.errorCode = text(content.errorCode, `${label}.errorCode`);
+    const hasFinal = result.final !== undefined;
+    const hasError = result.errorCode !== undefined;
+    if ((taskStatus === "queued" || taskStatus === "running") && (hasFinal || hasError)) throw new Error(`${label} 进行中事实冲突`);
+    if (taskStatus === "succeeded" && (!hasFinal || hasError)) throw new Error(`${label} 成功事实不完整`);
+    if ((taskStatus === "failed" || taskStatus === "cancelled") && (hasFinal || !hasError)) throw new Error(`${label} 失败事实不完整`);
+    return result;
+}
+
+function parseTimelineRevisionRef(value: unknown, label: string): Record<string, unknown> {
+    const source = exactObject(value, label, ["artifactId", "revisionId"]);
+    return { artifactId: text(source.artifactId, `${label}.artifactId`), revisionId: text(source.revisionId, `${label}.revisionId`) };
+}
+
+function enumText(value: unknown, label: string, allowed: readonly string[]): string {
+    const parsed = text(value, label);
+    if (!allowed.includes(parsed)) throw new Error(`${label} 不受支持: ${parsed}`);
+    return parsed;
 }
 
 function rejectTransientMediaLocator(value: unknown, label: string): void {
@@ -387,8 +641,19 @@ function rejectTransientMediaLocator(value: unknown, label: string): void {
         return;
     }
     if (!value || typeof value !== "object") return;
+    const resourceId = typeof Reflect.get(value, "resourceId") === "string" ? Reflect.get(value, "resourceId").trim() : "";
     for (const [key, nested] of Object.entries(value)) {
-        if (key === "url" || key === "signedUrl") throw new Error(`${label} 不允许返回短期媒体地址字段: ${key}`);
+        if (key === "signedUrl") throw new Error(`${label} 不允许返回短期媒体地址字段: ${key}`);
+        if (key === "url") {
+            const expectedURL = resourceId ? `/api/resources/${resourceId}/file` : "";
+            if (nested !== expectedURL) {
+                if (typeof nested === "string" && nested.startsWith("/api/resources/")) {
+                    throw new Error(`${label}.url 与 resourceId 的资源身份不匹配`);
+                }
+                throw new Error(`${label} 不允许返回短期媒体地址字段: ${key}`);
+            }
+            continue;
+        }
         rejectTransientMediaLocator(nested, `${label}.${key}`);
     }
 }
@@ -402,14 +667,14 @@ function parseState(value: unknown): AgentRuntimeState {
         status: runStatus(source.status),
         userMessage: text(source.userMessage, "state.userMessage"),
         configuration: parseRunConfiguration(source.configuration),
-        clarificationHistory: parseClarificationHistory(source.clarificationHistory, parseExpectedDelivery),
+        clarificationHistory: parseClarificationHistory(source.clarificationHistory, parseAgentExpectedDelivery),
     };
     if (source.pendingToolCall !== undefined) result.pendingToolCall = parseToolCall(source.pendingToolCall);
     if (source.pendingToolStarted !== undefined) result.pendingToolStarted = flag(source.pendingToolStarted, "state.pendingToolStarted");
-    if (source.pendingClarification !== undefined) result.pendingClarification = parsePendingClarification(source.pendingClarification, parseExpectedDelivery);
+    if (source.pendingClarification !== undefined) result.pendingClarification = parsePendingClarification(source.pendingClarification, parseAgentExpectedDelivery);
     if (source.finalMessage !== undefined) result.finalMessage = text(source.finalMessage, "state.finalMessage");
     if (source.failureCode !== undefined) result.failureCode = text(source.failureCode, "state.failureCode");
-    if (source.expectedDelivery !== undefined) result.expectedDelivery = parseExpectedDelivery(source.expectedDelivery);
+    if (source.expectedDelivery !== undefined) result.expectedDelivery = parseAgentExpectedDelivery(source.expectedDelivery);
     if (source.verification !== undefined) result.verification = parseVerification(source.verification);
     if (source.lastToolResult !== undefined) result.lastToolResult = parseToolResult(source.lastToolResult);
     if (source.decisionFeedback !== undefined) result.decisionFeedback = parseDecisionFeedback(source.decisionFeedback);
@@ -418,8 +683,8 @@ function parseState(value: unknown): AgentRuntimeState {
 }
 
 function parseRunConfiguration(value: unknown): AgentRuntimeRunConfiguration {
-    const source = object(value, "state.configuration");
-    const models = parseGenerationModelSelections(source.generationModels, "state.configuration.generationModels");
+    const source = exactObject(value, "state.configuration", ["generationModels", "skills", "attachments", "executionMode"]);
+    const models = parseRunGenerationModelSelections(source.generationModels, "state.configuration.generationModels");
     const skills = array(source.skills, "state.configuration.skills").map((item, index) => {
         const skill = object(item, `state.configuration.skills[${index}]`);
         const checksum = text(skill.checksum, `state.configuration.skills[${index}].checksum`);
@@ -440,7 +705,7 @@ function parseRunConfiguration(value: unknown): AgentRuntimeRunConfiguration {
 }
 
 function parseStartConfiguration(value: unknown, label: string): AgentRuntimeStartConfiguration {
-    const source = object(value, label);
+    const source = exactObject(value, label, ["generationModels", "skillDirs", "attachments", "executionMode"]);
     return {
         generationModels: parseGenerationModelSelections(source.generationModels, `${label}.generationModels`),
         skillDirs: array(source.skillDirs, `${label}.skillDirs`).map((item, index) => text(item, `${label}.skillDirs[${index}]`)),
@@ -473,7 +738,7 @@ function runExecutionMode(value: unknown, label: string): AgentRuntimeRunConfigu
 }
 
 function parseGenerationModelSelections(value: unknown, label: string): AgentRuntimeGenerationModelSelections {
-    const source = object(value, label);
+    const source = exactObject(value, label, ["image", "video"]);
     const result: AgentRuntimeGenerationModelSelections = {};
     if (source.image !== undefined) result.image = parseGenerationModelSelection(source.image, `${label}.image`);
     if (source.video !== undefined) result.video = parseGenerationModelSelection(source.video, `${label}.video`);
@@ -481,8 +746,28 @@ function parseGenerationModelSelections(value: unknown, label: string): AgentRun
 }
 
 function parseGenerationModelSelection(value: unknown, label: string): AgentRuntimeGenerationModelSelection {
-    const source = object(value, label);
+    const source = exactObject(value, label, ["channelId", "model"]);
     return { channelId: text(source.channelId, `${label}.channelId`), model: text(source.model, `${label}.model`) };
+}
+
+function parseRunGenerationModelSelections(value: unknown, label: string): AgentRuntimeRunGenerationModelSelections {
+    const source = exactObject(value, label, ["image", "video", "audio", "vision"]);
+    const result: AgentRuntimeRunGenerationModelSelections = {};
+    if (source.image !== undefined) result.image = parseGenerationModelSelection(source.image, `${label}.image`);
+    if (source.video !== undefined) result.video = parseGenerationModelSelection(source.video, `${label}.video`);
+    if (source.audio !== undefined) result.audio = parseGenerationModelSelection(source.audio, `${label}.audio`);
+    if (source.vision !== undefined) result.vision = parseFrozenVisionModelSelection(source.vision, `${label}.vision`);
+    return result;
+}
+
+function parseFrozenVisionModelSelection(value: unknown, label: string): AgentRuntimeFrozenVisionModelSelection {
+    const source = exactObject(value, label, ["channelId", "modelRecordId", "model", "priceVersion"]);
+    return {
+        channelId: text(source.channelId, `${label}.channelId`),
+        modelRecordId: text(source.modelRecordId, `${label}.modelRecordId`),
+        model: text(source.model, `${label}.model`),
+        priceVersion: integer(source.priceVersion, `${label}.priceVersion`),
+    };
 }
 
 function validateStateFacts(state: AgentRuntimeState) {
@@ -513,25 +798,31 @@ function sameExpectedDelivery(left: AgentExpectedDelivery, right: AgentExpectedD
 }
 
 function parseToolCall(value: unknown): AgentToolCall {
-    const source = object(value, "pendingToolCall");
+    const source = exactObject(value, "pendingToolCall", ["toolCallId", "toolName", "actionVersion", "arguments", "expectedDelivery"]);
     const toolName = source.toolName;
-    if (typeof toolName !== "string" || !toolNames.has(toolName as AgentToolName)) throw new Error(`不受支持的 Agent 工具: ${String(toolName)}`);
+    if (!isAgentToolName(toolName)) throw new Error(`不受支持的 Agent 工具: ${String(toolName)}`);
     return {
         toolCallId: text(source.toolCallId, "toolCallId"),
-        toolName: toolName as AgentToolName,
+        toolName,
         actionVersion: integer(source.actionVersion, "actionVersion"),
-        arguments: object(source.arguments, "tool arguments"),
-        expectedDelivery: parseExpectedDelivery(source.expectedDelivery),
+        arguments: parseAgentCapabilityArguments(toolName, source.arguments),
+        expectedDelivery: parseAgentExpectedDelivery(source.expectedDelivery),
     };
 }
 
-function parseExpectedDelivery(value: unknown): NonNullable<AgentRuntimeState["expectedDelivery"]> {
-    const source = object(value, "expectedDelivery");
+export function parseAgentExpectedDelivery(value: unknown): NonNullable<AgentRuntimeState["expectedDelivery"]> {
+    const source = exactObject(value, "expectedDelivery", ["kind", "requiredArtifacts", "targetCanvasId", "completionCriteria"]);
     const kind = source.kind;
     if (kind !== "answer" && kind !== "canvas_change" && kind !== "generated_asset" && kind !== "mixed") throw new Error(`不受支持的交付类型: ${String(kind)}`);
-    const criteria = array(source.completionCriteria, "completionCriteria").map((item) => criterion(item));
+    const rawCriteria = array(source.completionCriteria, "completionCriteria");
+    if (rawCriteria.length < 1 || rawCriteria.length > 20) throw new Error("completionCriteria 数量必须在 1 到 20 之间");
+    const criteria = rawCriteria.map((item) => criterion(item));
     const result: NonNullable<AgentRuntimeState["expectedDelivery"]> = { kind, completionCriteria: criteria };
-    if (source.requiredArtifacts !== undefined) result.requiredArtifacts = array(source.requiredArtifacts, "requiredArtifacts").map((item) => artifact(item, "requiredArtifact"));
+    if (source.requiredArtifacts !== undefined) {
+        const requiredArtifacts = array(source.requiredArtifacts, "requiredArtifacts");
+        if (requiredArtifacts.length > 5) throw new Error("requiredArtifacts 数量不能超过 5");
+        result.requiredArtifacts = requiredArtifacts.map((item) => artifact(item, "requiredArtifact"));
+    }
     if (source.targetCanvasId !== undefined) result.targetCanvasId = text(source.targetCanvasId, "targetCanvasId");
     return result;
 }
@@ -565,7 +856,7 @@ function parseDecisionFeedback(value: unknown): NonNullable<AgentRuntimeState["d
 }
 
 function criterion(value: unknown): AgentExpectedDelivery["completionCriteria"][number] {
-    const source = object(value, "delivery criterion");
+    const source = exactObject(value, "delivery criterion", ["fact", "artifact"]);
     const fact = text(source.fact, "criterion.fact");
     if (!deliveryFacts.has(fact)) throw new Error(`不受支持的交付事实: ${fact}`);
     const result: AgentExpectedDelivery["completionCriteria"][number] = { fact: fact as AgentExpectedDelivery["completionCriteria"][number]["fact"] };
@@ -630,6 +921,12 @@ export const agentRuntimeClient: AgentRuntimeClient = {
         );
         return () => stream.close();
     },
+};
+
+export const agentLocalRuntimeClient: AgentLocalRuntimeClient = {
+    startRun: async (input) => parseAgentRuntimeView(await request("/agent/local/runs", { method: "POST", body: JSON.stringify(input) })),
+    submitDecision: async (runId, input) => parseAgentRuntimeView(await request(`/agent/local/runs/${encodeURIComponent(runId)}/decisions`, { method: "POST", body: JSON.stringify(input) })),
+    interrupt: async (runId, input) => parseAgentRuntimeView(await request(`/agent/runs/${encodeURIComponent(runId)}/interrupt`, { method: "POST", body: JSON.stringify(input) })),
 };
 
 const handleKey = (canvasId: string) => `agent-runtime-handle:${canvasId}`;

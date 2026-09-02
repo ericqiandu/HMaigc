@@ -314,10 +314,11 @@ func (r *Repository) CreditLedgerReferenceExists(referenceKey string) (bool, err
 }
 
 type ActiveTaskPolicy struct {
-	TotalLimit      int
-	Capability      string
-	CapabilityLimit int
-	Unlimited       bool
+	TotalLimit       int
+	ConcurrencyClass string
+	Capabilities     []string
+	ClassLimit       int
+	Unlimited        bool
 	// BillingTeamID freezes the exact paying account for account-scoped limits.
 	// nil is reserved for explicitly account-neutral internal tasks.
 	BillingTeamID *string
@@ -424,14 +425,16 @@ func (r *Repository) RetryTaskWithBilling(userID string, taskID string, order *m
 		}
 		updates := map[string]any{
 			"status": model.TaskStatusQueued, "stage": "等待队列调度", "progress": 5, "error": "", "result_json": "",
-			"capability": policy.Capability, "started_at": nil, "completed_at": nil, "updated_at": time.Now(),
+			"started_at": nil, "completed_at": nil, "updated_at": time.Now(),
 			"provider_request_id": "", "poll_stage": "", "next_poll_at": nil, "lease_owner": "", "lease_expires_at": nil,
+			"lease_token": "", "cancel_requested_at": nil, "cancel_reason_code": "",
 			"watermark_capability": watermarkTask.WatermarkCapability, "watermark_directive": watermarkTask.WatermarkDirective,
 			"watermark_parameter_applied": watermarkTask.WatermarkParameterApplied, "watermark_parameter_value": watermarkTask.WatermarkParameterValue,
 			"watermark_policy_publication_id": watermarkTask.WatermarkPolicyPublicationID, "watermark_policy_version": watermarkTask.WatermarkPolicyVersion,
 		}
 		if order != nil {
 			updates["billing_order_id"] = order.ID
+			updates["capability"] = order.Capability
 			updates["provider_account_id"] = task.ProviderAccountID
 			updates["provider_endpoint_version_id"] = task.ProviderEndpointVersionID
 			updates["provider_credential_version_id"] = task.ProviderCredentialVersionID
@@ -480,7 +483,7 @@ func (r *Repository) ResumeTaskWithUncertainBilling(userID string, taskID string
 			Updates(map[string]any{
 				"status": model.TaskStatusQueued, "stage": "等待上游结果核对", "progress": 35, "error": "", "result_json": "",
 				"started_at": nil, "completed_at": nil, "updated_at": now, "poll_stage": "provider_resume", "next_poll_at": nil,
-				"lease_owner": "", "lease_expires_at": nil,
+				"lease_owner": "", "lease_expires_at": nil, "lease_token": "", "cancel_requested_at": nil, "cancel_reason_code": "",
 			})
 		if updated.Error != nil {
 			return updated.Error
@@ -511,13 +514,16 @@ func enforceActiveTaskLimit(tx *gorm.DB, userID string, policy ActiveTaskPolicy)
 	if count >= int64(policy.TotalLimit) {
 		return ErrActiveTaskLimit
 	}
+	if strings.TrimSpace(policy.ConcurrencyClass) == "" || len(policy.Capabilities) == 0 || policy.ClassLimit <= 0 {
+		return errors.New("active task concurrency policy is invalid")
+	}
 	var capabilityCount int64
 	if err := activeTasks.
-		Where("tasks.capability = ?", policy.Capability).
+		Where("tasks.capability IN ?", policy.Capabilities).
 		Count(&capabilityCount).Error; err != nil {
 		return err
 	}
-	if capabilityCount >= int64(policy.CapabilityLimit) {
+	if capabilityCount >= int64(policy.ClassLimit) {
 		return ErrCapabilityTaskLimit
 	}
 	return nil

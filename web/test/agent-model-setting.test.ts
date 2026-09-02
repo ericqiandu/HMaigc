@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 
-import { agentDefaultModelOptions, pricingContractForModel, supportsTokenUsageBilling, type AgentModelCandidate } from "../src/pages/admin/model-pricing/agent-model-options";
+import { agentDefaultModelOptions, agentVisionModelOptions, pricingContractForModel, supportsTokenUsageBilling, type AgentModelCandidate } from "../src/pages/admin/model-pricing/agent-model-options";
+import { parseAgentVisionModelSetting } from "../src/services/api/auth";
 
 let configStore: typeof import("../src/stores/use-config-store");
 
@@ -30,6 +31,7 @@ function candidate(overrides: Partial<AgentModelCandidate> = {}): AgentModelCand
         priceTiers: [],
         capabilities: undefined,
         channelName: "筷子科技",
+        channelInterfaceType: "chat-completion",
         ...overrides,
     };
 }
@@ -60,6 +62,31 @@ describe("Agent default model setting", () => {
         expect(agentDefaultModelOptions([tokenModel])).toEqual([{ label: "DeepSeek V4 Pro · 筷子科技", value: tokenModel.id }]);
     });
 
+    test("vision candidates require an enabled authenticated token-priced vision model on a supported interface", () => {
+        const valid = candidate({
+            id: "deepseek-vision",
+            modelKey: "deepseek-v4-flash-vision-exp",
+            displayName: "DeepSeek Vision",
+            capability: "vision",
+            billingMode: "token_usage",
+            priceStrategy: "token",
+            unitPriceMicrocredits: 0,
+            providerCapabilities: { resolutions: [], inputVariants: [], supportsTokenUsageBilling: true },
+        });
+        expect(
+            agentVisionModelOptions([
+                valid,
+                candidate({ ...valid, id: "text", capability: "text" }),
+                candidate({ ...valid, id: "disabled", enabled: false }),
+                candidate({ ...valid, id: "unpriced", priceConfigured: false }),
+                candidate({ ...valid, id: "member", accessPolicy: "member" }),
+                candidate({ ...valid, id: "fixed", billingMode: "fixed_request", priceStrategy: "flat", unitPriceMicrocredits: 100 }),
+                candidate({ ...valid, id: "unsupported-billing", providerCapabilities: undefined }),
+                candidate({ ...valid, id: "unsupported-interface", channelInterfaceType: "openai-image" }),
+            ]),
+        ).toEqual([{ label: "DeepSeek Vision · 筷子科技", value: valid.id }]);
+    });
+
     test("complete token supplier pricing hard-cuts a text model to token billing", () => {
         expect(
             pricingContractForModel(candidate({ modelKey: "deepseek-v4-pro", providerCapabilities: { resolutions: [], inputVariants: [], supportsTokenUsageBilling: true } }), {
@@ -67,6 +94,17 @@ describe("Agent default model setting", () => {
                 outputPerMillionMicros: 6_000_000,
                 cachedPerMillionMicros: 25_000,
                 expectedOutputTokens: 8192,
+                maxOutputTokens: 16_384,
+            }),
+        ).toEqual({ billingMode: "token_usage", priceStrategy: "token" });
+    });
+
+    test("complete token supplier pricing hard-cuts a vision model to token billing", () => {
+        expect(
+            pricingContractForModel(candidate({ capability: "vision", providerCapabilities: { resolutions: [], inputVariants: [], supportsTokenUsageBilling: true } }), {
+                inputPerMillionMicros: 3_000_000,
+                outputPerMillionMicros: 6_000_000,
+                cachedPerMillionMicros: 25_000,
                 maxOutputTokens: 16_384,
             }),
         ).toEqual({ billingMode: "token_usage", priceStrategy: "token" });
@@ -96,6 +134,26 @@ describe("Agent default model setting", () => {
     test("uses the backend capability fact instead of inferring token billing from model text", () => {
         expect(supportsTokenUsageBilling(candidate({ providerCapabilities: { resolutions: [], inputVariants: [], supportsTokenUsageBilling: true } }))).toBe(true);
         expect(supportsTokenUsageBilling(candidate({ modelKey: "deepseek-v4-pro", providerCapabilities: undefined }))).toBe(false);
+    });
+
+    test("strictly decodes the admin vision setting instead of synthesizing an empty value", () => {
+        expect(
+            parseAgentVisionModelSetting({
+                configured: true,
+                channelModelId: "deepseek-vision-record",
+                channelId: "deepseek-channel",
+                modelKey: "deepseek-v4-flash-vision-exp",
+                displayName: "DeepSeek Vision",
+            }),
+        ).toEqual({
+            configured: true,
+            channelModelId: "deepseek-vision-record",
+            channelId: "deepseek-channel",
+            modelKey: "deepseek-v4-flash-vision-exp",
+            displayName: "DeepSeek Vision",
+        });
+        expect(() => parseAgentVisionModelSetting({ configured: true, channelModelId: "", channelId: "deepseek-channel", modelKey: "deepseek-v4-flash-vision-exp", displayName: "DeepSeek Vision" })).toThrow("缺少已配置模型身份");
+        expect(() => parseAgentVisionModelSetting({ configured: false })).toThrow("返回格式错误");
     });
 
     test("session merge accepts only an exact model reference present in the server catalog", () => {

@@ -3,8 +3,8 @@ import { App } from "antd";
 import { nanoid } from "nanoid";
 
 import type { PendingConnectionCreate } from "@/components/canvas/canvas-workspace-overlays";
-import { attachNodeToStoryboardRow, createCanvasNode, getConnectionTargetAnchor, isHiddenBatchChild, normalizeConnection, storyboardHandleAtY, storyboardRowFromHandle } from "@/lib/canvas/canvas-project-domain";
-import { isFrameNode, isNodeHiddenByCollapsedFrame } from "@/lib/canvas/canvas-frame";
+import { createCanvasConnectionHitIndex, queryCanvasConnectionHitIndex, type CanvasConnectionHitIndex } from "@/lib/canvas/canvas-connection-hit-index";
+import { attachNodeToStoryboardRow, createCanvasNode, getConnectionTargetAnchor, normalizeConnection, storyboardHandleAtY, storyboardRowFromHandle, validateCanvasConnection, validateCanvasNodeConnection, validateDirectedCanvasConnection } from "@/lib/canvas/canvas-project-domain";
 import { getGenerationCount } from "@/lib/canvas/canvas-project-generation";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle, type ContextMenuState, type Position, type ViewportTransform } from "@/types/canvas";
@@ -27,6 +27,7 @@ type ConnectionDropTarget = {
     nodeId: string | null;
     handleId?: string;
     isNearNode: boolean;
+    isRejected: boolean;
 };
 
 const CONNECTION_HANDLE_HIT_RADIUS = 40;
@@ -54,6 +55,7 @@ export function useCanvasConnectionController({
     const [mouseWorld, setMouseWorld] = useState<Position>({ x: 0, y: 0 });
     const connectingParamsRef = useRef(connectingParams);
     const connectingPointerIdRef = useRef<number | null>(null);
+    const connectionHitIndexRef = useRef<CanvasConnectionHitIndex | null>(null);
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
 
     useLayoutEffect(() => {
@@ -66,6 +68,7 @@ export function useCanvasConnectionController({
         setConnectingParams(next);
         if (!next) {
             connectingPointerIdRef.current = null;
+            connectionHitIndexRef.current = null;
             setConnectionTargetNodeId(null);
         }
     }, []);
@@ -82,11 +85,12 @@ export function useCanvasConnectionController({
 
     const connectNodes = useCallback((current: ConnectionHandle, targetNodeId: string, targetHandleId?: string): boolean => {
         if (current.nodeId === targetNodeId) return false;
-        const connection = normalizeConnection(current.nodeId, targetNodeId, nodesRef.current, current.handleType);
-        if (!connection) {
-            message.warning("配置节点之间不能连接");
+        const validation = validateCanvasConnection(current.nodeId, targetNodeId, nodesRef.current, current.handleType);
+        if (!validation.ok) {
+            message.warning(validation.message);
             return false;
         }
+        const connection = validation.connection;
         const { fromNodeId, toNodeId } = connection;
         const fromHandleId = fromNodeId === current.nodeId ? current.handleId : targetHandleId;
         const toHandleId = toNodeId === current.nodeId ? current.handleId : targetHandleId;
@@ -110,6 +114,11 @@ export function useCanvasConnectionController({
         [connectNodes],
     );
 
+    const canConnectExistingNodes = useCallback(
+        (sourceNodeId: string, targetNodeId: string) => validateDirectedCanvasConnection(sourceNodeId, targetNodeId, nodesRef.current).ok,
+        [nodesRef],
+    );
+
     const createConnectedNode = useCallback(async (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Script | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio, pending: PendingConnectionCreate) => {
         const storyboardRow = type === CanvasNodeType.Video ? storyboardRowFromHandle(nodesRef.current, pending.connection.nodeId, pending.connection.handleId) : undefined;
         const videoPrompt = storyboardRow ? (storyboardRow.videoMotionPrompt || storyboardRow.plotDescription).trim() : "";
@@ -126,7 +135,7 @@ export function useCanvasConnectionController({
         if (storyboardRow) newNode.title = `镜头 ${storyboardRow.shotNumber} · 视频`;
         const connection = normalizeConnection(pending.connection.nodeId, newNode.id, [...nodesRef.current, newNode], pending.connection.handleType);
         if (!connection) {
-            message.warning("配置节点之间不能连接");
+            message.warning("无法连接");
             return;
         }
         const fromHandleId = connection.fromNodeId === pending.connection.nodeId ? pending.connection.handleId : undefined;
@@ -150,11 +159,12 @@ export function useCanvasConnectionController({
         let bestNodeId: string | null = null;
         let bestHandleId: string | undefined;
         let bestPriority = Number.POSITIVE_INFINITY;
+        let isRejected = false;
 
-        [...nodesRef.current]
-            .filter((node) => !isHiddenBatchChild(node, nodesRef.current) && !isNodeHiddenByCollapsedFrame(node, nodesRef.current) && !isFrameNode(node))
-            .reverse()
-            .forEach((node) => {
+        const hitIndex = connectionHitIndexRef.current;
+        const sourceNode = hitIndex?.nodeById.get(current.nodeId);
+        if (!hitIndex || !sourceNode) return { nodeId: null, isNearNode: false, isRejected: false };
+        queryCanvasConnectionHitIndex(hitIndex, world, Math.max(padding, handleRadius)).forEach((node) => {
                 const scrollTop = scriptScrollTopById[node.id] || 0;
                 const targetHandleId = node.type === CanvasNodeType.Script ? storyboardHandleAtY(node, world.y, scrollTop) : undefined;
                 if (node.type === CanvasNodeType.Script && !targetHandleId) return;
@@ -166,7 +176,10 @@ export function useCanvasConnectionController({
                 const hitsExpanded = world.x >= node.position.x - padding && world.x <= node.position.x + node.width + padding && world.y >= node.position.y - padding && world.y <= node.position.y + node.height + padding;
                 if (!hitsHandle && !hitsInside && !hitsExpanded) return;
                 isNearNode = true;
-                if (node.id === current.nodeId || !normalizeConnection(current.nodeId, node.id, nodesRef.current, current.handleType)) return;
+                if (!validateCanvasNodeConnection(sourceNode, node, current.handleType).ok) {
+                    isRejected = true;
+                    return;
+                }
                 const priority = hitsInside ? 0 : hitsHandle ? 1 : 2;
                 if (priority < bestPriority) {
                     bestNodeId = node.id;
@@ -174,8 +187,8 @@ export function useCanvasConnectionController({
                     bestPriority = priority;
                 }
             });
-        return { nodeId: bestNodeId, handleId: bestHandleId, isNearNode };
-    }, [nodesRef, screenToCanvas, scriptScrollTopById, viewportRef]);
+        return { nodeId: bestNodeId, handleId: bestHandleId, isNearNode, isRejected: !bestNodeId && isRejected };
+    }, [screenToCanvas, scriptScrollTopById, viewportRef]);
 
     const finishConnection = useCallback((clientX: number, clientY: number) => {
         if (pendingConnectionCreateRef.current) return;
@@ -186,6 +199,7 @@ export function useCanvasConnectionController({
             connectNodes(currentConnection, dropTarget.nodeId, dropTarget.handleId);
             setConnecting(null);
         } else if (dropTarget.isNearNode) {
+            if (dropTarget.isRejected) message.warning("无法连接");
             setConnecting(null);
         } else {
             const position = screenToCanvas(clientX, clientY);
@@ -194,12 +208,13 @@ export function useCanvasConnectionController({
             pendingConnectionCreateRef.current = pending;
             setPendingConnectionCreate(pending);
         }
-    }, [connectNodes, getConnectionDropTarget, screenToCanvas, setConnecting]);
+    }, [connectNodes, getConnectionDropTarget, message, screenToCanvas, setConnecting]);
 
     const handleConnectStart = useCallback((event: ReactPointerEvent, nodeId: string, handleType: "source" | "target", handleId?: string) => {
         event.preventDefault();
         event.stopPropagation();
         connectingPointerIdRef.current = event.pointerId;
+        connectionHitIndexRef.current = createCanvasConnectionHitIndex(nodesRef.current);
         setMouseWorld(screenToCanvas(event.clientX, event.clientY));
         setConnecting({ nodeId, handleType, handleId });
         setConnectionTargetNodeId(null);
@@ -241,6 +256,7 @@ export function useCanvasConnectionController({
         connectionTargetNodeId,
         connectingParams,
         connectExistingNodes,
+        canConnectExistingNodes,
         createConnectedNode,
         handleConnectStart,
         mouseWorld,

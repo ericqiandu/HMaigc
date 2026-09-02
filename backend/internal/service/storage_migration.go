@@ -42,7 +42,10 @@ func (s *Service) MigrateLegacyStorage() (StorageMigrationSummary, error) {
 	}
 	for index := range tasks {
 		changed := false
-		if strings.Contains(tasks[index].InputJSON, "data:") {
+		inputIsImmutable := strings.TrimSpace(tasks[index].ExecutionEnvelope) != "" ||
+			strings.TrimSpace(tasks[index].ExecutionEnvelopeKeyID) != "" ||
+			strings.TrimSpace(tasks[index].ExecutionPayloadDigest) != ""
+		if !inputIsImmutable && strings.Contains(tasks[index].InputJSON, "data:") {
 			var input map[string]interface{}
 			if json.Unmarshal([]byte(tasks[index].InputJSON), &input) == nil {
 				stored, storeErr := s.persistLegacyGeneratedMediaResult(tasks[index].UserID, input)
@@ -66,7 +69,7 @@ func (s *Service) MigrateLegacyStorage() (StorageMigrationSummary, error) {
 				changed = true
 			}
 		}
-		if strings.TrimSpace(tasks[index].InputJSON) != "" {
+		if !inputIsImmutable && strings.TrimSpace(tasks[index].InputJSON) != "" {
 			var protected map[string]interface{}
 			if json.Unmarshal([]byte(tasks[index].InputJSON), &protected) == nil {
 				if err := s.protectTaskSecrets(protected); err != nil {
@@ -79,7 +82,7 @@ func (s *Service) MigrateLegacyStorage() (StorageMigrationSummary, error) {
 				}
 			}
 		}
-		if tasks[index].Status == "succeeded" {
+		if !inputIsImmutable && tasks[index].Status == "succeeded" {
 			compacted := publicTaskInputJSON(tasks[index].InputJSON)
 			if compacted != tasks[index].InputJSON {
 				tasks[index].InputJSON = compacted

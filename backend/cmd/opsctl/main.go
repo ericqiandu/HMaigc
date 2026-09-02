@@ -24,7 +24,7 @@ func main() {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("用法：hmaigc-opsctl status | install vX.Y.Z | upgrade vX.Y.Z | rollback | backup | verify")
+		return errors.New("用法：hmaigc-opsctl status | upgrade vX.Y.Z | rollback | backup | verify | cancel <id> | recover <id>")
 	}
 	stateDir := env("HMAIGC_OPS_STATE_DIR", "/var/lib/hmaigc-ops")
 	secret, err := os.ReadFile(env("HMAIGC_OPS_SHARED_SECRET_FILE", filepath.Join(stateDir, "shared-secret")))
@@ -44,9 +44,33 @@ func run() error {
 		}
 		return printJSON(overview)
 	}
+	if command == "cancel" || command == "recover" {
+		if len(os.Args) != 3 {
+			return errors.New(command + " 必须指定运维任务 ID")
+		}
+		operationID := strings.TrimSpace(os.Args[2])
+		idempotencyKey := newIdempotencyKey()
+		var operation *opsprotocol.Operation
+		if command == "cancel" {
+			operation, err = client.CancelOperation(ctx, operationID, opsprotocol.CancelOperationRequest{
+				ActorUserID: "system-bootstrap", ActorDisplayName: "命令行运维",
+				IdempotencyKey: idempotencyKey, Confirmation: "STOP " + operationID,
+			})
+		} else {
+			operation, err = client.RecoverOperation(ctx, operationID, opsprotocol.RecoverOperationRequest{
+				ActorUserID: "system-bootstrap", ActorDisplayName: "命令行运维",
+				IdempotencyKey: idempotencyKey, Confirmation: "RECOVER " + operationID,
+			})
+		}
+		if err != nil {
+			return err
+		}
+		fmt.Printf("运维控制请求已接受：%s\n", operation.ID)
+		return waitOperation(ctx, client, operation.ID)
+	}
 	action := opsprotocol.Action(command)
 	target := ""
-	if action == opsprotocol.ActionInstall || action == opsprotocol.ActionUpgrade {
+	if action == opsprotocol.ActionUpgrade {
 		if len(os.Args) != 3 {
 			return errors.New(command + " 必须指定 vX.Y.Z 目标版本")
 		}
@@ -90,6 +114,10 @@ func waitOperation(ctx context.Context, client opsprotocol.Client, id string) er
 			return nil
 		case opsprotocol.OperationFailed:
 			return errors.New(operation.Error)
+		case opsprotocol.OperationCancelled:
+			return nil
+		case opsprotocol.OperationRecoveryRequired:
+			return errors.New("运维任务需要人工恢复: " + operation.Error)
 		}
 		select {
 		case <-ctx.Done():
@@ -101,8 +129,6 @@ func waitOperation(ctx context.Context, client opsprotocol.Client, id string) er
 
 func confirmationFor(action opsprotocol.Action, target string) (string, error) {
 	switch action {
-	case opsprotocol.ActionInstall:
-		return "INSTALL " + target, nil
 	case opsprotocol.ActionUpgrade:
 		return "UPGRADE " + target, nil
 	case opsprotocol.ActionRollback:

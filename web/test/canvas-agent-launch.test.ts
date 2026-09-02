@@ -1,11 +1,29 @@
 import { describe, expect, test } from "bun:test";
 
-import { canvasAgentProjectTitle, cinematicAgentProgress, createCanvasAgentLaunchRequest, hasCanvasAgentLaunchRecord, hasPendingCinematicAgentWork } from "../src/lib/canvas/canvas-agent-launch";
+import { canvasAgentProjectTitle, cinematicAgentProgress, createCanvasAgentLaunchRequest, handoffCanvasAgentLaunch, hasCanvasAgentLaunchRecord, hasPendingCinematicAgentWork } from "../src/lib/canvas/canvas-agent-launch";
 import type { AgentSessionDetail } from "../src/services/api/task-center";
-import { CanvasNodeType, type CanvasAssistantSession } from "../src/types/canvas";
-import { previewCanvasAgentOps } from "../src/lib/canvas/canvas-agent-ops";
+import type { CanvasAssistantSession } from "../src/types/canvas";
 
 describe("canvas agent launch", () => {
+    test("首页先完成画布路由交接，不等待远端创建 Promise", async () => {
+        const calls: string[] = [];
+        let rejectRemoteCreation: ((error: Error) => void) | undefined;
+        const remoteReady = new Promise<void>((_resolve, reject) => {
+            rejectRemoteCreation = reject;
+        });
+
+        handoffCanvasAgentLaunch(
+            { id: "canvas-new", remoteReady },
+            (canvasId) => calls.push(`open:${canvasId}`),
+            () => calls.push("remote-error"),
+        );
+
+        expect(calls).toEqual(["open:canvas-new"]);
+        rejectRemoteCreation?.(new Error("remote unavailable"));
+        await Promise.resolve();
+        expect(calls).toEqual(["open:canvas-new", "remote-error"]);
+    });
+
     test("normalizes the prompt and creates a privacy-safe persisted launch request", () => {
         const request = createCanvasAgentLaunchRequest({
             id: "launch-1",
@@ -171,17 +189,6 @@ describe("canvas agent launch", () => {
             completedTaskCount: 1,
             text: "影视 Agent 正在处理：生成分镜图 42%（已完成 1/2 个任务）",
         });
-    });
-
-    test("uses planned node titles instead of internal ids in approval copy", () => {
-        const impact = previewCanvasAgentOps([
-            { type: "add_node", id: "agent-internal-script", nodeType: CanvasNodeType.Text, title: "短片剧本" },
-            { type: "add_node", id: "agent-internal-shot", nodeType: CanvasNodeType.Config, title: "镜头 1" },
-            { type: "connect_nodes", fromNodeId: "agent-internal-script", toNodeId: "agent-internal-shot" },
-        ]);
-
-        expect(impact.items).toContain("连接「短片剧本」到「镜头 1」");
-        expect(impact.items.join(" ")).not.toContain("agent-internal");
     });
 });
 

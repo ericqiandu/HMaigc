@@ -7,7 +7,7 @@ WORKDIR /app/web
 ARG VITE_STATIC_ASSET_BASE_URL
 ENV VITE_STATIC_ASSET_BASE_URL=$VITE_STATIC_ASSET_BASE_URL
 COPY web/package.json web/bun.lock ./
-RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile --cache-dir=/root/.bun/install/cache
+RUN --mount=type=cache,id=hmaigc-web-bun-1.3.14,target=/root/.bun/install/cache bun install --frozen-lockfile --cache-dir=/root/.bun/install/cache
 COPY VERSION /app/VERSION
 COPY web ./
 RUN bun run build

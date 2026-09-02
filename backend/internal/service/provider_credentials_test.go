@@ -632,6 +632,9 @@ func openProviderCredentialService(t *testing.T) (*Service, *gorm.DB) {
 	if err := database.EnsureProviderIntegritySchema(db); err != nil {
 		t.Fatal(err)
 	}
+	if err := database.EnsureAgentProductionRuntimeSchema(db); err != nil {
+		t.Fatal(err)
+	}
 	sqlDB, err := db.DB()
 	if err != nil {
 		t.Fatal(err)

@@ -264,7 +264,12 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		ok(c, gin.H{"projects": projects})
+		deletions, err := svc.UserCanvasProjectDeletions(user.ID)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"projects": projects, "deletions": deletions})
 	})
 	r.GET("/canvas-projects/:id", func(c *gin.Context) {
 		user, err := currentUser(c, svc)

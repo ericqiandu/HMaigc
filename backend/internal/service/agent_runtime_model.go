@@ -49,6 +49,7 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 		return agentRuntimeModelTaskResult{}, errors.New("Agent 冻结模型配置不可用")
 	}
 	text := ""
+	toolSchemaVersion := 0
 	{
 		runID, ok := agentRuntimeModelRunID(task.Operation)
 		if !ok {
@@ -62,11 +63,12 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 		if runErr != nil {
 			return agentRuntimeModelTaskResult{}, errors.New("Agent 模型任务运行事实不可用")
 		}
+		toolSchemaVersion = run.ToolSchemaVersion
 		state, stateErr := s.beginAgentRuntimeModelRequest(scope, run.StepNumber)
 		if stateErr != nil {
 			return agentRuntimeModelTaskResult{}, stateErr
 		}
-		observer := agentruntime.NewDecisionStreamObserver()
+		observer := agentruntime.NewDecisionStreamObserverForToolSchema(run.ToolSchemaVersion)
 		itemID := agentruntime.AgentMessageItemID(runID, state.StepNumber)
 		started := false
 		visibleMessage := ""
@@ -74,7 +76,7 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 		stopObservation := make(chan struct{})
 		observationStopped := make(chan struct{})
 		go s.observeAgentRuntimeModelRequest(providerContext, cancelProvider, stopObservation, observationStopped, scope)
-		result, requestErr := runKuaiziChatCompletionStream(providerContext, canvasGenerationInput{Mode: "text", Prompt: input.Prompt, Config: config}, func(rawDelta string) error {
+		result, requestErr := runAgentTextCompletionStream(providerContext, canvasGenerationInput{Mode: "text", Prompt: input.Prompt, Config: config}, func(rawDelta string) error {
 			visible, observeErr := observer.Push(rawDelta)
 			if observeErr != nil || visible == "" {
 				return observeErr
@@ -127,7 +129,7 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 					return agentRuntimeModelTaskResult{}, evidenceErr
 				}
 			}
-			if errors.Is(requestErr, errKuaiziChatCompletionTextMissing) {
+			if errors.Is(requestErr, errProviderTextMissing) {
 				return agentRuntimeModelTaskResult{}, errors.New("Agent 模型响应没有正文")
 			}
 			if errors.Is(requestErr, errAgentRuntimeStateObservation) {
@@ -137,6 +139,9 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 		}
 		text = result.Text
 		if _, finishErr := observer.Finish(); finishErr != nil {
+			if diagnosticErr := s.persistAgentRuntimeDecisionDiagnostic(task, []byte(strings.TrimSpace(text)), finishErr); diagnosticErr != nil {
+				return agentRuntimeModelTaskResult{}, errors.New("Agent 决策诊断保存失败")
+			}
 			if failErr := s.failAgentRuntimeVisibleMessage(scope, itemID, visibleMessage, "model_decision_invalid"); failErr != nil {
 				return agentRuntimeModelTaskResult{}, failErr
 			}
@@ -154,7 +159,10 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 		}
 	}
 	text = strings.TrimSpace(text)
-	if _, err := agentruntime.ParseModelDecision([]byte(text)); err != nil {
+	if _, err := agentruntime.ParseModelDecisionForToolSchema([]byte(text), toolSchemaVersion); err != nil {
+		if diagnosticErr := s.persistAgentRuntimeDecisionDiagnostic(task, []byte(text), err); diagnosticErr != nil {
+			return agentRuntimeModelTaskResult{}, errors.New("Agent 决策诊断保存失败")
+		}
 		return agentRuntimeModelTaskResult{
 			Mode:             "text",
 			DecisionFeedback: &agentruntime.ModelDecisionFeedback{Code: "model_decision_invalid", Reason: err.Error()},
@@ -230,17 +238,36 @@ func (s *Service) failAgentRuntimeVisibleMessage(scope agentruntime.Scope, itemI
 	return nil
 }
 
-func (s *Service) persistAgentRuntimeProviderStreamEvidence(task model.Task, result kuaiziChatCompletionResult, streamErr error) error {
+func (s *Service) persistAgentRuntimeProviderStreamEvidence(task model.Task, result providerTextStreamResult, streamErr error) error {
+	failureReason := ""
+	if streamErr != nil {
+		failureReason = agentRuntimeProviderStreamFailureReason(streamErr)
+	}
 	payload, err := json.Marshal(struct {
 		ProviderRequestID string `json:"providerRequestId,omitempty"`
 		FinishReason      string `json:"finishReason,omitempty"`
 		UsageAvailable    bool   `json:"usageAvailable"`
 		ErrorCode         string `json:"errorCode,omitempty"`
-	}{ProviderRequestID: result.ProviderRequestID, FinishReason: result.FinishReason, UsageAvailable: result.Usage.Available, ErrorCode: agentRuntimeProviderStreamFailureCode(streamErr)})
+		FailureReason     string `json:"failureReason,omitempty"`
+	}{
+		ProviderRequestID: result.ProviderRequestID, FinishReason: result.FinishReason, UsageAvailable: result.Usage.Available,
+		ErrorCode: agentRuntimeProviderStreamFailureCode(streamErr), FailureReason: failureReason,
+	})
 	if err != nil || s.log(task.UserID, task.ID, "info", "Agent provider stream evidence", string(payload)) != nil {
 		return errors.New("Agent 供应商流式事实保存失败")
 	}
 	return nil
+}
+
+func agentRuntimeProviderStreamFailureReason(streamErr error) string {
+	if streamErr == nil {
+		return ""
+	}
+	var httpErr providerHTTPError
+	if errors.As(streamErr, &httpErr) {
+		return fmt.Sprintf("upstream_http_%d", httpErr.StatusCode)
+	}
+	return agentRuntimeProviderStreamFailureCode(streamErr)
 }
 
 func agentRuntimeProviderStreamFailureCode(streamErr error) string {
@@ -249,6 +276,8 @@ func agentRuntimeProviderStreamFailureCode(streamErr error) string {
 		return "agent_provider_stream_cancelled"
 	case errors.Is(streamErr, errAgentProviderStreamTruncated):
 		return "agent_provider_stream_truncated"
+	case errors.Is(streamErr, errAgentProviderStreamProtocolInvalid):
+		return "agent_provider_stream_protocol_invalid"
 	case streamErr != nil:
 		return "agent_provider_stream_failed"
 	default:
@@ -256,7 +285,7 @@ func agentRuntimeProviderStreamFailureCode(streamErr error) string {
 	}
 }
 
-func (s *Service) persistAgentRuntimeTokenBillingEvidence(task model.Task, result kuaiziChatCompletionResult, reason string) error {
+func (s *Service) persistAgentRuntimeTokenBillingEvidence(task model.Task, result providerTextStreamResult, reason string) error {
 	if result.ProviderRequestID != "" {
 		if err := s.ScheduleTokenBillingReconciliation(task.BillingOrderID, result.ProviderRequestID, reason, result.Usage); err != nil {
 			return errors.New("Agent 模型计费事实保存失败")
@@ -273,7 +302,7 @@ func (s *Service) persistAgentRuntimeTokenBillingEvidence(task model.Task, resul
 	return nil
 }
 
-func parseAgentRuntimeModelTaskResult(raw string) (agentruntime.ModelDecision, error) {
+func parseAgentRuntimeModelTaskResult(raw string, toolSchemaVersion int) (agentruntime.ModelDecision, error) {
 	decoder := json.NewDecoder(bytes.NewBufferString(raw))
 	decoder.DisallowUnknownFields()
 	var result agentRuntimeModelTaskResult
@@ -297,5 +326,5 @@ func parseAgentRuntimeModelTaskResult(raw string) (agentruntime.ModelDecision, e
 	if result.Text == "" {
 		return agentruntime.ModelDecision{}, errors.New("Agent 模型任务结果事实无效")
 	}
-	return agentruntime.ParseModelDecision([]byte(result.Text))
+	return agentruntime.ParseModelDecisionForToolSchema([]byte(result.Text), toolSchemaVersion)
 }

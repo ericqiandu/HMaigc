@@ -61,7 +61,7 @@ func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 		t.Fatalf("GPT Agent model = %#v", got)
 	}
 	deepseek, ok := registry.Descriptor("kuaizi", "deepseek")
-	if !ok || len(deepseek.Models) != 2 {
+	if !ok || len(deepseek.Models) != 3 {
 		t.Fatalf("kuaizi/deepseek descriptor = %#v, exists=%v", deepseek, ok)
 	}
 	if got := deepseek.Models[0]; got.ModelKey != "deepseek-v4-flash" || got.DisplayName != "DeepSeek V4 Flash" || got.UpstreamMode != "deepseek-v4-flash" || got.Capability != "text" || got.MarketingCopy != "低成本纯文本 Agent 模型，不支持图片输入" {
@@ -70,11 +70,14 @@ func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 	if got := deepseek.Models[1]; got.ModelKey != "deepseek-v4-pro" || got.DisplayName != "DeepSeek V4 Pro" || got.UpstreamMode != "deepseek-v4-pro" || got.Capability != "text" || got.MarketingCopy != "纯文本 Agent 模型，不支持图片输入" {
 		t.Fatalf("DeepSeek Pro Agent model = %#v", got)
 	}
+	if got := deepseek.Models[2]; got.ModelKey != "deepseek-v4-flash-vision-exp" || got.DisplayName != "DeepSeek V4 Flash Vision" || got.UpstreamMode != "deepseek-v4-flash-vision-exp" || got.Capability != "vision" || got.MaxInputImageTokens != 384 {
+		t.Fatalf("DeepSeek Vision model = %#v", got)
+	}
 	kling, ok := registry.Descriptor("kuaizi", "kling")
 	if !ok || len(kling.Models) != 1 {
 		t.Fatalf("kuaizi/kling descriptor = %#v, exists=%v", kling, ok)
 	}
-	if got := kling.Models[0]; got.ModelKey != "kling-v3-omni" || got.DisplayName != "Kling 3 Omni" || got.UpstreamMode != "kling-v3-omni" || got.Capability != "video" || got.DurationMin != 3 || got.DurationMax != 15 || !got.SupportsGeneratedAudio || got.MaxImages != 7 || got.MaxVideos != 1 || got.MaxAudios != 0 || strings.Join(got.Resolutions, ",") != "std,pro,4k" || strings.Join(got.ReferenceVideoResolutions, ",") != "std,pro" || strings.Join(got.Ratios, ",") != "16:9,9:16,1:1" {
+	if got := kling.Models[0]; got.ModelKey != "kling-v3-omni" || got.DisplayName != "Kling 3 Omni" || got.UpstreamMode != "kling-v3-omni" || got.Capability != "video" || got.DurationMin != 3 || got.DurationMax != 15 || !got.SupportsImageToVideo || !got.SupportsReferenceVideo || !got.SupportsNativeAudio || !got.SupportsDialogue || got.SupportsVoiceReference || got.SupportsLipSync || got.SupportsIndependentAudio || !got.SupportsGeneratedAudio || got.MaxImages != 7 || got.MaxVideos != 1 || got.MaxAudios != 0 || strings.Join(got.Resolutions, ",") != "std,pro,4k" || strings.Join(got.ReferenceVideoResolutions, ",") != "std,pro" || strings.Join(got.Ratios, ",") != "16:9,9:16,1:1" {
 		t.Fatalf("Kling 3 Omni capabilities = %#v", got)
 	}
 	encodedKling, err := json.Marshal(kling.Models[0])
@@ -88,9 +91,20 @@ func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 	if got, ok := klingFacts["generatedAudioResolutions"].([]any); !ok || len(got) != 2 || got[0] != "std" || got[1] != "pro" {
 		t.Fatalf("Kling generated-audio resolutions = %#v, want [std pro]", klingFacts["generatedAudioResolutions"])
 	}
-	public := publicProviderModelCapabilities(modelpkg.ChannelInterfaceAIOpenVideoVolcengine, kuaiziKlingModel)
-	if public == nil || public.ProviderFamily != "kling" || strings.Join(public.ReferenceVideoResolutions, ",") != "std,pro" {
+	public := publicProviderModelCapabilities(modelpkg.ChannelInterfaceAIOpenVideoVolcengine, kuaiziKlingModel, "video")
+	if public == nil || public.ProviderFamily != "kling" || strings.Join(public.ReferenceVideoResolutions, ",") != "std,pro" || public.SupportsGeneratedAudioWithReferenceVideo {
 		t.Fatalf("Kling public capabilities = %#v", public)
+	}
+	seedancePublic := publicProviderModelCapabilities(modelpkg.ChannelInterfaceAIOpenVideoVolcengine, "doubao-seedance-2-0-260128", "video")
+	if seedancePublic == nil || !seedancePublic.SupportsGeneratedAudioWithReferenceVideo {
+		t.Fatalf("Seedance public reference-video audio capabilities = %#v", seedancePublic)
+	}
+}
+
+func TestDirectChatVisionCatalogAdvertisesTokenUsageBilling(t *testing.T) {
+	public := publicProviderModelCapabilities(modelpkg.ChannelInterfaceChatCompletion, "deepseek-v4-flash-vision-exp", "vision")
+	if public == nil || public.Capability != "vision" || !public.SupportsTokenUsageBilling {
+		t.Fatalf("direct vision capabilities = %#v", public)
 	}
 }
 
@@ -117,6 +131,36 @@ func TestKuaiziKlingPricingReadinessDoesNotRequireForbidden4KReferenceTier(t *te
 	}
 }
 
+func TestGPTImage2PricingReadinessRequiresAllQualityResolutionVariants(t *testing.T) {
+	item := modelpkg.ChannelModel{
+		ModelKey: kuaiziGPTImage2Model, Capability: "image", PriceStrategy: "image_resolution", PriceConfigured: true,
+	}
+	for _, resolution := range []string{"1K", "2K", "4K"} {
+		for _, quality := range []string{"low", "medium", "high"} {
+			item.PriceTiers = append(item.PriceTiers, modelpkg.ChannelModelPriceTier{
+				Resolution: resolution, InputVariant: quality, UnitPriceMicrocredits: 1,
+			})
+		}
+	}
+	if !channelModelPricingReady(item) {
+		t.Fatal("GPT Image 2 complete resolution/quality matrix was rejected")
+	}
+	item.PriceTiers = item.PriceTiers[:8]
+	if channelModelPricingReady(item) {
+		t.Fatal("GPT Image 2 incomplete resolution/quality matrix was accepted")
+	}
+}
+
+func TestSeedreamFlatPricingReadinessDoesNotRequireResolutionTiers(t *testing.T) {
+	item := modelpkg.ChannelModel{
+		ModelKey:   seedreamProviderModel("seedream5.0lite", "Seedream 5.0 Lite", "", 14).ModelKey,
+		Capability: "image", PriceStrategy: "flat", PriceConfigured: true, UnitPriceMicrocredits: 1,
+	}
+	if !channelModelPricingReady(item) {
+		t.Fatal("Seedream flat pricing was incorrectly forced into the GPT Image 2 quality matrix")
+	}
+}
+
 func TestProviderRegistryJSONEmitsCapabilityCollectionsAsArrays(t *testing.T) {
 	registry, err := NewProviderRegistry(kuaiziProviderAdapterDescriptors())
 	if err != nil {
@@ -128,12 +172,15 @@ func TestProviderRegistryJSONEmitsCapabilityCollectionsAsArrays(t *testing.T) {
 	}
 	var descriptors []struct {
 		Models []struct {
-			ModelKey     string          `json:"modelKey"`
-			Resolutions  json.RawMessage `json:"resolutions"`
-			Ratios       json.RawMessage `json:"ratios"`
-			Qualities    json.RawMessage `json:"qualities"`
-			OutputCounts json.RawMessage `json:"outputCounts"`
-			Tools        json.RawMessage `json:"tools"`
+			ModelKey                   string          `json:"modelKey"`
+			Resolutions                json.RawMessage `json:"resolutions"`
+			Ratios                     json.RawMessage `json:"ratios"`
+			Qualities                  json.RawMessage `json:"qualities"`
+			OutputCounts               json.RawMessage `json:"outputCounts"`
+			GenerationModes            json.RawMessage `json:"generationModes"`
+			AdaptiveRatioModes         json.RawMessage `json:"adaptiveRatioModes"`
+			RequiredAdaptiveRatioModes json.RawMessage `json:"requiredAdaptiveRatioModes"`
+			Tools                      json.RawMessage `json:"tools"`
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(payload, &descriptors); err != nil {
@@ -142,11 +189,14 @@ func TestProviderRegistryJSONEmitsCapabilityCollectionsAsArrays(t *testing.T) {
 	for _, descriptor := range descriptors {
 		for _, model := range descriptor.Models {
 			for field, value := range map[string]json.RawMessage{
-				"resolutions":  model.Resolutions,
-				"ratios":       model.Ratios,
-				"qualities":    model.Qualities,
-				"outputCounts": model.OutputCounts,
-				"tools":        model.Tools,
+				"resolutions":                model.Resolutions,
+				"ratios":                     model.Ratios,
+				"qualities":                  model.Qualities,
+				"outputCounts":               model.OutputCounts,
+				"generationModes":            model.GenerationModes,
+				"adaptiveRatioModes":         model.AdaptiveRatioModes,
+				"requiredAdaptiveRatioModes": model.RequiredAdaptiveRatioModes,
+				"tools":                      model.Tools,
 			} {
 				if string(value) == "null" {
 					t.Fatalf("model %s field %s encoded as null, want []", model.ModelKey, field)
@@ -215,6 +265,10 @@ func TestProviderRegistryPublishesSeedance20And25CompatibleCapabilities(t *testi
 	if len(descriptor.Models) != 4 {
 		t.Fatalf("seedance models = %#v", descriptor.Models)
 	}
+	fast := descriptor.Models[0]
+	if fast.ModelKey != "doubao-seedance-2-0-fast-260128" || strings.Join(fast.Resolutions, ",") != "480p,720p" {
+		t.Fatalf("seedance 2.0 Fast resolutions = %#v", fast.Resolutions)
+	}
 	model := descriptor.Models[3]
 	if model.ModelKey != "doubao-seedance-2-5-260628" || model.DisplayName != "Seedance 2.5" || model.UpstreamMode != model.ModelKey || model.Capability != "video" {
 		t.Fatalf("seedance 2.5 identity = %#v", model)
@@ -222,8 +276,11 @@ func TestProviderRegistryPublishesSeedance20And25CompatibleCapabilities(t *testi
 	if model.DurationMin != 4 || model.DurationMax != 30 || !model.SupportsSmartDuration || !model.SupportsGeneratedAudio || model.WatermarkCapability != modelpkg.WatermarkCapabilityControlled || !model.SupportsAudioOnly || !model.RequiresAdaptiveFrames {
 		t.Fatalf("seedance 2.5 duration/features = %#v", model)
 	}
-	if strings.Join(model.Resolutions, ",") != "480p,720p" || len(model.Ratios) != 7 || model.MaxImages != 30 || model.MaxVideos != 10 || model.MaxAudios != 10 {
+	if strings.Join(model.Resolutions, ",") != "480p,720p,1080p" || len(model.Ratios) != 7 || model.MaxImages != 30 || model.MaxImagesWithVideo != 30 || model.MaxVideos != 10 || model.MaxAudios != 10 {
 		t.Fatalf("seedance 2.5 media constraints = %#v", model)
+	}
+	if !model.SupportsTextToVideo || !model.SupportsImageToVideo || !model.SupportsReferenceVideo || !model.SupportsNativeAudio || !model.SupportsDialogue || !model.SupportsVoiceReference || model.SupportsLipSync || model.SupportsIndependentAudio || strings.Join(model.GenerationModes, ",") != "text,image,first_last_frame,image_reference,omni_reference" {
+		t.Fatalf("seedance 2.5 delivery capabilities = %#v", model)
 	}
 	if len(model.Tools) != 0 {
 		t.Fatalf("seedance 2.5 tools = %#v, want none", model.Tools)
@@ -249,7 +306,6 @@ func TestKuaiziCompatibleInputEnforcesPerModelCapabilities(t *testing.T) {
 		{name: "2.0 rejects 30 seconds", model: "doubao-seedance-2-0-fast-260128", input: canvasGenerationInput{Config: providerConfig{Size: "16:9", VQuality: "720p", VideoSeconds: "30"}}, want: "4–15"},
 		{name: "2.0 audio needs visual media", model: "doubao-seedance-2-0-260128", input: canvasGenerationInput{Config: providerConfig{Size: "16:9", VQuality: "720p", VideoSeconds: "5"}, ReferenceAudios: []providerMedia{{URL: "https://cdn.example.com/a.mp3", DurationMs: 2_000}}}, want: "必须同时连接"},
 		{name: "2.5 audio needs text", model: "doubao-seedance-2-5-260628", input: canvasGenerationInput{Config: providerConfig{Size: "adaptive", VQuality: "720p", VideoSeconds: "5"}, ReferenceAudios: []providerMedia{{URL: "https://cdn.example.com/a.mp3", DurationMs: 2_000}}}, want: "必须同时提供提示词"},
-		{name: "2.5 rejects 1080p", model: "doubao-seedance-2-5-260628", input: canvasGenerationInput{Config: providerConfig{Size: "16:9", VQuality: "1080p", VideoSeconds: "5"}}, want: "不支持分辨率"},
 		{name: "2.5 frame requires adaptive", model: "doubao-seedance-2-5-260628", input: canvasGenerationInput{Config: providerConfig{Size: "16:9", VQuality: "720p", VideoSeconds: "5"}, ReferenceImages: []providerMedia{{ID: "first", URL: "https://cdn.example.com/a.png"}}, Metadata: map[string]interface{}{"videoStartFrameNodeId": "first"}}, want: "只支持自适应"},
 		{name: "2.0 rejects video duration total over 15 seconds", model: "doubao-seedance-2-0-260128", input: canvasGenerationInput{Config: providerConfig{Size: "16:9", VQuality: "720p", VideoSeconds: "5"}, ReferenceVideos: []providerMedia{{DurationMs: 8_000}, {DurationMs: 8_000}}}, want: "参考视频总时长不能超过 15 秒"},
 		{name: "2.5 rejects audio duration total over 30 seconds", model: "doubao-seedance-2-5-260628", input: canvasGenerationInput{Prompt: "跟随节奏生成", Config: providerConfig{Size: "adaptive", VQuality: "720p", VideoSeconds: "5"}, ReferenceAudios: []providerMedia{{DurationMs: 16_000}, {DurationMs: 15_000}}}, want: "参考音频总时长不能超过 30 秒"},
@@ -263,6 +319,12 @@ func TestKuaiziCompatibleInputEnforcesPerModelCapabilities(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, test.want)
 			}
 		})
+	}
+
+	resolutionInput := canvasGenerationInput{Config: providerConfig{Model: "doubao-seedance-2-5-260628", Size: "16:9", VQuality: "1080p", VideoSeconds: "5"}}
+	resolutionSpec, _ := kuaiziSeedanceModelSpec(resolutionInput.Config.Model)
+	if _, resolution, _, err := validateKuaiziCompatibleVideoInput(resolutionInput, resolutionSpec); err != nil || resolution != "1080p" {
+		t.Fatalf("2.5 1080p input = resolution %q, error %v", resolution, err)
 	}
 
 	input := canvasGenerationInput{Prompt: "让参考音频驱动画面", Config: providerConfig{Model: "doubao-seedance-2-5-260628", Size: "adaptive", VQuality: "720p", VideoSeconds: "30"}, ReferenceAudios: []providerMedia{{URL: "https://cdn.example.com/a.mp3", DurationMs: 2_000}}}

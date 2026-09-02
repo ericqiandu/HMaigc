@@ -159,6 +159,9 @@ func inspectBackup(path string) (opsprotocol.Backup, error) {
 	if err != nil {
 		return opsprotocol.Backup{}, fmt.Errorf("备份创建时间无效: %w", err)
 	}
+	if manifest["POSTGRES_VOLUME"] == "" || manifest["BACKEND_VOLUME"] == "" {
+		return opsprotocol.Backup{}, errors.New("备份清单缺少数据卷标识")
+	}
 	checksums, err := readChecksumFile(filepath.Join(path, "SHA256SUMS"))
 	if err != nil {
 		return opsprotocol.Backup{}, err

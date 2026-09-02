@@ -5,7 +5,12 @@ set -Eeuo pipefail
 readonly DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly DEFAULT_ENV_FILE="$DEPLOY_ROOT/.env.production"
 readonly DEFAULT_COMPOSE_FILE="$DEPLOY_ROOT/docker-compose.production.yml"
-readonly BACKUP_HELPER_IMAGE="alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce"
+BACKUP_HELPER_IMAGE=""
+
+# shellcheck source=deploy/lib/web-assets.sh
+source "$DEPLOY_ROOT/deploy/lib/web-assets.sh"
+# shellcheck source=deploy/lib/images.sh
+source "$DEPLOY_ROOT/deploy/lib/images.sh"
 
 ENV_FILE="${HMAIGC_ENV_FILE:-$DEFAULT_ENV_FILE}"
 COMPOSE_FILE="${HMAIGC_COMPOSE_FILE:-$DEFAULT_COMPOSE_FILE}"
@@ -48,24 +53,27 @@ resolve_from_root() {
     esac
 }
 
-require_path_inside_ops_state() {
+require_path_inside_deploy_state() {
     local path="$1"
     local normalized_root normalized_path
-    normalized_root="$(realpath -m "$OPS_STATE_DIR")"
+    normalized_root="$(realpath -m "$DEPLOY_STATE_DIR")"
     normalized_path="$(realpath -m "$path")"
     case "$normalized_path" in
         "$normalized_root" | "$normalized_root"/*) ;;
-        *) fail "部署状态路径必须位于独立 ops-state 卷内：$normalized_path" ;;
+        *) fail "部署状态路径必须位于持久部署目录内：$normalized_path" ;;
     esac
 }
 
-ops_volume_relative_path() {
+backup_directory_relative_path() {
     local path="$1"
     local normalized_root normalized_path
-    normalized_root="$(realpath -m "$OPS_STATE_DIR")"
+    normalized_root="$(realpath -m "$BACKUP_DIR")"
     normalized_path="$(realpath -m "$path")"
-    require_path_inside_ops_state "$normalized_path"
-    [[ "$normalized_path" != "$normalized_root" ]] || fail "不能把 ops-state 卷根目录作为备份路径"
+    case "$normalized_path" in
+        "$normalized_root" | "$normalized_root"/*) ;;
+        *) fail "恢复点必须位于备份目录内：$normalized_path" ;;
+    esac
+    [[ "$normalized_path" != "$normalized_root" ]] || fail "不能把备份根目录作为单个恢复点"
     printf '%s\n' "${normalized_path#"$normalized_root"/}"
 }
 
@@ -83,35 +91,52 @@ configure_deploy_runtime() {
     validate_release_version "$version"
     export HMAIGC_VERSION="$version"
     export HMAIGC_IMAGE_REGISTRY="${HMAIGC_IMAGE_REGISTRY:-$(env_value HMAIGC_IMAGE_REGISTRY)}"
+    export HMAIGC_BACKEND_IMAGE="${HMAIGC_BACKEND_IMAGE:-$(env_value HMAIGC_BACKEND_IMAGE)}"
+    export HMAIGC_WEB_IMAGE="${HMAIGC_WEB_IMAGE:-$(env_value HMAIGC_WEB_IMAGE)}"
+    export BACKUP_HELPER_IMAGE="${BACKUP_HELPER_IMAGE:-$(env_value BACKUP_HELPER_IMAGE)}"
     export HMAIGC_COMPOSE_PROJECT_NAME="${HMAIGC_COMPOSE_PROJECT_NAME:-$(env_value HMAIGC_COMPOSE_PROJECT_NAME)}"
     export HMAIGC_BACKEND_DATA_VOLUME="${HMAIGC_BACKEND_DATA_VOLUME:-$(env_value HMAIGC_BACKEND_DATA_VOLUME)}"
     export HMAIGC_POSTGRES_DATA_VOLUME="${HMAIGC_POSTGRES_DATA_VOLUME:-$(env_value HMAIGC_POSTGRES_DATA_VOLUME)}"
     export HMAIGC_REDIS_DATA_VOLUME="${HMAIGC_REDIS_DATA_VOLUME:-$(env_value HMAIGC_REDIS_DATA_VOLUME)}"
-    export HMAIGC_OPS_STATE_VOLUME="${HMAIGC_OPS_STATE_VOLUME:-$(env_value HMAIGC_OPS_STATE_VOLUME)}"
 
     : "${HMAIGC_IMAGE_REGISTRY:?生产配置必须填写 HMAIGC_IMAGE_REGISTRY}"
-    : "${HMAIGC_OPS_STATE_VOLUME:?生产配置必须填写 HMAIGC_OPS_STATE_VOLUME}"
+    require_immutable_image "$HMAIGC_BACKEND_IMAGE"
+    require_immutable_image "$HMAIGC_WEB_IMAGE"
+    require_immutable_image "$BACKUP_HELPER_IMAGE"
     HMAIGC_COMPOSE_PROJECT_NAME="${HMAIGC_COMPOSE_PROJECT_NAME:-hmaigc}"
     HMAIGC_BACKEND_DATA_VOLUME="${HMAIGC_BACKEND_DATA_VOLUME:-hmaigc-backend-data}"
     HMAIGC_POSTGRES_DATA_VOLUME="${HMAIGC_POSTGRES_DATA_VOLUME:-hmaigc-postgres-data}"
     HMAIGC_REDIS_DATA_VOLUME="${HMAIGC_REDIS_DATA_VOLUME:-hmaigc-redis-data}"
     export HMAIGC_COMPOSE_PROJECT_NAME HMAIGC_BACKEND_DATA_VOLUME HMAIGC_POSTGRES_DATA_VOLUME HMAIGC_REDIS_DATA_VOLUME
 
-    local configured_ops_state configured_state configured_backups
-    configured_ops_state="${HMAIGC_OPS_STATE_DIR:-$(env_value HMAIGC_OPS_STATE_DIR)}"
+    local configured_deploy_state configured_state configured_backups
+    configured_deploy_state="${HMAIGC_DEPLOY_STATE_DIR:-$(env_value HMAIGC_DEPLOY_STATE_DIR)}"
     configured_state="${HMAIGC_STATE_DIR:-$(env_value HMAIGC_STATE_DIR)}"
     configured_backups="${HMAIGC_BACKUP_DIR:-$(env_value HMAIGC_BACKUP_DIR)}"
-    OPS_STATE_DIR="$(resolve_from_root "${configured_ops_state:-/var/lib/hmaigc-ops}")"
-    STATE_DIR="$(resolve_from_root "${configured_state:-$OPS_STATE_DIR/release}")"
-    BACKUP_DIR="$(resolve_from_root "${configured_backups:-$OPS_STATE_DIR/backups}")"
-    export OPS_STATE_DIR HMAIGC_OPS_STATE_DIR="$OPS_STATE_DIR"
-    require_path_inside_ops_state "$STATE_DIR"
-    require_path_inside_ops_state "$BACKUP_DIR"
+    DEPLOY_STATE_DIR="$(resolve_from_root "${configured_deploy_state:-/var/lib/hmaigc-deploy}")"
+    STATE_DIR="$(resolve_from_root "${configured_state:-$DEPLOY_STATE_DIR/state}")"
+    BACKUP_DIR="$(resolve_from_root "${configured_backups:-$DEPLOY_STATE_DIR/backups}")"
+    export DEPLOY_STATE_DIR HMAIGC_DEPLOY_STATE_DIR="$DEPLOY_STATE_DIR"
+    export HMAIGC_STATE_DIR="$STATE_DIR" HMAIGC_BACKUP_DIR="$BACKUP_DIR"
+    require_path_inside_deploy_state "$STATE_DIR"
+    require_path_inside_deploy_state "$BACKUP_DIR"
     STATE_FILE="$STATE_DIR/release.env"
-    LOCK_FILE="$STATE_DIR/deploy.lock"
+    LOCK_FILE="$DEPLOY_STATE_DIR/deploy.lock"
     LOG_DIR="$STATE_DIR/logs"
     mkdir -p "$STATE_DIR" "$BACKUP_DIR" "$LOG_DIR"
     chmod 700 "$STATE_DIR" "$BACKUP_DIR" "$LOG_DIR"
+
+    if [[ -f "$STATE_FILE" ]]; then
+        local installed_version installed_backend_image installed_web_image
+        installed_version="$(state_value CURRENT_VERSION)"
+        installed_backend_image="$(state_value CURRENT_BACKEND_IMAGE)"
+        installed_web_image="$(state_value CURRENT_WEB_IMAGE)"
+        validate_release_version "$installed_version"
+        require_immutable_image "$installed_backend_image"
+        require_immutable_image "$installed_web_image"
+        export HMAIGC_VERSION="$installed_version"
+        use_release_images "$installed_backend_image" "$installed_web_image"
+    fi
 
     COMPOSE=(docker compose --project-name "$HMAIGC_COMPOSE_PROJECT_NAME" --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
 }
@@ -135,10 +160,29 @@ write_release_state() {
     local current="$1"
     local previous="$2"
     local rollback_backup="$3"
+    local current_backend_image="$4"
+    local current_web_image="$5"
+    local previous_backend_image="$6"
+    local previous_web_image="$7"
     local temporary="$STATE_FILE.tmp"
+    validate_release_version "$current"
+    require_immutable_image "$current_backend_image"
+    require_immutable_image "$current_web_image"
+    if [[ -n "$previous" ]]; then
+        validate_release_version "$previous"
+        [[ -n "$rollback_backup" ]] || fail "上一版本存在时必须记录对应恢复点"
+        require_immutable_image "$previous_backend_image"
+        require_immutable_image "$previous_web_image"
+    elif [[ -n "$rollback_backup" || -n "$previous_backend_image" || -n "$previous_web_image" ]]; then
+        fail "没有上一版本时不得记录孤立的恢复点或镜像摘要"
+    fi
     {
         printf 'CURRENT_VERSION=%s\n' "$current"
+        printf 'CURRENT_BACKEND_IMAGE=%s\n' "$current_backend_image"
+        printf 'CURRENT_WEB_IMAGE=%s\n' "$current_web_image"
         printf 'PREVIOUS_VERSION=%s\n' "$previous"
+        printf 'PREVIOUS_BACKEND_IMAGE=%s\n' "$previous_backend_image"
+        printf 'PREVIOUS_WEB_IMAGE=%s\n' "$previous_web_image"
         printf 'ROLLBACK_BACKUP=%s\n' "$rollback_backup"
         printf 'UPDATED_AT=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
     } >"$temporary"
@@ -171,10 +215,10 @@ start_operation_log() {
 
 pull_release() {
     local version="$1"
-    validate_release_version "$version"
+    resolve_release_images "$version"
     export HMAIGC_VERSION="$version"
-    log "拉取发布镜像：$version"
-    compose pull backend web
+    use_release_images "$RESOLVED_BACKEND_IMAGE" "$RESOLVED_WEB_IMAGE"
+    log "已固定发布镜像摘要：$version"
 }
 
 audit_target_agent_runtime_upgrade() {
@@ -222,9 +266,9 @@ verify_backend_release() {
     }
 }
 
-verify_web_release() {
+verify_web_runtime() {
     local expected="$1"
-    local response actual entry_html entry_asset entry_asset_count
+    local response actual entry_html
     response="$(compose exec -T web wget -qO- http://127.0.0.1:3000/api/health)" || return 1
     actual="$(printf '%s' "$response" | health_version)"
     [[ "$actual" == "$expected" ]] || {
@@ -236,46 +280,40 @@ verify_web_release() {
         log "Web SPA 入口缺少根节点"
         return 1
     }
+}
+
+verify_web_asset_contract() {
+    local expected="$1"
+    local entry_html entry_asset entry_asset_count release_prefix
+    validate_release_version "$expected"
+    release_prefix="https://static.hm.kunagent.com/hmaigc/web/releases/${expected}/"
+    entry_html="$(compose exec -T web wget -qO- http://127.0.0.1:3000/canvas/)" || return 1
 
     entry_asset_count=0
     while IFS= read -r entry_asset; do
         [[ -n "$entry_asset" ]] || continue
         entry_asset_count=$((entry_asset_count + 1))
         case "$entry_asset" in
-            https://* | http://*)
-                curl --fail --silent --show-error --location --retry 3 --retry-all-errors "$entry_asset" >/dev/null || {
-                    log "Web 入口资源不可访问：$entry_asset"
-                    return 1
-                }
-                ;;
-            //*)
-                curl --fail --silent --show-error --location --retry 3 --retry-all-errors "https:${entry_asset}" >/dev/null || {
-                    log "Web 入口资源不可访问：https:${entry_asset}"
-                    return 1
-                }
-                ;;
-            /*)
-                compose exec -T web wget -qO- "http://127.0.0.1:3000${entry_asset}" >/dev/null || {
-                    log "Web 入口资源不可访问：$entry_asset"
-                    return 1
-                }
+            "${release_prefix}"assets/*.js | "${release_prefix}"assets/*.css)
                 ;;
             *)
-                compose exec -T web wget -qO- "http://127.0.0.1:3000/${entry_asset}" >/dev/null || {
-                    log "Web 入口资源不可访问：$entry_asset"
-                    return 1
-                }
+                log "Web 入口资源不符合目标版本 CDN 契约：期望前缀 ${release_prefix}，实际 ${entry_asset}"
+                return 1
                 ;;
         esac
     done < <(
-        printf '%s' "$entry_html" |
-            grep -Eo '(src|href)="[^"]+\.(js|css)(\?[^"]*)?"' |
-            sed -E 's/^[^=]+="([^"]+)"$/\1/'
+        printf '%s' "$entry_html" | extract_web_bootstrap_assets
     )
     (( entry_asset_count > 0 )) || {
         log "Web SPA 入口未声明任何 JS/CSS 资源"
         return 1
     }
+}
+
+verify_web_release() {
+    local expected="$1"
+    verify_web_runtime "$expected" || return 1
+    verify_web_asset_contract "$expected"
 }
 
 verify_running_release() {
@@ -286,7 +324,15 @@ verify_running_release() {
     verify_web_release "$expected"
 }
 
-start_release() {
+verify_running_runtime() {
+    local expected="$1"
+    export HMAIGC_VERSION="$expected"
+    log "核对当前运行版本：$expected"
+    verify_backend_release "$expected" || return 1
+    verify_web_runtime "$expected"
+}
+
+start_runtime() {
     local version="$1"
     export HMAIGC_VERSION="$version"
     start_infrastructure
@@ -310,8 +356,19 @@ start_release() {
         compose logs --no-color --tail=200 web || true
         return 1
     fi
-    if ! verify_web_release "$version"; then
-        log "Web 版本验收失败，记录容器状态与最近日志"
+    if ! verify_web_runtime "$version"; then
+        log "Web 运行时验活失败，记录容器状态与最近日志"
+        compose ps web || true
+        compose logs --no-color --tail=200 web || true
+        return 1
+    fi
+}
+
+start_release() {
+    local version="$1"
+    start_runtime "$version" || return 1
+    if ! verify_web_asset_contract "$version"; then
+        log "Web 发布契约验收失败，记录容器状态与最近日志"
         compose ps web || true
         compose logs --no-color --tail=200 web || true
         return 1

@@ -13,6 +13,9 @@ readonly RESPONSE_ROOT="$(mktemp -d)"
 
 trap 'rm -rf -- "$RESPONSE_ROOT"' EXIT
 
+# shellcheck source=deploy/lib/web-assets.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/deploy/lib/web-assets.sh"
+
 [[ -f "$INDEX_FILE" ]] || {
     printf '静态发布入口不存在：%s\n' "$INDEX_FILE" >&2
     exit 1
@@ -134,9 +137,11 @@ while IFS= read -r asset_url; do
         --silent \
         --show-error \
         --location \
-        --retry 8 \
-        --retry-all-errors \
-        --retry-delay 5 \
+        --connect-timeout 5 \
+        --max-time 15 \
+        --retry 2 \
+        --retry-delay 1 \
+        --retry-max-time 35 \
         --header 'Accept-Encoding: br,gzip' \
         --header "Origin: $PRODUCTION_ORIGIN" \
         --dump-header "$header_file" \
@@ -152,10 +157,7 @@ while IFS= read -r asset_url; do
         exit 1
     }
     verify_delivery_headers "$asset_url" "$header_file" "$http_version" "$asset_size"
-done < <(
-    grep -Eo '(src|href)="[^"]+\.(js|css)(\?[^"]*)?"' "$INDEX_FILE" |
-        sed -E 's/^[^=]+="([^"]+)"$/\1/'
-)
+done < <(extract_web_bootstrap_assets <"$INDEX_FILE")
 
 (( entry_asset_count > 0 )) || {
     printf '静态发布入口未声明任何 JS/CSS 资源：%s\n' "$INDEX_FILE" >&2

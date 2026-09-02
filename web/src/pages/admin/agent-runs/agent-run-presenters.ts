@@ -1,8 +1,4 @@
-import type {
-    AdminAgentRun,
-    AdminAgentRunActivity,
-    AdminAgentRunStatus,
-} from "@/services/api/admin-agent-runs";
+import type { AdminAgentRun, AdminAgentRunActivity, AdminAgentRunStatus } from "@/services/api/admin-agent-runs";
 
 const runStatusLabels: Record<AdminAgentRunStatus, string> = {
     queued: "排队中",
@@ -138,6 +134,7 @@ export function describeAgentRunControl(run: AdminAgentRun): AgentRunControlPres
 export function describeAgentRunFacts(run: AdminAgentRun): AgentRunFact[] {
     return [
         { label: "文本模型任务", value: taskStatusLabels[run.linkedModelTaskStatus] ?? `未知状态：${run.linkedModelTaskStatus}` },
+        { label: "图片理解任务", value: taskStatusLabels[run.linkedVisionTaskStatus] ?? `未知状态：${run.linkedVisionTaskStatus}` },
         { label: "媒体任务", value: taskStatusLabels[run.linkedMediaTaskStatus] ?? `未知状态：${run.linkedMediaTaskStatus}` },
         { label: "账务", value: billingStatusLabels[run.billingState] ?? `未知状态：${run.billingState}` },
         { label: "供应商请求", value: providerRequestLabels[run.providerRequestState] ?? `未知状态：${run.providerRequestState}` },

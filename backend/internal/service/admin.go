@@ -64,9 +64,10 @@ type AdminUserReference struct {
 }
 
 type AdminChannelReference struct {
-	ID     string   `json:"id"`
-	Name   string   `json:"name"`
-	Models []string `json:"models"`
+	ID            string                     `json:"id"`
+	Name          string                     `json:"name"`
+	InterfaceType model.ChannelInterfaceType `json:"interfaceType"`
+	Models        []string                   `json:"models"`
 }
 
 type AdminReferenceData struct {
@@ -141,35 +142,48 @@ type PublicChannelModelPrice struct {
 }
 
 type PublicProviderCapabilities struct {
-	ProviderFamily            string                    `json:"providerFamily"`
-	ModelKey                  string                    `json:"modelKey"`
-	DisplayName               string                    `json:"displayName"`
-	UpstreamMode              string                    `json:"upstreamMode"`
-	Capability                string                    `json:"capability"`
-	Resolutions               []string                  `json:"resolutions"`
-	ResolutionPixels          map[string]int64          `json:"resolutionPixels"`
-	InputVariants             []string                  `json:"inputVariants"`
-	ReferenceVideoResolutions []string                  `json:"referenceVideoResolutions"`
-	GeneratedAudioResolutions []string                  `json:"generatedAudioResolutions"`
-	Ratios                    []string                  `json:"ratios"`
-	Qualities                 []string                  `json:"qualities"`
-	OutputCounts              []int                     `json:"outputCounts"`
-	DurationMin               int                       `json:"durationMin"`
-	DurationMax               int                       `json:"durationMax"`
-	SupportsSmartDuration     bool                      `json:"supportsSmartDuration"`
-	SupportsTextToVideo       bool                      `json:"supportsTextToVideo"`
-	SupportsGeneratedAudio    bool                      `json:"supportsGeneratedAudio"`
-	WatermarkCapability       model.WatermarkCapability `json:"watermarkCapability"`
-	SupportsAudioOnly         bool                      `json:"supportsAudioOnly"`
-	RequiresAdaptiveFrames    bool                      `json:"requiresAdaptiveFrames"`
-	MaxImages                 int                       `json:"maxImages"`
-	MaxImagesWithVideo        int                       `json:"maxImagesWithVideo"`
-	MaxVideos                 int                       `json:"maxVideos"`
-	MaxAudios                 int                       `json:"maxAudios"`
-	MaxVideoDurationSeconds   int                       `json:"maxVideoDurationSeconds"`
-	MaxAudioDurationSeconds   int                       `json:"maxAudioDurationSeconds"`
-	Tools                     []string                  `json:"tools"`
-	SupportsTokenUsageBilling bool                      `json:"supportsTokenUsageBilling"`
+	ProviderFamily                           string                    `json:"providerFamily"`
+	ModelKey                                 string                    `json:"modelKey"`
+	DisplayName                              string                    `json:"displayName"`
+	UpstreamMode                             string                    `json:"upstreamMode"`
+	Capability                               string                    `json:"capability"`
+	Resolutions                              []string                  `json:"resolutions"`
+	ResolutionPixels                         map[string]int64          `json:"resolutionPixels"`
+	InputVariants                            []string                  `json:"inputVariants"`
+	ReferenceVideoResolutions                []string                  `json:"referenceVideoResolutions"`
+	GeneratedAudioResolutions                []string                  `json:"generatedAudioResolutions"`
+	Ratios                                   []string                  `json:"ratios"`
+	Qualities                                []string                  `json:"qualities"`
+	OutputCounts                             []int                     `json:"outputCounts"`
+	Durations                                []int                     `json:"durations"`
+	DurationMin                              int                       `json:"durationMin"`
+	DurationMax                              int                       `json:"durationMax"`
+	SupportsSmartDuration                    bool                      `json:"supportsSmartDuration"`
+	SupportsTextToVideo                      bool                      `json:"supportsTextToVideo"`
+	SupportsImageToVideo                     bool                      `json:"supportsImageToVideo"`
+	SupportsReferenceVideo                   bool                      `json:"supportsReferenceVideo"`
+	SupportsNativeAudio                      bool                      `json:"supportsNativeAudio"`
+	SupportsDialogue                         bool                      `json:"supportsDialogue"`
+	SupportsVoiceReference                   bool                      `json:"supportsVoiceReference"`
+	SupportsLipSync                          bool                      `json:"supportsLipSync"`
+	SupportsIndependentAudio                 bool                      `json:"supportsIndependentAudio"`
+	SupportsGeneratedAudio                   bool                      `json:"supportsGeneratedAudio"`
+	SupportsGeneratedAudioWithReferenceVideo bool                      `json:"supportsGeneratedAudioWithReferenceVideo"`
+	WatermarkCapability                      model.WatermarkCapability `json:"watermarkCapability"`
+	SupportsAudioOnly                        bool                      `json:"supportsAudioOnly"`
+	RequiresAdaptiveFrames                   bool                      `json:"requiresAdaptiveFrames"`
+	GenerationModes                          []string                  `json:"generationModes"`
+	AdaptiveRatioModes                       []string                  `json:"adaptiveRatioModes"`
+	RequiredAdaptiveRatioModes               []string                  `json:"requiredAdaptiveRatioModes"`
+	MaxImages                                int                       `json:"maxImages"`
+	MaxImagesWithVideo                       int                       `json:"maxImagesWithVideo"`
+	MaxVideos                                int                       `json:"maxVideos"`
+	MaxAudios                                int                       `json:"maxAudios"`
+	MaxVideoDurationSeconds                  int                       `json:"maxVideoDurationSeconds"`
+	MaxAudioDurationSeconds                  int                       `json:"maxAudioDurationSeconds"`
+	MaxInputImageTokens                      int                       `json:"maxInputImageTokens"`
+	Tools                                    []string                  `json:"tools"`
+	SupportsTokenUsageBilling                bool                      `json:"supportsTokenUsageBilling"`
 }
 
 type PublicChannelModelPriceTier struct {
@@ -247,7 +261,7 @@ func (s *Service) AdminReferences(actor *model.User) (*AdminReferenceData, error
 		for _, item := range items {
 			models = append(models, item.ModelKey)
 		}
-		result.Channels = append(result.Channels, AdminChannelReference{ID: channel.ID, Name: channel.Name, Models: uniqueNonEmpty(models)})
+		result.Channels = append(result.Channels, AdminChannelReference{ID: channel.ID, Name: channel.Name, InterfaceType: channel.InterfaceType, Models: uniqueNonEmpty(models)})
 	}
 	return result, nil
 }
@@ -466,8 +480,10 @@ func (s *Service) publiclyCallableChannelModels(items []model.ChannelModel) ([]m
 	}
 	result := make([]model.ChannelModel, 0, len(items))
 	for _, item := range items {
-		_, _, managed := kuaiziProviderFamilyForModel(item.ModelKey)
-		if managed && (item.ProviderCredentialID == "" || !healthy[item.ProviderCredentialID]) {
+		if isKuaiziChatChannelID(item.ChannelID) && item.ProviderCredentialID == "" {
+			continue
+		}
+		if item.ProviderCredentialID != "" && !healthy[item.ProviderCredentialID] {
 			continue
 		}
 		result = append(result, item)
@@ -623,10 +639,10 @@ func (s *Service) LogAPICall(log model.ApiCallLog) error {
 		log.CreatedAt = time.Now()
 	}
 	s.estimateCallCost(&log)
-	return s.repo.SaveProviderCall(&log, "", false)
+	return s.repo.SaveProviderCall(&log, "", 0, "", false)
 }
 
-func (s *Service) logProviderCall(log model.ApiCallLog, leaseOwner string, asyncCreate bool) error {
+func (s *Service) logProviderCall(log model.ApiCallLog, leaseOwner string, leaseGeneration uint64, leaseToken string, asyncCreate bool) error {
 	if log.ID == "" {
 		log.ID = newID()
 	}
@@ -634,7 +650,7 @@ func (s *Service) logProviderCall(log model.ApiCallLog, leaseOwner string, async
 		log.CreatedAt = time.Now()
 	}
 	s.estimateCallCost(&log)
-	return s.repo.SaveProviderCall(&log, leaseOwner, asyncCreate)
+	return s.repo.SaveProviderCall(&log, leaseOwner, leaseGeneration, leaseToken, asyncCreate)
 }
 
 func (s *Service) APICallLogs(actor *model.User, limit int) ([]model.ApiCallLog, error) {
@@ -770,7 +786,7 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 				Capability: item.Capability, WatermarkCapability: watermarkCapability,
 				BillingMode: item.BillingMode, PriceStrategy: item.PriceStrategy,
 				UnitPriceMicrocredits: item.UnitPriceMicrocredits, PriceTiers: tiers,
-				ProviderCapabilities: publicProviderModelCapabilities(channel.InterfaceType, item.ModelKey),
+				ProviderCapabilities: publicProviderModelCapabilities(channel.InterfaceType, item.ModelKey, item.Capability),
 			})
 		}
 	}
@@ -815,7 +831,7 @@ func channelModelPricingReady(item model.ChannelModel) bool {
 		return false
 	}
 	_, spec, managed := kuaiziProviderFamilyForModel(item.ModelKey)
-	if !managed || spec.Capability != "video" {
+	if !managed || (spec.Capability != "video" && (spec.Capability != "image" || len(spec.Qualities) == 0)) {
 		return true
 	}
 	configured := make(map[string]bool, len(item.PriceTiers))
@@ -842,12 +858,34 @@ func channelModelPricingReady(item model.ChannelModel) bool {
 	return true
 }
 
-func publicProviderModelCapabilities(interfaceType model.ChannelInterfaceType, modelKey string) *PublicProviderCapabilities {
-	if interfaceType == model.ChannelInterfaceAPIMartImage {
+func publicProviderModelCapabilities(interfaceType model.ChannelInterfaceType, modelKey string, declaredCapability string) *PublicProviderCapabilities {
+	switch interfaceType {
+	case model.ChannelInterfaceAPIMartImage:
 		return publicAPIMartImageCapabilities(modelKey)
+	case model.ChannelInterfaceMiniMaxVideo:
+		return publicMiniMaxVideoCapabilities(modelKey)
+	case model.ChannelInterfaceKlingVideo:
+		return publicKlingVideoCapabilities(modelKey)
+	case model.ChannelInterfaceMiniMaxSpeech:
+		return publicMiniMaxSpeechCapabilities(modelKey)
+	}
+	capability := normalizeCapability(declaredCapability)
+	chatCompatible := interfaceType == model.ChannelInterfaceChatCompletion || interfaceType == model.ChannelInterfaceOpenAIResponse
+	if chatCompatible && capability != "text" && capability != "vision" {
+		return nil
 	}
 	family, capabilities, ok := kuaiziProviderFamilyForModel(modelKey)
 	if !ok {
+		if !chatCompatible {
+			return nil
+		}
+		return &PublicProviderCapabilities{
+			ModelKey: modelKey, DisplayName: modelKey, UpstreamMode: modelKey, Capability: capability,
+			Resolutions: []string{}, ResolutionPixels: map[string]int64{}, InputVariants: []string{}, ReferenceVideoResolutions: []string{}, GeneratedAudioResolutions: []string{}, Ratios: []string{}, Qualities: []string{}, OutputCounts: []int{}, Durations: []int{}, GenerationModes: []string{}, AdaptiveRatioModes: []string{}, RequiredAdaptiveRatioModes: []string{}, Tools: []string{},
+			SupportsTokenUsageBilling: capability == "text",
+		}
+	}
+	if chatCompatible && capabilities.Capability != capability {
 		return nil
 	}
 	inputVariants := []string{}
@@ -861,16 +899,118 @@ func publicProviderModelCapabilities(interfaceType model.ChannelInterfaceType, m
 		Resolutions: append([]string{}, capabilities.Resolutions...), InputVariants: inputVariants, ReferenceVideoResolutions: append([]string{}, capabilities.ReferenceVideoResolutions...), GeneratedAudioResolutions: append([]string{}, capabilities.GeneratedAudioResolutions...), Ratios: append([]string{}, capabilities.Ratios...),
 		ResolutionPixels: cloneStringInt64Map(capabilities.ResolutionPixels),
 		Qualities:        append([]string{}, capabilities.Qualities...), OutputCounts: append([]int{}, capabilities.OutputCounts...),
+		Durations:   inclusiveDurations(capabilities.DurationMin, capabilities.DurationMax),
 		DurationMin: capabilities.DurationMin, DurationMax: capabilities.DurationMax,
-		SupportsTextToVideo:   capabilities.SupportsTextToVideo,
-		SupportsSmartDuration: capabilities.SupportsSmartDuration, SupportsGeneratedAudio: capabilities.SupportsGeneratedAudio,
-		WatermarkCapability: capabilities.WatermarkCapability, SupportsAudioOnly: capabilities.SupportsAudioOnly,
-		RequiresAdaptiveFrames: capabilities.RequiresAdaptiveFrames,
-		MaxImages:              capabilities.MaxImages, MaxImagesWithVideo: capabilities.MaxImagesWithVideo, MaxVideos: capabilities.MaxVideos, MaxAudios: capabilities.MaxAudios,
+		SupportsTextToVideo:                      capabilities.SupportsTextToVideo,
+		SupportsImageToVideo:                     capabilities.SupportsImageToVideo,
+		SupportsReferenceVideo:                   capabilities.SupportsReferenceVideo,
+		SupportsNativeAudio:                      capabilities.SupportsNativeAudio,
+		SupportsDialogue:                         capabilities.SupportsDialogue,
+		SupportsVoiceReference:                   capabilities.SupportsVoiceReference,
+		SupportsLipSync:                          capabilities.SupportsLipSync,
+		SupportsIndependentAudio:                 capabilities.SupportsIndependentAudio,
+		SupportsSmartDuration:                    capabilities.SupportsSmartDuration,
+		SupportsGeneratedAudio:                   capabilities.SupportsGeneratedAudio,
+		SupportsGeneratedAudioWithReferenceVideo: capabilities.SupportsGeneratedAudioWithReferenceVideo,
+		WatermarkCapability:                      capabilities.WatermarkCapability, SupportsAudioOnly: capabilities.SupportsAudioOnly,
+		RequiresAdaptiveFrames:     capabilities.RequiresAdaptiveFrames,
+		GenerationModes:            append([]string{}, capabilities.GenerationModes...),
+		AdaptiveRatioModes:         append([]string{}, capabilities.AdaptiveRatioModes...),
+		RequiredAdaptiveRatioModes: append([]string{}, capabilities.RequiredAdaptiveRatioModes...),
+		MaxImages:                  capabilities.MaxImages, MaxImagesWithVideo: capabilities.MaxImagesWithVideo, MaxVideos: capabilities.MaxVideos, MaxAudios: capabilities.MaxAudios,
 		MaxVideoDurationSeconds: capabilities.MaxVideoDurationSeconds, MaxAudioDurationSeconds: capabilities.MaxAudioDurationSeconds,
+		MaxInputImageTokens:       capabilities.MaxInputImageTokens,
 		Tools:                     append([]string{}, capabilities.Tools...),
-		SupportsTokenUsageBilling: kuaiziModelSupportsTokenUsageBilling(modelKey),
+		SupportsTokenUsageBilling: chatCompatible && (capability == "text" || capability == "vision" && capabilities.MaxInputImageTokens > 0),
 	}
+}
+
+func publicMiniMaxVideoCapabilities(modelKey string) *PublicProviderCapabilities {
+	if strings.TrimSpace(modelKey) != miniMaxH3Model {
+		return nil
+	}
+	return &PublicProviderCapabilities{
+		ProviderFamily: "minimax", ModelKey: miniMaxH3Model, DisplayName: miniMaxH3Model,
+		UpstreamMode: miniMaxH3Model, Capability: "video",
+		Resolutions: []string{"768p", "2k"}, ResolutionPixels: map[string]int64{},
+		InputVariants: []string{"standard"}, ReferenceVideoResolutions: []string{"768p", "2k"}, GeneratedAudioResolutions: []string{},
+		Ratios: []string{"adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}, Qualities: []string{}, OutputCounts: []int{1, 2, 4},
+		Durations: inclusiveDurations(4, 15), DurationMin: 4, DurationMax: 15,
+		SupportsTextToVideo: true, SupportsImageToVideo: true, SupportsReferenceVideo: true, SupportsVoiceReference: true,
+		WatermarkCapability: model.WatermarkCapabilityControlled, RequiresAdaptiveFrames: true,
+		GenerationModes:            []string{"text", "image", "first_last_frame", "image_reference", "omni_reference"},
+		AdaptiveRatioModes:         []string{"image", "first_last_frame", "image_reference", "omni_reference"},
+		RequiredAdaptiveRatioModes: []string{"image", "first_last_frame", "image_reference", "omni_reference"},
+		MaxImages:                  9, MaxImagesWithVideo: 9, MaxVideos: 3, MaxAudios: 3,
+		Tools: []string{},
+	}
+}
+
+func publicKlingVideoCapabilities(modelKey string) *PublicProviderCapabilities {
+	modelKey = strings.TrimSpace(modelKey)
+	if modelKey == "" {
+		return nil
+	}
+	return &PublicProviderCapabilities{
+		ProviderFamily: "kling", ModelKey: modelKey, DisplayName: modelKey,
+		UpstreamMode: modelKey, Capability: "video",
+		Resolutions: []string{"720p", "1080p"}, ResolutionPixels: map[string]int64{}, InputVariants: []string{"standard"},
+		ReferenceVideoResolutions: []string{}, GeneratedAudioResolutions: []string{},
+		Ratios: []string{"adaptive", "16:9", "9:16", "1:1"}, Qualities: []string{}, OutputCounts: []int{1, 2, 4}, Durations: []int{5, 10}, DurationMin: 5, DurationMax: 10,
+		SupportsTextToVideo: true, SupportsImageToVideo: true,
+		WatermarkCapability: model.WatermarkCapabilityUnsupported, RequiresAdaptiveFrames: true,
+		GenerationModes:            []string{"text", "image", "first_last_frame"},
+		AdaptiveRatioModes:         []string{"image", "first_last_frame"},
+		RequiredAdaptiveRatioModes: []string{"image", "first_last_frame"},
+		MaxImages:                  2, MaxImagesWithVideo: 2, Tools: []string{},
+	}
+}
+
+func publicMiniMaxSpeechCapabilities(modelKey string) *PublicProviderCapabilities {
+	modelKey = strings.TrimSpace(modelKey)
+	if modelKey == "" {
+		return nil
+	}
+	return &PublicProviderCapabilities{
+		ProviderFamily: "minimax-speech", ModelKey: modelKey, DisplayName: modelKey,
+		UpstreamMode: modelKey, Capability: "audio", ResolutionPixels: map[string]int64{}, InputVariants: []string{},
+		Resolutions: []string{}, ReferenceVideoResolutions: []string{}, GeneratedAudioResolutions: []string{}, Ratios: []string{}, Qualities: []string{}, OutputCounts: []int{1}, Durations: []int{},
+		GenerationModes: []string{}, AdaptiveRatioModes: []string{}, RequiredAdaptiveRatioModes: []string{},
+		SupportsDialogue: true, SupportsIndependentAudio: true,
+		WatermarkCapability: model.WatermarkCapabilityNotApplicable, Tools: []string{},
+	}
+}
+
+func inclusiveDurations(minimum int, maximum int) []int {
+	if minimum <= 0 || maximum < minimum {
+		return []int{}
+	}
+	result := make([]int, 0, maximum-minimum+1)
+	for value := minimum; value <= maximum; value++ {
+		result = append(result, value)
+	}
+	return result
+}
+
+func clonePublicProviderCapabilities(source *PublicProviderCapabilities) *PublicProviderCapabilities {
+	if source == nil {
+		return nil
+	}
+	result := *source
+	result.Resolutions = append([]string{}, source.Resolutions...)
+	result.ResolutionPixels = cloneStringInt64Map(source.ResolutionPixels)
+	result.InputVariants = append([]string{}, source.InputVariants...)
+	result.ReferenceVideoResolutions = append([]string{}, source.ReferenceVideoResolutions...)
+	result.GeneratedAudioResolutions = append([]string{}, source.GeneratedAudioResolutions...)
+	result.Ratios = append([]string{}, source.Ratios...)
+	result.Qualities = append([]string{}, source.Qualities...)
+	result.OutputCounts = append([]int{}, source.OutputCounts...)
+	result.Durations = append([]int{}, source.Durations...)
+	result.GenerationModes = append([]string{}, source.GenerationModes...)
+	result.AdaptiveRatioModes = append([]string{}, source.AdaptiveRatioModes...)
+	result.RequiredAdaptiveRatioModes = append([]string{}, source.RequiredAdaptiveRatioModes...)
+	result.Tools = append([]string{}, source.Tools...)
+	return &result
 }
 
 func publicAPIMartImageCapabilities(modelKey string) *PublicProviderCapabilities {
@@ -883,10 +1023,11 @@ func publicAPIMartImageCapabilities(modelKey string) *PublicProviderCapabilities
 		qualities = []string{"low", "medium", "high"}
 	}
 	return &PublicProviderCapabilities{
-		ModelKey: modelKey, DisplayName: profile.label, UpstreamMode: modelKey, Capability: "image",
-		Resolutions: append([]string{}, profile.resolutions...), InputVariants: []string{},
+		ProviderFamily: "apimart", ModelKey: modelKey, DisplayName: profile.label, UpstreamMode: modelKey, Capability: "image",
+		Resolutions: append([]string{}, profile.resolutions...), InputVariants: []string{}, ReferenceVideoResolutions: []string{}, GeneratedAudioResolutions: []string{}, Durations: []int{}, GenerationModes: []string{},
 		ResolutionPixels: map[string]int64{},
 		Ratios:           apimartPublishedAspectRatios(profile), Qualities: qualities, OutputCounts: []int{1},
+		AdaptiveRatioModes: []string{}, RequiredAdaptiveRatioModes: []string{},
 		WatermarkCapability: model.WatermarkCapabilityUnsupported,
 		MaxImages:           profile.maxReferenceImages,
 		Tools:               []string{},

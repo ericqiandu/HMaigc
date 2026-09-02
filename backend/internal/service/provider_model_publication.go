@@ -106,7 +106,7 @@ func deterministicKuaiziChatChannelID(family string) string {
 func isKuaiziChatChannelID(channelID string) bool {
 	for _, descriptor := range kuaiziProviderAdapterDescriptors() {
 		for _, spec := range descriptor.Models {
-			if spec.Capability == "text" && channelID == deterministicKuaiziChatChannelID(descriptor.Family) {
+			if (spec.Capability == "text" || spec.Capability == "vision") && channelID == deterministicKuaiziChatChannelID(descriptor.Family) {
 				return true
 			}
 		}

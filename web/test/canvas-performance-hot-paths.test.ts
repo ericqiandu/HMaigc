@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { applyCanvasLiveNodeDrag, clearCanvasLiveNodeDrag, createFrameDropContext, findFrameDropTargetFromContext, resolveCanvasLiveNodeDragTargets, shouldSyncCanvasDragPreview } from "../src/lib/canvas/canvas-drag-performance";
+import { applyCanvasLiveConnectionDrag, applyCanvasLiveNodeDrag, clearCanvasLiveConnectionDrag, clearCanvasLiveNodeDrag, createFrameDropContext, findFrameDropTargetFromContext, resolveCanvasLiveConnectionDragTargets, resolveCanvasLiveNodeDragTargets } from "../src/lib/canvas/canvas-drag-performance";
 import { buildCanvasResourceReferencesFromGraph, buildNodeMentionReferencesByNodeId, createCanvasResourceGraph } from "../src/lib/canvas/canvas-resource-references";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../src/types/canvas";
 
@@ -48,7 +48,7 @@ describe("canvas performance hot paths", () => {
         expect(findFrameDropTargetFromContext(context, { x: 0, y: 0 })).toBeNull();
     });
 
-    test("keeps node movement on CSS variables and rate-limits React connection previews", () => {
+    test("keeps node movement on CSS variables without React connection preview state", () => {
         const properties = new Map<string, string>();
         const surface = {
             dataset: {} as DOMStringMap,
@@ -63,12 +63,39 @@ describe("canvas performance hot paths", () => {
         expect(surface.style.getPropertyValue("--canvas-live-drag-x")).toBe("18.5px");
         expect(surface.style.getPropertyValue("--canvas-live-drag-y")).toBe("-7px");
         expect(surface.dataset.canvasNodeDragging).toBe("true");
-        expect(shouldSyncCanvasDragPreview(120, 100)).toBeFalse();
-        expect(shouldSyncCanvasDragPreview(150, 100)).toBeTrue();
-
         clearCanvasLiveNodeDrag([surface]);
         expect(surface.style.getPropertyValue("--canvas-live-drag-x")).toBe("");
         expect(surface.dataset.canvasNodeDragging).toBeUndefined();
+    });
+
+    test("updates only incident SVG paths during a live node drag", () => {
+        const surface = document.createElement("div");
+        surface.innerHTML = `
+            <svg>
+                <g data-canvas-connection-id="incident" data-from-node-id="selected" data-to-node-id="target" data-start-x="100" data-start-y="50" data-end-x="300" data-end-y="90">
+                    <linearGradient x1="100" y1="50" x2="300" y2="90"></linearGradient>
+                    <path d="original-incident"></path>
+                    <path d="original-incident"></path>
+                </g>
+                <g data-canvas-connection-id="untouched" data-from-node-id="other" data-to-node-id="target" data-start-x="0" data-start-y="0" data-end-x="20" data-end-y="20">
+                    <path d="original-untouched"></path>
+                </g>
+            </svg>`;
+
+        const targets = resolveCanvasLiveConnectionDragTargets(surface, new Set(["selected"]));
+        expect(targets).toHaveLength(1);
+
+        applyCanvasLiveConnectionDrag(targets, { x: 20, y: -10 });
+        const incidentPaths = surface.querySelectorAll<SVGPathElement>("[data-canvas-connection-id='incident'] path");
+        expect(Array.from(incidentPaths).map((path) => path.getAttribute("d"))).toEqual([
+            "M 120 40 C 210 40, 210 90, 300 90",
+            "M 120 40 C 210 40, 210 90, 300 90",
+        ]);
+        expect(surface.querySelector("[data-canvas-connection-id='untouched'] path")?.getAttribute("d")).toBe("original-untouched");
+        expect(surface.querySelector("[data-canvas-connection-id='incident'] linearGradient")?.getAttribute("x1")).toBe("120");
+
+        clearCanvasLiveConnectionDrag(targets);
+        expect(Array.from(incidentPaths).map((path) => path.getAttribute("d"))).toEqual(["original-incident", "original-incident"]);
     });
 
     test("resolves drag variables to selected nodes instead of invalidating the canvas ancestry", () => {
@@ -87,5 +114,18 @@ describe("canvas performance hot paths", () => {
 
         expect(source).toContain("dragOffset={props.dragPreview?.nodeIds.has(node.id) ? LIVE_DRAG_OFFSET : undefined}");
         expect(source.match(/const LIVE_DRAG_OFFSET/g)?.length).toBe(1);
+    });
+
+    test("does not make the full display connection model depend on live drag offsets", async () => {
+        const source = await Bun.file(new URL("../src/pages/canvas/use-canvas-render-model.ts", import.meta.url)).text();
+
+        expect(source).not.toContain("dragPreview");
+    });
+
+    test("builds the connection hit index at drag start instead of scanning nodes on pointer move", async () => {
+        const source = await Bun.file(new URL("../src/pages/canvas/use-canvas-connection-controller.ts", import.meta.url)).text();
+
+        expect(source).toContain("connectionHitIndexRef.current = createCanvasConnectionHitIndex(nodesRef.current)");
+        expect(source).not.toContain("[...nodesRef.current]");
     });
 });

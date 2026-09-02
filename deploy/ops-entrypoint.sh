@@ -2,16 +2,14 @@
 
 set -eu
 
-SOURCE_ENV_FILE="${HMAIGC_OPS_SOURCE_ENV_FILE:-/run/hmaigc-config/.env.production}"
-TARGET_ENV_FILE="${HMAIGC_ENV_FILE:-/var/lib/hmaigc-ops/deployment.env}"
+PRODUCTION_ENV_FILE="${HMAIGC_ENV_FILE:-/var/lib/hmaigc-ops/config/production.env}"
+CONTROL_ENV_FILE="${HMAIGC_CONTROL_ENV_FILE:-/var/lib/hmaigc-ops/config/control.env}"
 
-if [ ! -f "$SOURCE_ENV_FILE" ]; then
-    printf '错误：控制器生产配置源文件不存在：%s\n' "$SOURCE_ENV_FILE" >&2
-    exit 1
-fi
-
-target_directory="$(dirname "$TARGET_ENV_FILE")"
-mkdir -p "$target_directory"
-install -m 600 "$SOURCE_ENV_FILE" "$TARGET_ENV_FILE"
+for config_file in "$PRODUCTION_ENV_FILE" "$CONTROL_ENV_FILE"; do
+    if [ ! -r "$config_file" ]; then
+        printf '错误：规范配置不可读：%s\n' "$config_file" >&2
+        exit 1
+    fi
+done
 
 exec "$@"

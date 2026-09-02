@@ -1,11 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import {
-    createRouteModulePrefetcher,
-    routeModuleKeyForPathname,
-    type RouteModuleKey,
-    type RouteModuleLoaders,
-} from "../src/lib/route-module-prefetch";
+import { createRouteModulePrefetcher, routeModuleKeyForPathname, type RouteModuleKey, type RouteModuleLoaders } from "../src/lib/route-module-prefetch";
 
 function controlledLoaders(load: (key: RouteModuleKey) => Promise<unknown>): RouteModuleLoaders {
     return {

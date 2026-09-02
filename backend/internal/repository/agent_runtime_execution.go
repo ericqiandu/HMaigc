@@ -2,6 +2,7 @@ package repository
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -30,6 +31,7 @@ type InitializeAgentRunInput struct {
 	PolicyVersion     int
 	UserMessage       string
 	Configuration     agentruntime.RunConfiguration
+	Limits            *agentruntime.RuntimeLimits
 	Now               time.Time
 }
 
@@ -43,6 +45,11 @@ type CreateInitializedAgentRunInput struct {
 	Initialize InitializeAgentRunInput
 }
 
+type CreateInitializedExternalAgentRunInput struct {
+	Create     CreateLocalAgentRunInput
+	Initialize InitializeAgentRunInput
+}
+
 func (r *Repository) CreateInitializedAgentRun(input CreateInitializedAgentRunInput) (*InitializedAgentRun, error) {
 	var result *InitializedAgentRun
 	err := r.db.Transaction(func(tx *gorm.DB) error {
@@ -52,14 +59,45 @@ func (r *Repository) CreateInitializedAgentRun(input CreateInitializedAgentRunIn
 			return err
 		}
 		if !record.Created {
-			if record.Run.StateVersion == 0 || record.Run.MaxSteps == 0 || record.Run.LastEventSequence == 0 {
+			if record.Run.ReasoningHost != agentruntime.ReasoningHostManaged || record.Run.StateVersion == 0 || record.Run.MaxSteps == 0 || record.Run.LastEventSequence == 0 {
 				return ErrAgentRuntimeInitializationConflict
 			}
 			result = &InitializedAgentRun{Run: record.Run}
 			return nil
 		}
+		input.Initialize.Scope.ThreadID = record.Run.ThreadID
 		input.Initialize.Scope.RunID = record.Run.ID
-		initialized, err := txRepository.InitializeAgentRun(input.Initialize)
+		initialized, err := txRepository.initializeAgentRun(input.Initialize, agentruntime.ReasoningHostManaged)
+		if err != nil {
+			return err
+		}
+		result = initialized
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (r *Repository) CreateInitializedExternalAgentRun(input CreateInitializedExternalAgentRunInput) (*InitializedAgentRun, error) {
+	var result *InitializedAgentRun
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		txRepository := New(tx)
+		record, err := txRepository.CreateLocalAgentRun(input.Create)
+		if err != nil {
+			return err
+		}
+		if !record.Created {
+			if record.Run.ReasoningHost != agentruntime.ReasoningHostLocalCodex || record.Run.StateVersion == 0 || record.Run.MaxSteps == 0 || record.Run.LastEventSequence == 0 {
+				return ErrAgentRuntimeInitializationConflict
+			}
+			result = &InitializedAgentRun{Run: record.Run}
+			return nil
+		}
+		input.Initialize.Scope.ThreadID = record.Run.ThreadID
+		input.Initialize.Scope.RunID = record.Run.ID
+		initialized, err := txRepository.initializeAgentRun(input.Initialize, agentruntime.ReasoningHostLocalCodex)
 		if err != nil {
 			return err
 		}
@@ -85,13 +123,20 @@ type agentRunInitializationUpdates struct {
 }
 
 func (r *Repository) InitializeAgentRun(input InitializeAgentRunInput) (*InitializedAgentRun, error) {
+	return r.initializeAgentRun(input, agentruntime.ReasoningHostManaged)
+}
+
+func (r *Repository) initializeAgentRun(input InitializeAgentRunInput, reasoningHost agentruntime.ReasoningHost) (*InitializedAgentRun, error) {
 	input.ModelRecordID = strings.TrimSpace(input.ModelRecordID)
 	input.ModelKey = strings.TrimSpace(input.ModelKey)
 	input.UserMessage = strings.TrimSpace(input.UserMessage)
 	if err := input.Scope.Validate(); err != nil {
 		return nil, err
 	}
-	if input.ModelRecordID == "" || len(input.ModelRecordID) > 80 || input.ModelKey == "" || len(input.ModelKey) > 120 ||
+	invalidModelIdentity := len(input.ModelRecordID) > 80 || len(input.ModelKey) > 120 ||
+		(reasoningHost == agentruntime.ReasoningHostManaged && (input.ModelRecordID == "" || input.ModelKey == "")) ||
+		(reasoningHost == agentruntime.ReasoningHostLocalCodex && (input.ModelRecordID != "" || input.ModelKey != ""))
+	if !reasoningHost.Valid() || invalidModelIdentity ||
 		input.MaxSteps < 1 || input.MaxSteps > 24 || input.ToolSchemaVersion < 1 || input.RuntimeVersion < 1 || input.PolicyVersion < 1 || input.UserMessage == "" || len(input.UserMessage) > 64*1024 || input.Now.IsZero() {
 		return nil, errors.New("agent runtime initialization boundary is invalid")
 	}
@@ -102,6 +147,10 @@ func (r *Repository) InitializeAgentRun(input InitializeAgentRunInput) (*Initial
 		StateVersion: 1, StepNumber: 0, MaxSteps: input.MaxSteps,
 		Status: agentruntime.RunQueued, UserMessage: input.UserMessage, Configuration: input.Configuration,
 		ClarificationHistory: []agentruntime.CompletedClarification{},
+		Limits:               input.Limits,
+	}
+	if err := agentruntime.ValidateRuntimeState(state); err != nil {
+		return nil, err
 	}
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
@@ -114,15 +163,16 @@ func (r *Repository) InitializeAgentRun(input InitializeAgentRunInput) (*Initial
 	err = r.db.Transaction(func(tx *gorm.DB) error {
 		updated := tx.Model(&model.AgentRun{}).
 			Where(`id = ? AND thread_id = ? AND actor_user_id = ? AND status = ? AND step_number = 0
-				AND state_version = 0
+				AND reasoning_host = ? AND state_version = 0
 				AND max_steps = 0 AND model_record_id = '' AND model_key = '' AND tool_schema_version = 0
 				AND runtime_version = 0 AND policy_version = 0
 				AND last_event_sequence = 0 AND EXISTS (
 					SELECT 1 FROM agent_threads WHERE agent_threads.id = agent_runs.thread_id
 					AND tenant_kind = ? AND tenant_id = ? AND created_by_user_id = ?
-					AND domain_project_id = ? AND canvas_id = ?
+					AND domain_project_id = ? AND canvas_id = ? AND reasoning_host = ?
 				)`, input.Scope.RunID, input.Scope.ThreadID, input.Scope.ActorUserID, agentruntime.RunQueued,
-				input.Scope.TenantKind, input.Scope.TenantID, input.Scope.ActorUserID, input.Scope.DomainProjectID, input.Scope.CanvasID).
+				reasoningHost,
+				input.Scope.TenantKind, input.Scope.TenantID, input.Scope.ActorUserID, input.Scope.DomainProjectID, input.Scope.CanvasID, reasoningHost).
 			Updates(agentRunInitializationUpdates{
 				MaxSteps: input.MaxSteps, ModelRecordID: input.ModelRecordID, ModelKey: input.ModelKey,
 				ToolSchemaVersion: input.ToolSchemaVersion, RuntimeVersion: input.RuntimeVersion, PolicyVersion: input.PolicyVersion,
@@ -136,10 +186,11 @@ func (r *Repository) InitializeAgentRun(input InitializeAgentRunInput) (*Initial
 		if err := tx.Table("agent_runs").Select("agent_runs.*").
 			Joins("JOIN agent_threads ON agent_threads.id = agent_runs.thread_id").
 			Where(`agent_runs.id = ? AND agent_runs.thread_id = ? AND agent_runs.actor_user_id = ?
+				AND agent_runs.reasoning_host = ?
 				AND agent_threads.tenant_kind = ? AND agent_threads.tenant_id = ?
 				AND agent_threads.created_by_user_id = ? AND agent_threads.domain_project_id = ?
-				AND agent_threads.canvas_id = ?`, input.Scope.RunID, input.Scope.ThreadID, input.Scope.ActorUserID,
-				input.Scope.TenantKind, input.Scope.TenantID, input.Scope.ActorUserID, input.Scope.DomainProjectID, input.Scope.CanvasID).
+				AND agent_threads.canvas_id = ? AND agent_threads.reasoning_host = ?`, input.Scope.RunID, input.Scope.ThreadID, input.Scope.ActorUserID, reasoningHost,
+				input.Scope.TenantKind, input.Scope.TenantID, input.Scope.ActorUserID, input.Scope.DomainProjectID, input.Scope.CanvasID, reasoningHost).
 			Take(&run).Error; err != nil {
 			return err
 		}
@@ -151,7 +202,7 @@ func (r *Repository) InitializeAgentRun(input InitializeAgentRunInput) (*Initial
 			return err
 		}
 		if updated.RowsAffected == 0 {
-			if run.StateVersion != 1 || run.MaxSteps != input.MaxSteps || run.ModelRecordID != input.ModelRecordID || run.ModelKey != input.ModelKey || run.ToolSchemaVersion != input.ToolSchemaVersion || run.RuntimeVersion != input.RuntimeVersion || run.PolicyVersion != input.PolicyVersion || run.LastEventSequence != 2 {
+			if run.ReasoningHost != reasoningHost || run.StateVersion != 1 || run.MaxSteps != input.MaxSteps || run.ModelRecordID != input.ModelRecordID || run.ModelKey != input.ModelKey || run.ToolSchemaVersion != input.ToolSchemaVersion || run.RuntimeVersion != input.RuntimeVersion || run.PolicyVersion != input.PolicyVersion || run.LastEventSequence != 2 {
 				return ErrAgentRuntimeInitializationConflict
 			}
 			var events []model.AgentRunEvent
@@ -246,6 +297,109 @@ func (r *Repository) CommitAgentRuntimeTransition(scope agentruntime.Scope, prev
 	})
 }
 
+type CommitExternalAgentDecisionInput struct {
+	Scope                agentruntime.Scope
+	ClientRequestID      string
+	RequestHash          string
+	ExpectedStateVersion int
+	Previous             agentruntime.RuntimeState
+	Transition           agentruntime.RuntimeTransition
+	Now                  time.Time
+}
+
+func (r *Repository) ExternalAgentDecisionForScope(scope agentruntime.Scope, clientRequestID string) (*model.AgentExternalDecision, error) {
+	clientRequestID = strings.TrimSpace(clientRequestID)
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	if clientRequestID == "" || len(clientRequestID) > 120 {
+		return nil, agentruntime.ErrExternalDecisionConflict
+	}
+	run, err := agentRunForScopeDB(r.db, scope)
+	if err != nil {
+		return nil, err
+	}
+	if run.ReasoningHost != agentruntime.ReasoningHostLocalCodex || run.ModelRecordID != "" || run.ModelKey != "" {
+		return nil, agentruntime.ErrExternalDecisionConflict
+	}
+	var receipt model.AgentExternalDecision
+	if err := r.db.Where("run_id = ? AND client_request_id = ?", scope.RunID, clientRequestID).Take(&receipt).Error; err != nil {
+		return nil, err
+	}
+	return &receipt, nil
+}
+
+func (r *Repository) CommitExternalAgentDecision(input CommitExternalAgentDecisionInput) (bool, error) {
+	input.ClientRequestID = strings.TrimSpace(input.ClientRequestID)
+	input.RequestHash = strings.TrimSpace(input.RequestHash)
+	decodedHash, hashErr := hex.DecodeString(input.RequestHash)
+	if err := input.Scope.Validate(); err != nil {
+		return false, err
+	}
+	if input.ClientRequestID == "" || len(input.ClientRequestID) > 120 || hashErr != nil || len(decodedHash) != 32 ||
+		input.RequestHash != strings.ToLower(input.RequestHash) || input.ExpectedStateVersion < 1 ||
+		input.ExpectedStateVersion != input.Previous.StateVersion || input.Now.IsZero() {
+		return false, agentruntime.ErrExternalDecisionConflict
+	}
+	if err := validateAgentRuntimeTransition(input.Scope, input.Previous, input.Transition, input.Now); err != nil {
+		return false, err
+	}
+	stateJSON, err := json.Marshal(input.Transition.State)
+	if err != nil {
+		return false, err
+	}
+	if len(stateJSON) > agentEventPayloadLimit {
+		return false, ErrAgentPayloadTooLarge
+	}
+	replayed := false
+	err = r.db.Transaction(func(tx *gorm.DB) error {
+		// Lock the canonical Run before checking the idempotency receipt. PostgreSQL
+		// does not gap-lock a missing receipt row, so locking only the receipt query
+		// allows concurrent first submissions to race into a unique-key error.
+		run, loadErr := agentRunForScopeDB(tx.Clauses(clause.Locking{Strength: "UPDATE"}), input.Scope)
+		if loadErr != nil {
+			return loadErr
+		}
+		if run.ReasoningHost != agentruntime.ReasoningHostLocalCodex || run.ModelRecordID != "" || run.ModelKey != "" {
+			return agentruntime.ErrExternalDecisionConflict
+		}
+		var existing model.AgentExternalDecision
+		loadErr = tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("run_id = ? AND client_request_id = ?", input.Scope.RunID, input.ClientRequestID).
+			Take(&existing).Error
+		if loadErr == nil {
+			if existing.RequestHash != input.RequestHash || existing.ExpectedStateVersion != input.ExpectedStateVersion {
+				return agentruntime.ErrExternalDecisionConflict
+			}
+			replayed = true
+			return nil
+		}
+		if !errors.Is(loadErr, gorm.ErrRecordNotFound) {
+			return loadErr
+		}
+		receipt := model.AgentExternalDecision{
+			ID:    agentFactID("external-decision", input.Scope.RunID, input.ClientRequestID),
+			RunID: input.Scope.RunID, ClientRequestID: input.ClientRequestID, RequestHash: input.RequestHash,
+			ExpectedStateVersion: input.ExpectedStateVersion,
+			ResultStateVersion:   input.Transition.State.StateVersion,
+			CreatedAt:            input.Now,
+		}
+		if createErr := tx.Create(&receipt).Error; createErr != nil {
+			return createErr
+		}
+		return r.commitAgentRuntimeTransitionTx(tx, input.Scope, input.Previous, input.Transition, string(stateJSON), nil, input.Now)
+	})
+	if err != nil {
+		if input.Transition.State.PendingToolCall != nil &&
+			input.Transition.State.PendingToolCall.ToolName == agentruntime.ToolMediaGenerate &&
+			isUniqueConstraintError(err) {
+			return false, ErrAgentRuntimeStepConflict
+		}
+		return false, err
+	}
+	return replayed, nil
+}
+
 type agentRuntimeInterruptAudit struct {
 	Source         string                 `json:"source"`
 	ActorUserID    string                 `json:"actorUserId"`
@@ -265,6 +419,7 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 	state := transition.State
 	var facts struct {
 		LastEventSequence int64 `gorm:"column:last_event_sequence"`
+		ToolSchemaVersion int   `gorm:"column:tool_schema_version"`
 	}
 	var completedAt *time.Time
 	if state.Status == agentruntime.RunSucceeded || state.Status == agentruntime.RunFailed || state.Status == agentruntime.RunCancelled {
@@ -281,7 +436,7 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 			          AND tenant_kind = ? AND tenant_id = ? AND created_by_user_id = ?
 			          AND domain_project_id = ? AND canvas_id = ?
 			   )
-			 RETURNING last_event_sequence`,
+	 RETURNING last_event_sequence, tool_schema_version`,
 		state.StateVersion, state.StepNumber, state.Status, len(transition.EventKinds), now, completedAt,
 		scope.RunID, scope.ThreadID, scope.ActorUserID, previous.StateVersion, previous.StepNumber, state.MaxSteps, previous.Status,
 		scope.TenantKind, scope.TenantID, scope.ActorUserID, scope.DomainProjectID, scope.CanvasID,
@@ -290,16 +445,26 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 		return result.Error
 	}
 	if result.RowsAffected != 1 {
-		if _, err := r.AgentRunForScope(scope); err != nil {
+		if _, err := agentRunForScopeDB(tx, scope); err != nil {
 			return err
 		}
 		return ErrAgentRuntimeStepConflict
 	}
-	if err := persistRejectedAgentToolDecision(tx, scope, previous, transition, now); err != nil {
+	if err := persistRejectedAgentToolDecision(tx, scope, previous, transition, facts.ToolSchemaVersion, now); err != nil {
 		return err
 	}
-	if err := persistAgentToolTransition(tx, scope, previous, state, now); err != nil {
+	if err := persistReplayedAgentToolDecision(tx, scope, transition, facts.ToolSchemaVersion, now); err != nil {
 		return err
+	}
+	if err := persistAgentToolTransition(tx, scope, previous, state, transition.ApprovalProposalHash, transition.ApprovalCostQuote, transition.ApprovalResolution, facts.ToolSchemaVersion, now); err != nil {
+		return err
+	}
+	shouldDisposeRunTree := state.Status == agentruntime.RunCancelled ||
+		(state.Status == agentruntime.RunFailed && state.FailureCode == agentruntime.FailureRuntimeDeadlineExceeded)
+	if shouldDisposeRunTree && interruptAudit == nil {
+		if err := r.cancelAgentRunTreeTx(tx, scope, now); err != nil {
+			return err
+		}
 	}
 	nextTimelineOrdinal, err := nextAgentTimelineOrdinal(tx, scope.RunID)
 	if err != nil {
@@ -308,7 +473,12 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 	firstSequence := facts.LastEventSequence - int64(len(transition.EventKinds)) + 1
 	for index, kind := range transition.EventKinds {
 		sequence := firstSequence + int64(index)
-		eventPayload, err := agentRuntimeTransitionEventPayload(stateJSON, kind, interruptAudit)
+		eventPrevious, eventState := agentRuntimeTransitionEventStates(previous, state, kind, transition.ToolReplay)
+		eventStateJSON, err := json.Marshal(eventState)
+		if err != nil {
+			return err
+		}
+		eventPayload, err := agentRuntimeTransitionEventPayload(string(eventStateJSON), kind, interruptAudit)
 		if err != nil {
 			return err
 		}
@@ -316,12 +486,32 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 		if err := tx.Create(&event).Error; err != nil {
 			return err
 		}
-		if err := persistAgentTimelineEvent(tx, scope, previous, state, kind, sequence, &nextTimelineOrdinal, now); err != nil {
+		if err := persistAgentTimelineEvent(tx, scope, eventPrevious, eventState, kind, sequence, &nextTimelineOrdinal, now); err != nil {
 			return err
 		}
 	}
 	checkpoint := model.AgentCheckpoint{ID: agentFactID("checkpoint", scope.RunID, strconv.FormatInt(facts.LastEventSequence, 10)), RunID: scope.RunID, Sequence: facts.LastEventSequence, StateVersion: state.StateVersion, StateJSON: string(stateJSON), CreatedAt: now}
 	return tx.Create(&checkpoint).Error
+}
+
+func agentRuntimeTransitionEventStates(
+	previous agentruntime.RuntimeState,
+	state agentruntime.RuntimeState,
+	kind agentruntime.EventKind,
+	replay *agentruntime.ToolReplay,
+) (agentruntime.RuntimeState, agentruntime.RuntimeState) {
+	if replay == nil || (kind != agentruntime.EventToolCall && kind != agentruntime.EventToolResult) {
+		return previous, state
+	}
+	callState := state
+	call := replay.Call
+	callState.PendingToolCall = &call
+	callState.PendingToolStarted = false
+	callState.LastToolResult = nil
+	if kind == agentruntime.EventToolCall {
+		return previous, callState
+	}
+	return callState, state
 }
 
 func agentRuntimeTransitionEventPayload(stateJSON string, kind agentruntime.EventKind, interruptAudit *agentRuntimeInterruptAudit) (string, error) {
@@ -413,7 +603,7 @@ func (r *Repository) AppendAgentSteer(
 	return state, replayed, nil
 }
 
-func (r *Repository) InterruptAgentRun(
+func (r *Repository) CancelAgentRunTree(
 	scope agentruntime.Scope,
 	expectedStateVersion int,
 	now time.Time,
@@ -426,37 +616,47 @@ func (r *Repository) InterruptAgentRun(
 	}
 	var state agentruntime.RuntimeState
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		current, err := loadAgentCheckpointForScope(tx, scope, true)
-		if err != nil {
-			return err
-		}
-		transition, err := agentruntime.Interrupt(current, expectedStateVersion)
-		if err != nil {
-			return err
-		}
-		if err := validateAgentRuntimeTransition(scope, current, transition, now); err != nil {
-			return err
-		}
-		stateJSON, err := json.Marshal(transition.State)
-		if err != nil {
-			return err
-		}
-		if len(stateJSON) > agentEventPayloadLimit {
-			return ErrAgentPayloadTooLarge
-		}
-		if err := r.commitAgentRuntimeTransitionTx(tx, scope, current, transition, string(stateJSON), nil, now); err != nil {
-			if errors.Is(err, ErrAgentRuntimeStepConflict) {
-				return agentruntime.ErrInterruptConflict
-			}
-			return err
-		}
-		state = transition.State
-		return nil
+		var err error
+		state, err = r.interruptAgentRunTreeTx(tx, scope, expectedStateVersion, now)
+		return err
 	})
 	if err != nil {
 		return agentruntime.RuntimeState{}, err
 	}
 	return state, nil
+}
+
+func (r *Repository) interruptAgentRunTreeTx(
+	tx *gorm.DB,
+	scope agentruntime.Scope,
+	expectedStateVersion int,
+	now time.Time,
+) (agentruntime.RuntimeState, error) {
+	current, err := loadAgentCheckpointForScope(tx, scope, true)
+	if err != nil {
+		return agentruntime.RuntimeState{}, err
+	}
+	transition, err := agentruntime.Interrupt(current, expectedStateVersion)
+	if err != nil {
+		return agentruntime.RuntimeState{}, err
+	}
+	if err := validateAgentRuntimeTransition(scope, current, transition, now); err != nil {
+		return agentruntime.RuntimeState{}, err
+	}
+	stateJSON, err := json.Marshal(transition.State)
+	if err != nil {
+		return agentruntime.RuntimeState{}, err
+	}
+	if len(stateJSON) > agentEventPayloadLimit {
+		return agentruntime.RuntimeState{}, ErrAgentPayloadTooLarge
+	}
+	if err := r.commitAgentRuntimeTransitionTx(tx, scope, current, transition, string(stateJSON), nil, now); err != nil {
+		if errors.Is(err, ErrAgentRuntimeStepConflict) {
+			return agentruntime.RuntimeState{}, agentruntime.ErrInterruptConflict
+		}
+		return agentruntime.RuntimeState{}, err
+	}
+	return transition.State, nil
 }
 
 func validateAgentRuntimeTransition(scope agentruntime.Scope, previous agentruntime.RuntimeState, transition agentruntime.RuntimeTransition, now time.Time) error {
@@ -482,19 +682,32 @@ func validateAgentRuntimeTransition(scope agentruntime.Scope, previous agentrunt
 		if previous.PendingToolCall != nil || state.PendingToolCall != nil || state.LastToolResult == nil ||
 			state.LastToolResult.ToolCallID != transition.RejectedToolCall.ToolCallID ||
 			state.LastToolResult.ActionVersion != transition.RejectedToolCall.ActionVersion || state.LastToolResult.Succeeded ||
-			!transition.RejectedToolCall.ToolName.Valid() {
+			!transition.RejectedToolCall.ToolName.Known() {
 			return errors.New("agent rejected tool transition is invalid")
+		}
+	}
+	if transition.ToolReplay != nil {
+		replay := transition.ToolReplay
+		if previous.PendingToolCall != nil || state.PendingToolCall != nil || state.LastToolResult == nil ||
+			state.LastToolResult.ToolCallID != replay.Call.ToolCallID ||
+			state.LastToolResult.ActionVersion != replay.Call.ActionVersion ||
+			state.LastToolResult.Succeeded != replay.Result.Succeeded ||
+			string(state.LastToolResult.Output) != string(replay.Result.Output) ||
+			state.LastToolResult.ErrorCode != replay.Result.ErrorCode ||
+			strings.TrimSpace(replay.SourceRunID) == "" || strings.TrimSpace(replay.SourceToolCallID) == "" ||
+			replay.SourceActionVersion < 1 || !replay.Call.ToolName.Known() {
+			return errors.New("agent replayed tool transition is invalid")
 		}
 	}
 	return nil
 }
 
-func persistRejectedAgentToolDecision(db *gorm.DB, scope agentruntime.Scope, previous agentruntime.RuntimeState, transition agentruntime.RuntimeTransition, now time.Time) error {
+func persistRejectedAgentToolDecision(db *gorm.DB, scope agentruntime.Scope, previous agentruntime.RuntimeState, transition agentruntime.RuntimeTransition, toolSchemaVersion int, now time.Time) error {
 	call := transition.RejectedToolCall
 	if call == nil {
 		return nil
 	}
-	policy, ok := agentruntime.ToolPolicyFor(call.ToolName)
+	policy, ok := agentruntime.ToolPolicyForSchema(call.ToolName, toolSchemaVersion)
 	if !ok || transition.State.LastToolResult == nil {
 		return errors.New("agent rejected tool policy is unavailable")
 	}
@@ -511,10 +724,58 @@ func persistRejectedAgentToolDecision(db *gorm.DB, scope agentruntime.Scope, pre
 	return db.Create(&record).Error
 }
 
-func persistAgentToolTransition(db *gorm.DB, scope agentruntime.Scope, previous agentruntime.RuntimeState, next agentruntime.RuntimeState, now time.Time) error {
+func persistReplayedAgentToolDecision(
+	db *gorm.DB,
+	scope agentruntime.Scope,
+	transition agentruntime.RuntimeTransition,
+	toolSchemaVersion int,
+	now time.Time,
+) error {
+	replay := transition.ToolReplay
+	if replay == nil {
+		return nil
+	}
+	policy, ok := agentruntime.ToolPolicyForSchema(replay.Call.ToolName, toolSchemaVersion)
+	if !ok || transition.State.LastToolResult == nil {
+		return errors.New("agent replayed tool policy is unavailable")
+	}
+	capabilityKey, err := agentruntime.CapabilityIdempotencyKey(scope, replay.Call)
+	if err != nil || capabilityKey == "" {
+		return errors.Join(errors.New("agent replayed tool idempotency identity is invalid"), err)
+	}
+	status := agentruntime.ToolCallFailed
+	if replay.Result.Succeeded {
+		status = agentruntime.ToolCallSucceeded
+	}
+	// 原始商业调用永久持有稳定幂等键；重放记录只保存来源，避免把一次收费事实伪装成第二次商业调用。
+	record := model.AgentToolCall{
+		ID:    agentFactID("tool", scope.RunID, replay.Call.ToolCallID, strconv.Itoa(replay.Call.ActionVersion)),
+		RunID: scope.RunID, ToolCallID: replay.Call.ToolCallID, ActionVersion: replay.Call.ActionVersion,
+		ToolName: string(replay.Call.ToolName), Status: status,
+		RiskLevel: policy.RiskLevel, RequiredAccess: policy.RequiredAccess, ApprovalRequired: false,
+		IdempotencyKey:    scope.RunID + ":" + replay.Call.ToolCallID + ":" + strconv.Itoa(replay.Call.ActionVersion),
+		ReplaySourceRunID: replay.SourceRunID, ReplaySourceToolCallID: replay.SourceToolCallID,
+		ReplaySourceActionVersion: replay.SourceActionVersion,
+		InputJSON:                 string(replay.Call.Arguments), OutputJSON: string(replay.Result.Output), ErrorCode: replay.Result.ErrorCode,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	return db.Create(&record).Error
+}
+
+func persistAgentToolTransition(
+	db *gorm.DB,
+	scope agentruntime.Scope,
+	previous agentruntime.RuntimeState,
+	next agentruntime.RuntimeState,
+	approvalProposalHash string,
+	approvalCostQuote *agentruntime.ApprovalCostQuote,
+	approvalResolution agentruntime.ApprovalResolution,
+	toolSchemaVersion int,
+	now time.Time,
+) error {
 	runID := scope.RunID
 	if previous.PendingToolCall == nil && next.PendingToolCall != nil {
-		policy, ok := agentruntime.ToolPolicyFor(next.PendingToolCall.ToolName)
+		policy, ok := agentruntime.ToolPolicyForSchema(next.PendingToolCall.ToolName, toolSchemaVersion)
 		if !ok {
 			return errors.New("agent tool policy is unavailable")
 		}
@@ -523,13 +784,41 @@ func persistAgentToolTransition(db *gorm.DB, scope agentruntime.Scope, previous 
 		if approvalRequired {
 			status = agentruntime.ToolCallWaitingApproval
 		}
+		capabilityKey, err := agentruntime.CapabilityIdempotencyKey(scope, *next.PendingToolCall)
+		if err != nil {
+			return err
+		}
 		call := model.AgentToolCall{
 			ID:    agentFactID("tool", runID, next.PendingToolCall.ToolCallID, strconv.Itoa(next.PendingToolCall.ActionVersion)),
 			RunID: runID, ToolCallID: next.PendingToolCall.ToolCallID, ActionVersion: next.PendingToolCall.ActionVersion,
 			ToolName: string(next.PendingToolCall.ToolName), Status: status,
 			RiskLevel: policy.RiskLevel, RequiredAccess: policy.RequiredAccess, ApprovalRequired: approvalRequired,
-			IdempotencyKey: runID + ":" + next.PendingToolCall.ToolCallID + ":" + strconv.Itoa(next.PendingToolCall.ActionVersion),
-			InputJSON:      string(next.PendingToolCall.Arguments), OutputJSON: `{}`, CreatedAt: now, UpdatedAt: now,
+			IdempotencyKey:           runID + ":" + next.PendingToolCall.ToolCallID + ":" + strconv.Itoa(next.PendingToolCall.ActionVersion),
+			CapabilityIdempotencyKey: capabilityKey,
+			InputJSON:                string(next.PendingToolCall.Arguments), OutputJSON: `{}`, CreatedAt: now, UpdatedAt: now,
+		}
+		if approvalRequired && toolSchemaVersion == agentruntime.CurrentToolSchemaVersion {
+			proposal, err := agentruntime.NewApprovalProposalForTool(
+				scope,
+				*next.PendingToolCall,
+				approvalCostQuote,
+				call.IdempotencyKey,
+				now.Add(agentruntime.DefaultApprovalProposalTTL),
+			)
+			if err != nil {
+				return err
+			}
+			proposalJSON, err := json.Marshal(proposal)
+			if err != nil {
+				return errors.New("agent approval proposal is not serializable")
+			}
+			proposalHash, err := proposal.Hash()
+			if err != nil {
+				return err
+			}
+			call.ApprovalProposalJSON = string(proposalJSON)
+			call.ApprovalProposalHash = proposalHash
+			call.ApprovalExpiresAt = &proposal.ExpiresAt
 		}
 		if err := db.Create(&call).Error; err != nil {
 			return err
@@ -543,9 +832,19 @@ func persistAgentToolTransition(db *gorm.DB, scope agentruntime.Scope, previous 
 		previous.PendingToolCall != nil && next.PendingToolCall != nil &&
 		previous.PendingToolCall.ToolCallID == next.PendingToolCall.ToolCallID &&
 		previous.PendingToolCall.ActionVersion == next.PendingToolCall.ActionVersion {
-		result := db.Model(&model.AgentToolCall{}).
+		if toolSchemaVersion == agentruntime.CurrentToolSchemaVersion && approvalResolution != agentruntime.ApprovalResolutionApproved {
+			return ErrAgentRuntimeStepConflict
+		}
+		query := db.Model(&model.AgentToolCall{}).
 			Where("run_id = ? AND tool_call_id = ? AND action_version = ? AND status = ?", runID,
-				previous.PendingToolCall.ToolCallID, previous.PendingToolCall.ActionVersion, agentruntime.ToolCallWaitingApproval).
+				previous.PendingToolCall.ToolCallID, previous.PendingToolCall.ActionVersion, agentruntime.ToolCallWaitingApproval)
+		if toolSchemaVersion == agentruntime.CurrentToolSchemaVersion {
+			if approvalProposalHash == "" {
+				return ErrAgentRuntimeStepConflict
+			}
+			query = query.Where("approval_proposal_hash = ? AND approval_expires_at > ?", approvalProposalHash, now)
+		}
+		result := query.
 			Updates(agentToolApprovalUpdates{
 				Status: agentruntime.ToolCallPending, ApprovalDecision: agentruntime.ToolApprovalApproved,
 				ApprovalByUserID: scope.ActorUserID, ApprovalDecidedAt: now, UpdatedAt: now,
@@ -584,22 +883,65 @@ func persistAgentToolTransition(db *gorm.DB, scope agentruntime.Scope, previous 
 	if next.LastToolResult.Succeeded {
 		status = agentruntime.ToolCallSucceeded
 	}
-	result := db.Model(&model.AgentToolCall{}).
+	if previous.Status == agentruntime.RunWaitingTool {
+		var completed []model.AgentToolCall
+		if err := db.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("run_id = ? AND tool_call_id = ? AND action_version = ? AND status IN ?", runID,
+				previous.PendingToolCall.ToolCallID, previous.PendingToolCall.ActionVersion,
+				[]agentruntime.ToolCallStatus{agentruntime.ToolCallSucceeded, agentruntime.ToolCallFailed}).
+			Limit(1).Find(&completed).Error; err != nil {
+			return err
+		}
+		if len(completed) == 1 {
+			if completed[0].Status != status || completed[0].OutputJSON != string(next.LastToolResult.Output) ||
+				completed[0].ErrorCode != next.LastToolResult.ErrorCode {
+				return ErrAgentRuntimeStepConflict
+			}
+			return nil
+		}
+	}
+	query := db.Model(&model.AgentToolCall{}).
 		Where("run_id = ? AND tool_call_id = ? AND action_version = ? AND status IN (?, ?, ?)", runID,
 			previous.PendingToolCall.ToolCallID, previous.PendingToolCall.ActionVersion,
-			agentruntime.ToolCallPending, agentruntime.ToolCallRunning, agentruntime.ToolCallWaitingApproval).
+			agentruntime.ToolCallPending, agentruntime.ToolCallRunning, agentruntime.ToolCallWaitingApproval)
+	if previous.Status == agentruntime.RunWaitingApproval && toolSchemaVersion == agentruntime.CurrentToolSchemaVersion {
+		if approvalProposalHash == "" {
+			return ErrAgentRuntimeStepConflict
+		}
+		switch approvalResolution {
+		case agentruntime.ApprovalResolutionApproved, agentruntime.ApprovalResolutionRejected:
+			query = query.Where("approval_proposal_hash = ? AND approval_expires_at > ?", approvalProposalHash, now)
+		case agentruntime.ApprovalResolutionInvalidated:
+			query = query.Where("approval_proposal_hash = ?", approvalProposalHash)
+		default:
+			return ErrAgentRuntimeStepConflict
+		}
+	}
+	result := query.
 		Updates(agentToolCompletionUpdates{
 			Status: status, OutputJSON: string(next.LastToolResult.Output),
 			ErrorCode: next.LastToolResult.ErrorCode, UpdatedAt: now,
-			ApprovalDecision:  approvalDecisionForToolResult(previous, next),
-			ApprovalByUserID:  approvalActorForToolResult(scope, previous, next),
-			ApprovalDecidedAt: approvalTimeForToolResult(now, previous, next),
+			ApprovalDecision:  approvalDecisionForToolResult(previous, approvalResolution),
+			ApprovalByUserID:  approvalActorForToolResult(scope, previous, approvalResolution),
+			ApprovalDecidedAt: approvalTimeForToolResult(now, previous, approvalResolution),
 		})
 	if result.Error != nil {
 		return result.Error
 	}
 	if result.RowsAffected != 1 {
 		return ErrAgentRuntimeStepConflict
+	}
+	if status == agentruntime.ToolCallFailed && previous.PendingToolCall.ToolName == agentruntime.ToolMediaGenerate {
+		cleared := db.Model(&model.AgentToolCall{}).
+			Where("run_id = ? AND tool_call_id = ? AND action_version = ? AND status = ?", runID,
+				previous.PendingToolCall.ToolCallID, previous.PendingToolCall.ActionVersion, agentruntime.ToolCallFailed).
+			Update("capability_idempotency_key", "")
+		if cleared.Error != nil {
+			return cleared.Error
+		}
+		if cleared.RowsAffected != 1 {
+			return ErrAgentRuntimeStepConflict
+		}
 	}
 	if previous.Status == agentruntime.RunWaitingApproval && previous.PendingToolCall.ToolName == agentruntime.ToolProductionRender && !next.LastToolResult.Succeeded {
 		return persistProductionRenderApprovalFailure(db, scope, previous.PendingToolCall.Arguments, next.LastToolResult.ErrorCode, now)
@@ -735,22 +1077,29 @@ type agentToolExecutionUpdates struct {
 	UpdatedAt time.Time                   `gorm:"column:updated_at"`
 }
 
-func approvalDecisionForToolResult(previous agentruntime.RuntimeState, next agentruntime.RuntimeState) agentruntime.ToolApprovalDecision {
-	if previous.Status == agentruntime.RunWaitingApproval && next.LastToolResult != nil && next.LastToolResult.ErrorCode == "tool_approval_rejected" {
-		return agentruntime.ToolApprovalRejected
+func approvalDecisionForToolResult(previous agentruntime.RuntimeState, resolution agentruntime.ApprovalResolution) agentruntime.ToolApprovalDecision {
+	if previous.Status != agentruntime.RunWaitingApproval {
+		return ""
 	}
-	return ""
+	switch resolution {
+	case agentruntime.ApprovalResolutionApproved:
+		return agentruntime.ToolApprovalApproved
+	case agentruntime.ApprovalResolutionRejected:
+		return agentruntime.ToolApprovalRejected
+	default:
+		return ""
+	}
 }
 
-func approvalActorForToolResult(scope agentruntime.Scope, previous agentruntime.RuntimeState, next agentruntime.RuntimeState) string {
-	if approvalDecisionForToolResult(previous, next) != "" {
+func approvalActorForToolResult(scope agentruntime.Scope, previous agentruntime.RuntimeState, resolution agentruntime.ApprovalResolution) string {
+	if approvalDecisionForToolResult(previous, resolution) != "" {
 		return scope.ActorUserID
 	}
 	return ""
 }
 
-func approvalTimeForToolResult(now time.Time, previous agentruntime.RuntimeState, next agentruntime.RuntimeState) *time.Time {
-	if approvalDecisionForToolResult(previous, next) == "" {
+func approvalTimeForToolResult(now time.Time, previous agentruntime.RuntimeState, resolution agentruntime.ApprovalResolution) *time.Time {
+	if approvalDecisionForToolResult(previous, resolution) == "" {
 		return nil
 	}
 	return &now
@@ -789,14 +1138,30 @@ func loadAgentCheckpointForScope(db *gorm.DB, scope agentruntime.Scope, lock boo
 	if err != nil {
 		return agentruntime.RuntimeState{}, err
 	}
-	decoder := json.NewDecoder(bytes.NewBufferString(facts.StateJSON))
+	return decodeAgentCheckpointState(
+		facts.StateJSON, facts.StateVersion, facts.RunStateVersion,
+		facts.RunStepNumber, facts.RunMaxSteps, facts.RunStatus,
+	)
+}
+
+func decodeAgentCheckpointState(
+	stateJSON string,
+	checkpointStateVersion int,
+	runStateVersion int,
+	runStepNumber int,
+	runMaxSteps int,
+	runStatus agentruntime.RunStatus,
+) (agentruntime.RuntimeState, error) {
+	decoder := json.NewDecoder(bytes.NewBufferString(stateJSON))
 	decoder.DisallowUnknownFields()
 	var state agentruntime.RuntimeState
 	if err := decoder.Decode(&state); err != nil {
 		return agentruntime.RuntimeState{}, errors.New("agent checkpoint state is invalid")
 	}
 	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) || state.StateVersion != facts.StateVersion || state.StateVersion != facts.RunStateVersion || state.StepNumber != facts.RunStepNumber || state.MaxSteps != facts.RunMaxSteps || state.Status != facts.RunStatus {
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) ||
+		state.StateVersion != checkpointStateVersion || state.StateVersion != runStateVersion ||
+		state.StepNumber != runStepNumber || state.MaxSteps != runMaxSteps || state.Status != runStatus {
 		return agentruntime.RuntimeState{}, errors.New("agent checkpoint state is inconsistent")
 	}
 	return state, nil

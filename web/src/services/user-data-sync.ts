@@ -15,12 +15,15 @@ import type { UploadedImage } from "@/services/image-storage";
 import type { CanvasNodeData } from "@/types/canvas";
 import { CanvasNodeType } from "@/types/canvas";
 import { remoteCanvasCreationRequired } from "@/lib/canvas/canvas-persistence-policy";
+import { isRemoteCanvasDeletedError, mergeCanvasProjects } from "@/lib/canvas/canvas-sync-state";
 
 let activeRemoteUserId = "";
 let remoteSessionRevision = 0;
 let applyingRemoteState = false;
 let syncTimer: number | null = null;
 let syncOperation: RemoteWriteOperation | null = null;
+let remoteProjectCreationOperations = new Map<string, RemoteProjectCreationOperation>();
+let remoteAssetWriteOperations = new Map<string, RemoteAssetWriteOperation>();
 let subscriptionsInstalled = false;
 let remoteAssetVersions = new Map<string, string>();
 let remoteProjectVersions = new Map<string, string>();
@@ -29,6 +32,9 @@ const LOCAL_STORAGE_KEY_PATTERN = /^(image|video|audio|file|video-reference|audi
 
 type RemoteSession = Readonly<{ revision: number; userId: string }>;
 type RemoteWriteOperation = { session: RemoteSession; promise: Promise<void>; queued: boolean };
+type RemoteProjectCreationOperation = { session: RemoteSession; promise: Promise<void> };
+type RemoteAssetWriteOperation = { session: RemoteSession; promise: Promise<Asset> };
+type AgentCanvasProjectCreation = { id: string; remoteReady: Promise<void> };
 
 export async function syncRemoteUserData(userId?: string | null) {
     activeRemoteUserId = userId || "";
@@ -49,7 +55,7 @@ export async function syncRemoteUserData(userId?: string | null) {
             fetchNewerRemoteItems(localAssets, remoteAssets.assets, async (id) => (await getRemoteAsset(id)).asset),
         ]);
         if (!ownsRemoteSession(session)) return;
-        const mergedProjects = mergeById(localProjects, changedProjects);
+        const mergedProjects = mergeCanvasProjects(localProjects, changedProjects, remoteCanvas.deletions);
         const mergedAssets = mergeById(localAssets, await hydrateAssets(changedAssets));
         if (!ownsRemoteSession(session)) return;
         useCanvasStore.getState().replaceProjects(mergedProjects);
@@ -84,6 +90,8 @@ export function resetRemoteUserDataSync() {
     applyingRemoteState = false;
     remoteAssetVersions.clear();
     remoteProjectVersions.clear();
+    remoteProjectCreationOperations.clear();
+    remoteAssetWriteOperations.clear();
     if (syncTimer) {
         window.clearTimeout(syncTimer);
         syncTimer = null;
@@ -123,7 +131,7 @@ export async function createCanvasProjectWithRemoteSync(title: string, projectId
     }
 }
 
-export async function createAgentCanvasProjectWithRemoteSync(input: { draft: CanvasAgentDraft; referenceImages: Array<UploadedImage & { name: string }> }) {
+export function createAgentCanvasProjectWithRemoteSync(input: { draft: CanvasAgentDraft; referenceImages: Array<UploadedImage & { name: string }> }): AgentCanvasProjectCreation {
     const now = new Date().toISOString();
     const store = useCanvasStore.getState();
     const id = store.createProject(canvasAgentProjectTitle(input.draft.prompt));
@@ -136,14 +144,39 @@ export async function createAgentCanvasProjectWithRemoteSync(input: { draft: Can
             createdAt: now,
         }),
     });
-    if (!activeRemoteUserId) return { id, syncError: new Error("尚未建立云端同步会话") };
-    try {
-        await saveRemoteUserDataNow();
-        return { id };
-    } catch (syncError) {
-        scheduleRemoteUserDataSync();
-        return { id, syncError };
-    }
+    return { id, remoteReady: ensureRemoteCanvasProjectReady(id) };
+}
+
+export function ensureRemoteCanvasProjectReady(projectId: string): Promise<void> {
+    const session = currentRemoteSession();
+    if (!session) return Promise.reject(new Error("尚未建立云端同步会话"));
+    if (remoteProjectVersions.has(projectId)) return Promise.resolve();
+    const activeCreation = remoteProjectCreationOperations.get(projectId);
+    if (activeCreation && ownsRemoteSession(activeCreation.session)) return activeCreation.promise;
+
+    const operation: RemoteProjectCreationOperation = {
+        session,
+        promise: createRemoteCanvasProjectById(session, projectId),
+    };
+    remoteProjectCreationOperations.set(projectId, operation);
+    operation.promise.then(
+        () => {
+            if (remoteProjectCreationOperations.get(projectId) === operation) remoteProjectCreationOperations.delete(projectId);
+        },
+        () => {
+            if (remoteProjectCreationOperations.get(projectId) === operation) remoteProjectCreationOperations.delete(projectId);
+            scheduleRemoteUserDataSync();
+        },
+    );
+    return operation.promise;
+}
+
+async function createRemoteCanvasProjectById(session: RemoteSession, projectId: string) {
+    const project = useCanvasStore.getState().openProject(projectId);
+    if (!project) throw new Error("待创建的画布不存在");
+    await createRemoteCanvasProject(project);
+    if (!ownsRemoteSession(session)) throw new Error("云端同步会话已变更，无法确认画布创建结果");
+    remoteProjectVersions.set(project.id, project.updatedAt);
 }
 
 function createAgentReferenceNodes(images: Array<UploadedImage & { name: string }>): CanvasNodeData[] {
@@ -250,6 +283,13 @@ export async function saveRemoteUserDataNow() {
     if (!session) return;
     if (syncOperation && ownsRemoteSession(syncOperation.session)) {
         syncOperation.queued = true;
+        await Promise.all([syncOperation.promise, waitForRemoteProjectCreations(session)]);
+        return;
+    }
+    await waitForRemoteProjectCreations(session);
+    if (!ownsRemoteSession(session)) return;
+    if (syncOperation && ownsRemoteSession(syncOperation.session)) {
+        syncOperation.queued = true;
         return syncOperation.promise;
     }
     const operation: RemoteWriteOperation = { session, promise: Promise.resolve(), queued: false };
@@ -260,6 +300,59 @@ export async function saveRemoteUserDataNow() {
     } finally {
         if (syncOperation === operation) syncOperation = null;
     }
+}
+
+export function saveRemoteAssetNow(assetId: string): Promise<Asset> {
+    const session = currentRemoteSession();
+    if (!session) return Promise.reject(new Error("尚未建立云端同步会话"));
+    const pending = remoteAssetWriteOperations.get(assetId);
+    if (pending && ownsRemoteSession(pending.session)) return pending.promise;
+
+    const operation: RemoteAssetWriteOperation = {
+        session,
+        promise: persistRemoteAssetById(session, assetId),
+    };
+    remoteAssetWriteOperations.set(assetId, operation);
+    operation.promise.finally(() => {
+        if (remoteAssetWriteOperations.get(assetId) === operation) remoteAssetWriteOperations.delete(assetId);
+    }).catch(() => undefined);
+    return operation.promise;
+}
+
+async function persistRemoteAssetById(session: RemoteSession, assetId: string) {
+    const uploaded = new Map<string, string>();
+    while (ownsRemoteSession(session)) {
+        const asset = useAssetStore.getState().assets.find((item) => item.id === assetId);
+        if (!asset) throw new Error("待同步的素材不存在");
+        const [prepared] = await prepareRemoteAssets([asset], uploaded);
+        if (!prepared) throw new Error("素材远端引用准备失败");
+        if (!ownsRemoteSession(session)) break;
+
+        const currentAssets = useAssetStore.getState().assets;
+        const current = currentAssets.find((item) => item.id === assetId);
+        // 资源上传期间允许用户继续编辑；只有快照仍是当前版本时才能回写，避免旧字段覆盖新输入。
+        if (current !== asset) continue;
+
+        const previousApplyingRemoteState = applyingRemoteState;
+        applyingRemoteState = true;
+        try {
+            useAssetStore.getState().replaceAssets(replaceById(currentAssets, [prepared]));
+        } finally {
+            applyingRemoteState = previousApplyingRemoteState;
+        }
+        await upsertRemoteAsset(prepared);
+        if (!ownsRemoteSession(session)) break;
+        remoteAssetVersions.set(prepared.id, prepared.updatedAt);
+        if (useAssetStore.getState().assets.find((item) => item.id === assetId) === prepared) return prepared;
+    }
+    throw new Error("云端同步会话已变更，无法确认素材写入结果");
+}
+
+async function waitForRemoteProjectCreations(session: RemoteSession) {
+    const pending = Array.from(remoteProjectCreationOperations.values())
+        .filter((operation) => operation.session.revision === session.revision && operation.session.userId === session.userId)
+        .map((operation) => operation.promise);
+    if (pending.length) await Promise.all(pending);
 }
 
 async function drainRemoteUserDataChanges(operation: RemoteWriteOperation) {
@@ -276,9 +369,7 @@ async function saveRemoteUserDataBatch(session: RemoteSession) {
         const currentProjects = canvasState.projects;
         const currentAssets = useAssetStore.getState().assets;
         const pendingDeletionIds = new Set(canvasState.pendingDeletionIds);
-        const dirtyProjects = currentProjects.filter((item) =>
-            !pendingDeletionIds.has(item.id) && remoteCanvasCreationRequired(remoteProjectVersions, item.id),
-        );
+        const dirtyProjects = currentProjects.filter((item) => !pendingDeletionIds.has(item.id) && !remoteProjectCreationOperations.has(item.id) && remoteCanvasCreationRequired(remoteProjectVersions, item.id));
         const dirtyAssets = currentAssets.filter((item) => remoteAssetWriteRequired(remoteAssetVersions.get(item.id), item.updatedAt));
         const deletedAssetIds = missingIds(remoteAssetVersions, currentAssets);
         if (!dirtyProjects.length && !dirtyAssets.length && !deletedAssetIds.length) return;
@@ -293,15 +384,22 @@ async function saveRemoteUserDataBatch(session: RemoteSession) {
         // SQLite 和接口频控都要求写入保持有界；逐项提交还能准确记录已完成版本。
         for (const project of projects) {
             if (!ownsRemoteSession(session)) return;
-            await createRemoteCanvasProject(project);
+            try {
+                await createRemoteCanvasProject(project);
+            } catch (error) {
+                if (!isRemoteCanvasDeletedError(error)) throw error;
+                remoteProjectVersions.delete(project.id);
+                useCanvasStore.getState().finishProjectDeletions([project.id]);
+                await flushCanvasStorePersistence();
+                console.info("已按云端删除事实清理陈旧本地画布", { canvasId: project.id });
+                continue;
+            }
             if (!ownsRemoteSession(session)) return;
             remoteProjectVersions.set(project.id, project.updatedAt);
         }
         for (const asset of assets) {
             if (!ownsRemoteSession(session)) return;
-            await upsertRemoteAsset(asset);
-            if (!ownsRemoteSession(session)) return;
-            remoteAssetVersions.set(asset.id, asset.updatedAt);
+            await writeRemoteAsset(session, asset);
         }
         for (const id of deletedAssetIds) {
             if (!ownsRemoteSession(session)) return;
@@ -312,6 +410,18 @@ async function saveRemoteUserDataBatch(session: RemoteSession) {
     } finally {
         if (ownsRemoteSession(session)) applyingRemoteState = false;
     }
+}
+
+async function writeRemoteAsset(session: RemoteSession, asset: Asset) {
+    const pending = remoteAssetWriteOperations.get(asset.id);
+    if (pending && ownsRemoteSession(pending.session)) {
+        await pending.promise;
+        if (!ownsRemoteSession(session)) throw new Error("云端同步会话已变更，无法继续素材写入");
+    }
+    if (!remoteAssetWriteRequired(remoteAssetVersions.get(asset.id), asset.updatedAt)) return;
+    await upsertRemoteAsset(asset);
+    if (!ownsRemoteSession(session)) throw new Error("云端同步会话已变更，无法确认素材写入结果");
+    remoteAssetVersions.set(asset.id, asset.updatedAt);
 }
 
 async function hydrateAssets(assets: Asset[]): Promise<Asset[]> {
@@ -340,8 +450,21 @@ async function hydrateAssets(assets: Asset[]): Promise<Asset[]> {
 
 async function prepareRemoteAssets(assets: Asset[], uploaded: Map<string, string>) {
     const result: Asset[] = [];
-    for (const asset of assets) result.push(await ensureRemoteResourceReferences(asset, uploaded));
+    for (const asset of assets) result.push(await ensureRemoteAssetResourceReferences(asset, uploaded));
     return result;
+}
+
+async function ensureRemoteAssetResourceReferences(asset: Asset, uploaded: Map<string, string>): Promise<Asset> {
+    if (asset.kind === "text" || asset.kind === "entity") return ensureRemoteResourceReferences(asset, uploaded);
+    const data = await ensureRemoteResourceReferences(asset.data, uploaded);
+    const storageKey = data.storageKey;
+    if (!storageKey || !resourceIdFromStorageKey(storageKey)) return { ...asset, data } as Asset;
+    const url = resourceFileUrl(storageKey.slice("resource:".length));
+    return {
+        ...asset,
+        coverUrl: shouldReplaceEphemeralUrl(asset.coverUrl) ? url : asset.coverUrl,
+        data,
+    } as Asset;
 }
 
 async function prepareRemoteCanvasProjects(projects: CanvasProject[], uploaded: Map<string, string>) {
@@ -370,13 +493,14 @@ async function ensureRemoteResourceReferences<T>(value: T, uploaded = new Map<st
     if (!isLocalStorageKey(storageKey)) {
         const inline = inlineMediaDataUrl(next);
         if (!inline) return next as T;
-        const resourceStorage = await uploadInlineDataUrl(inline).catch(() => "");
-        return (resourceStorage ? applyResourceReference(next, resourceStorage) : next) as T;
+        const cacheKey = `inline:${inline}`;
+        const resourceStorage = uploaded.get(cacheKey) || (await uploadInlineDataUrl(inline));
+        uploaded.set(cacheKey, resourceStorage);
+        return applyResourceReference(next, resourceStorage) as T;
     }
 
     const cached = uploaded.get(storageKey);
-    const resourceStorage = cached || (await uploadLocalStorageKey(storageKey, next).catch(() => ""));
-    if (!resourceStorage) return next as T;
+    const resourceStorage = cached || (await uploadLocalStorageKey(storageKey, next));
     uploaded.set(storageKey, resourceStorage);
     return applyResourceReference(next, resourceStorage) as T;
 }
@@ -407,7 +531,7 @@ async function uploadInlineDataUrl(dataUrl: string) {
 
 async function uploadLocalStorageKey(storageKey: string, payload: Record<string, unknown>) {
     const blob = storageKey.startsWith("image:") ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
-    if (!blob) return "";
+    if (!blob) throw new Error(`本地媒体数据不存在，无法同步：${storageKey}`);
     const kind = blob.type.startsWith("image/") ? "image" : blob.type.startsWith("video/") ? "video" : blob.type.startsWith("audio/") ? "audio" : "file";
     const resource = await uploadResourceFile(blob, kind, {
         width: numberValue(payload.naturalWidth) || numberValue(payload.width),

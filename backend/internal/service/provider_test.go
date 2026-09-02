@@ -358,27 +358,38 @@ func TestTextResponseInputIncludesReferenceImages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("textResponseInput() error = %v", err)
 	}
-	messages, ok := value.([]map[string]interface{})
-	if !ok {
-		t.Fatalf("textResponseInput() = %T, want []map[string]interface{}", value)
+	var messages []struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(value, &messages); err != nil {
+		t.Fatalf("textResponseInput() = %s: %v", value, err)
 	}
 	if len(messages) != 2 {
 		t.Fatalf("len(messages) = %d, want 2", len(messages))
 	}
-	if messages[0]["role"] != "system" || messages[0]["content"] != "answer in Chinese" {
+	var systemContent string
+	if err := json.Unmarshal(messages[0].Content, &systemContent); err != nil {
+		t.Fatal(err)
+	}
+	if messages[0].Role != "system" || systemContent != "answer in Chinese" {
 		t.Fatalf("system message = %#v", messages[0])
 	}
-	content, ok := messages[1]["content"].([]map[string]interface{})
-	if !ok {
-		t.Fatalf("user content = %T, want []map[string]interface{}", messages[1]["content"])
+	var content []struct {
+		Type     string `json:"type"`
+		Text     string `json:"text"`
+		ImageURL string `json:"image_url"`
+	}
+	if err := json.Unmarshal(messages[1].Content, &content); err != nil {
+		t.Fatalf("user content = %s: %v", messages[1].Content, err)
 	}
 	if len(content) != 2 {
 		t.Fatalf("len(content) = %d, want 2", len(content))
 	}
-	if content[0]["type"] != "input_text" || content[0]["text"] != "describe this image" {
+	if content[0].Type != "input_text" || content[0].Text != "describe this image" {
 		t.Fatalf("text content = %#v", content[0])
 	}
-	if content[1]["type"] != "input_image" || content[1]["image_url"] != testReferenceImageDataURL {
+	if content[1].Type != "input_image" || content[1].ImageURL != testReferenceImageDataURL {
 		t.Fatalf("image content = %#v", content[1])
 	}
 }

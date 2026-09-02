@@ -3,6 +3,7 @@ package repository
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
@@ -51,16 +52,13 @@ func agentTimelineMutationForStoredEvent(
 			ContentJSON: json.RawMessage(event.PayloadJSON),
 		}, nil
 	case agentruntime.EventArtifactAvailable:
-		var payload agentHistoryArtifactPayload
-		if json.Unmarshal([]byte(event.PayloadJSON), &payload) != nil || payload.ArtifactID == "" ||
-			payload.PlanKey == "" || payload.PlanVersion < 1 || payload.ResourceID == "" || !payload.Status.Valid() {
-			return nil, errors.New("agent artifact event facts are invalid")
+		return agentArtifactTimelineMutation(runID, event)
+	case agentruntime.EventApprovalDecided:
+		mutation, matched, err := agentStageReviewTimelineMutation(runID, event)
+		if err != nil || matched {
+			return mutation, err
 		}
-		return &TimelineMutation{
-			ItemID: agentFactID("timeline", runID, "artifact", payload.ArtifactID), Kind: model.AgentTimelineItemArtifact,
-			ToStatus: model.AgentTimelineItemCompleted, SourceEventSequence: event.Sequence,
-			ContentJSON: json.RawMessage(event.PayloadJSON),
-		}, nil
+		return agentRuntimeStateTimelineMutation(runID, event, statesByVersion)
 	case agentruntime.EventAgentMessageFailed:
 		var payload agentMessageFailurePayload
 		if json.Unmarshal([]byte(event.PayloadJSON), &payload) != nil || payload.ItemID == "" || payload.Message == "" ||
@@ -80,20 +78,101 @@ func agentTimelineMutationForStoredEvent(
 	case agentruntime.EventModelDelta:
 		return nil, nil
 	default:
-		var state agentruntime.RuntimeState
-		if json.Unmarshal([]byte(event.PayloadJSON), &state) != nil || state.StateVersion < 1 || !state.Status.Valid() {
-			return nil, errors.New("agent runtime event state is invalid for projection")
-		}
-		var previous agentruntime.RuntimeState
-		if state.StateVersion > 1 {
-			var ok bool
-			previous, ok = statesByVersion[state.StateVersion-1]
-			if !ok {
-				return nil, errors.New("agent runtime predecessor checkpoint is missing for event projection")
-			}
-		}
-		return agentTimelineMutationForEvent(runID, previous, state, event.Kind, event.Sequence)
+		return agentRuntimeStateTimelineMutation(runID, event, statesByVersion)
 	}
+}
+
+func agentRuntimeStateTimelineMutation(
+	runID string,
+	event model.AgentRunEvent,
+	statesByVersion map[int]agentruntime.RuntimeState,
+) (*TimelineMutation, error) {
+	var state agentruntime.RuntimeState
+	if json.Unmarshal([]byte(event.PayloadJSON), &state) != nil || state.StateVersion < 1 || !state.Status.Valid() {
+		return nil, errors.New("agent runtime event state is invalid for projection")
+	}
+	var previous agentruntime.RuntimeState
+	if state.StateVersion > 1 {
+		var ok bool
+		previous, ok = statesByVersion[state.StateVersion-1]
+		if !ok {
+			return nil, errors.New("agent runtime predecessor checkpoint is missing for event projection")
+		}
+	}
+	return agentTimelineMutationForEvent(runID, previous, state, event.Kind, event.Sequence)
+}
+
+func agentStageReviewTimelineMutation(runID string, event model.AgentRunEvent) (*TimelineMutation, bool, error) {
+	var envelope struct {
+		ContentType string `json:"contentType"`
+	}
+	if err := json.Unmarshal([]byte(event.PayloadJSON), &envelope); err != nil {
+		return nil, false, errors.New("agent stage review event facts are invalid")
+	}
+	if envelope.ContentType == "" {
+		return nil, false, nil
+	}
+	if envelope.ContentType != agentruntime.StageReviewContentType {
+		return nil, false, errors.New("agent stage review event content type is invalid")
+	}
+	content, err := agentruntime.DecodeStageReviewResolutionContent([]byte(event.PayloadJSON))
+	if err != nil {
+		return nil, false, errors.New("agent stage review event facts are invalid")
+	}
+	return &TimelineMutation{
+		ItemID: agentStageReviewTimelineItemID(runID, content.StageID, content.RevisionID),
+		Kind:   model.AgentTimelineItemApproval, ToStatus: model.AgentTimelineItemCompleted,
+		SourceEventSequence: event.Sequence, ContentJSON: json.RawMessage(event.PayloadJSON),
+	}, true, nil
+}
+
+func agentArtifactTimelineMutation(runID string, event model.AgentRunEvent) (*TimelineMutation, error) {
+	var envelope struct {
+		ContentType string `json:"contentType"`
+	}
+	if err := json.Unmarshal([]byte(event.PayloadJSON), &envelope); err != nil {
+		return nil, errors.New("agent artifact event facts are invalid")
+	}
+	if envelope.ContentType == agentruntime.ArtifactReviewContentType {
+		content, err := agentruntime.DecodeArtifactReviewContent([]byte(event.PayloadJSON))
+		if err != nil {
+			return nil, errors.New("agent artifact review event facts are invalid")
+		}
+		return &TimelineMutation{
+			ItemID: agentArtifactReviewTimelineItemID(runID, content), Kind: model.AgentTimelineItemArtifact,
+			ToStatus: model.AgentTimelineItemCompleted, SourceEventSequence: event.Sequence,
+			ContentJSON: json.RawMessage(event.PayloadJSON),
+		}, nil
+	}
+	if envelope.ContentType == agentruntime.MediaAssemblyContentType {
+		content, err := agentruntime.DecodeMediaAssemblyTimelineContent([]byte(event.PayloadJSON))
+		if err != nil {
+			return nil, errors.New("agent media assembly event facts are invalid")
+		}
+		status, err := mediaAssemblyTimelineItemStatus(content)
+		if err != nil {
+			return nil, errors.New("agent media assembly event status is invalid")
+		}
+		fromStatus := model.AgentTimelineItemInProgress
+		return &TimelineMutation{
+			ItemID: agentFactID("timeline", runID, "tool-call", content.ToolCallID+":"+strconv.Itoa(content.ActionVersion)),
+			Kind:   model.AgentTimelineItemToolCall, FromStatus: &fromStatus, ToStatus: status,
+			SourceEventSequence: event.Sequence, ContentJSON: json.RawMessage(event.PayloadJSON),
+		}, nil
+	}
+	if envelope.ContentType != "" {
+		return nil, errors.New("agent artifact event content type is invalid")
+	}
+	var payload agentHistoryArtifactPayload
+	if json.Unmarshal([]byte(event.PayloadJSON), &payload) != nil || payload.ArtifactID == "" ||
+		payload.PlanKey == "" || payload.PlanVersion < 1 || payload.ResourceID == "" || !payload.Status.Valid() {
+		return nil, errors.New("agent artifact event facts are invalid")
+	}
+	return &TimelineMutation{
+		ItemID: agentFactID("timeline", runID, "artifact", payload.ArtifactID), Kind: model.AgentTimelineItemArtifact,
+		ToStatus: model.AgentTimelineItemCompleted, SourceEventSequence: event.Sequence,
+		ContentJSON: json.RawMessage(event.PayloadJSON),
+	}, nil
 }
 
 func (r *Repository) agentTimelineProjectionItems(

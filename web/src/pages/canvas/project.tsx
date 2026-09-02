@@ -10,7 +10,9 @@ import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resour
 import copyToClipboard from "copy-to-clipboard";
 import { nanoid } from "nanoid";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
-import { agentCanvasCommittedRevision } from "@/lib/canvas/canvas-agent-runtime-event";
+import { agentCanvasCommittedReceipt, agentCanvasCommittedReceiptFromToolResult, type AgentCanvasApplyOpsReceipt } from "@/lib/canvas/canvas-agent-runtime-event";
+import type { LocalAgentAuthoritativeToolResult } from "@/services/local-agent/local-agent-bridge";
+import { prepareAgentCanvasRun } from "@/lib/canvas/canvas-collaboration-preflight";
 import { normalizeRestoredCanvasViewport } from "@/lib/canvas/canvas-viewport";
 import { resizeViewportAroundCenter } from "@/lib/canvas/canvas-agent-dock";
 import { persistCanvasMediaPerformanceMode, readCanvasMediaPerformanceMode } from "@/lib/canvas/canvas-performance-mode";
@@ -40,6 +42,7 @@ import { Minimap } from "@/components/canvas/canvas-mini-map";
 import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
 import { getProject } from "@/services/api/projects";
+import { ensureRemoteCanvasProjectReady } from "@/services/user-data-sync";
 import type { AgentRuntimeEvent } from "@/services/api/agent-runtime";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { CanvasCollaborationPresenceButton, CanvasRemotePresenceLayer } from "@/components/canvas/canvas-collaboration-presence";
@@ -51,7 +54,7 @@ import { CanvasLinkedProjectEmptyState, CanvasShortDramaEmptyState, CanvasShortD
 import { createCanvasNode, getInputSummary, isHiddenBatchChild, persistCanvasWorkspaceMode, readCanvasWorkspaceMode } from "@/lib/canvas/canvas-project-domain";
 import { deriveStoryboardPipelineProgress } from "@/lib/canvas/canvas-storyboard-progress";
 import { getCompositionSourceVideos, isVideoCompositionNode } from "@/lib/canvas/canvas-video-composition";
-import { CanvasAgentChangeToast, CanvasMergeStatusToast, CanvasUploadStatusToast } from "./canvas-project-feedback";
+import { CanvasMergeStatusToast, CanvasUploadStatusToast } from "./canvas-project-feedback";
 import { backendProviderConfig, getGenerationCount } from "@/lib/canvas/canvas-project-generation";
 import { CanvasTopBar } from "./canvas-project-top-bar";
 import { CanvasProjectSelectionToolbar } from "./canvas-project-selection-toolbar";
@@ -59,7 +62,6 @@ import { CanvasProjectWorldLayers } from "./canvas-project-world-layers";
 import type { CanvasImageEmotionPayload } from "@/components/canvas/canvas-node-emotion-panel";
 import { useCanvasConnectionController } from "./use-canvas-connection-controller";
 import { useCanvasCollaboration } from "./use-canvas-collaboration";
-import { useCanvasAgentOperations } from "./use-canvas-agent-operations";
 import { useCanvasAssistantVisibility } from "./use-canvas-assistant-visibility";
 import { useCanvasAgentDock } from "@/components/canvas/use-canvas-agent-dock";
 import { useCanvasActiveTasks } from "./use-canvas-active-tasks";
@@ -319,12 +321,30 @@ function InfiniteCanvasPage() {
         cleanupCanvasFiles,
     });
     const agentLaunchRequest = currentProject?.pendingAgentLaunch;
+    const [remoteReadyLaunchId, setRemoteReadyLaunchId] = useState<string | null>(null);
+    const agentLaunchRemoteReady = !agentLaunchRequest || remoteReadyLaunchId === agentLaunchRequest.id;
 
     useEffect(() => {
         if (!projectLoaded) return;
         if (!agentLaunchRequest) return;
         openAgent();
     }, [agentLaunchRequest, openAgent, projectLoaded]);
+
+    useEffect(() => {
+        if (!projectLoaded || !agentLaunchRequest) return;
+        let cancelled = false;
+        void ensureRemoteCanvasProjectReady(projectId).then(
+            () => {
+                if (!cancelled) setRemoteReadyLaunchId(agentLaunchRequest.id);
+            },
+            (error: unknown) => {
+                if (!cancelled) message.error(error instanceof Error ? `新画布云端初始化失败：${error.message}` : "新画布云端初始化失败");
+            },
+        );
+        return () => {
+            cancelled = true;
+        };
+    }, [agentLaunchRequest, message, projectId, projectLoaded]);
 
     const handleAgentLaunchHandled = useCallback(
         (launchRequestId: string) => {
@@ -427,7 +447,7 @@ function InfiniteCanvasPage() {
 
     const collaboration = useCanvasCollaboration({
         projectId,
-        projectLoaded,
+        projectLoaded: projectLoaded && agentLaunchRemoteReady,
         project: currentProject,
         nodes,
         connections,
@@ -442,17 +462,42 @@ function InfiniteCanvasPage() {
     const canEditCanvas = collaboration.access?.canEdit ?? (currentProject?.teamId ? Boolean(currentProject.canEdit) : true);
     const canManageCanvas = collaboration.access?.canManage ?? (currentProject?.teamId ? Boolean(currentProject.canManage) : true);
     const prepareAgentRun = useCallback(async () => {
-        await collaboration.flushPendingChanges();
-    }, [collaboration.flushPendingChanges]);
+        await prepareAgentCanvasRun(() => ensureRemoteCanvasProjectReady(projectId), collaboration.flushPendingChanges);
+    }, [collaboration.flushPendingChanges, projectId]);
+    const applyAgentCanvasReceipt = useCallback(
+        (receipt: AgentCanvasApplyOpsReceipt) => {
+            void collaboration
+                .refreshRemoteState(receipt.committedRevision)
+                .then((state) => {
+                    const existingNodeIds = new Set((state.project.nodes || []).map((node) => node.id));
+                    const requestedSelection = receipt.evidence.selectedNodeIds.length ? receipt.evidence.selectedNodeIds : receipt.evidence.addedNodeIds;
+                    const selected = requestedSelection.filter((nodeId) => existingNodeIds.has(nodeId));
+                    if (!selected.length) return;
+                    const selection = new Set(selected);
+                    selectedNodeIdsRef.current = selection;
+                    setSelectedNodeIds(selection);
+                    setSelectedConnectionId(null);
+                    window.requestAnimationFrame(() => fitCanvasSelection());
+                })
+                .catch((cause: unknown) => {
+                    message.error(cause instanceof Error ? `Agent 画布结果刷新失败：${cause.message}` : "Agent 画布结果刷新失败");
+                });
+        },
+        [collaboration.refreshRemoteState, fitCanvasSelection, message, projectId],
+    );
     const handleAgentToolResult = useCallback(
         (event: AgentRuntimeEvent) => {
-            const revision = agentCanvasCommittedRevision(event, projectId);
-            if (revision === undefined) return;
-            void collaboration.refreshRemoteState(revision).catch((cause: unknown) => {
-                message.error(cause instanceof Error ? `Agent 画布结果刷新失败：${cause.message}` : "Agent 画布结果刷新失败");
-            });
+            const receipt = agentCanvasCommittedReceipt(event, projectId);
+            if (receipt) applyAgentCanvasReceipt(receipt);
         },
-        [collaboration.refreshRemoteState, message, projectId],
+        [applyAgentCanvasReceipt, projectId],
+    );
+    const handleLocalAgentToolResult = useCallback(
+        (result: LocalAgentAuthoritativeToolResult) => {
+            const receipt = agentCanvasCommittedReceiptFromToolResult(result, projectId);
+            if (receipt) applyAgentCanvasReceipt(receipt);
+        },
+        [applyAgentCanvasReceipt, projectId],
     );
     const handleCollaborationPointerMove = useCallback(
         (event: React.PointerEvent<HTMLElement>) => {
@@ -654,7 +699,7 @@ function InfiniteCanvasPage() {
         [createNode],
     );
 
-    const { cancelPendingConnectionCreate, closeConnectionCreateMenu, connectionTargetNodeId, connectingParams, connectExistingNodes, createConnectedNode, handleConnectStart, mouseWorld, pendingConnectionCreate, setConnecting } =
+    const { cancelPendingConnectionCreate, canConnectExistingNodes, closeConnectionCreateMenu, connectionTargetNodeId, connectingParams, connectExistingNodes, createConnectedNode, handleConnectStart, mouseWorld, pendingConnectionCreate, setConnecting } =
         useCanvasConnectionController({
             nodesRef,
             connectionsRef,
@@ -808,7 +853,6 @@ function InfiniteCanvasPage() {
         mediaPerformanceMode,
         selectedNodeIds,
         hoveredNodeId,
-        dragPreview,
         collapsingBatchIds,
         activatedSkills,
         directorScenes: currentProject?.directorScenes,
@@ -846,28 +890,6 @@ function InfiniteCanvasPage() {
         }
         setTextEditorNodeId(node.id);
     }, []);
-
-    const { dismissLastAgentChange, lastAgentChange, undoAgentOps, viewLastAgentChange } = useCanvasAgentOperations({
-        projectId,
-        domainProjectId: linkedProjectId,
-        projectTitle: currentProject?.title || "未命名画布",
-        nodes,
-        connections,
-        selectedNodeIds,
-        viewport,
-        nodesRef,
-        connectionsRef,
-        selectedNodeIdsRef,
-        viewportRef,
-        generateNodeRef,
-        setNodes,
-        setConnections,
-        setSelectedNodeIds,
-        setSelectedConnectionId,
-        setViewport,
-        setContextMenu,
-        focusSelection: fitCanvasSelection,
-    });
 
     const { selectCanvasStyle } = useCanvasStyleWorkflow({
         nodesRef,
@@ -1180,6 +1202,7 @@ function InfiniteCanvasPage() {
                     availableReferences={canvasResourceReferences}
                     mentionReferences={mentionReferencesByNodeId.get(panelNode.id) || EMPTY_RESOURCE_REFERENCES}
                     onReferenceConnect={connectExistingNodes}
+                    canReferenceConnect={canConnectExistingNodes}
                     onPromptChange={handleNodePromptChange}
                     onConfigChange={handleConfigNodeChange}
                     onGenerate={(nodeId, mode, prompt, expectedQuote) => void handleGenerateNode(nodeId, mode, prompt, { expectedQuote })}
@@ -1192,7 +1215,20 @@ function InfiniteCanvasPage() {
                 />
             );
         },
-        [canvasResourceReferences, configInputsById, connectExistingNodes, handleConfigNodeChange, handleGenerateNode, handleNodePromptChange, mentionReferencesByNodeId, runningNodeId, skillMentionReferences, stopNodeGeneration, workspaceMode],
+        [
+            canConnectExistingNodes,
+            canvasResourceReferences,
+            configInputsById,
+            connectExistingNodes,
+            handleConfigNodeChange,
+            handleGenerateNode,
+            handleNodePromptChange,
+            mentionReferencesByNodeId,
+            runningNodeId,
+            skillMentionReferences,
+            stopNodeGeneration,
+            workspaceMode,
+        ],
     );
 
     const renderCanvasNodeContent = useCallback(
@@ -1660,18 +1696,6 @@ function InfiniteCanvasPage() {
 
                 {uploadStatus ? <CanvasUploadStatusToast status={uploadStatus} theme={theme} /> : null}
                 {mergeVideoProgress ? <CanvasMergeStatusToast progress={mergeVideoProgress} theme={theme} /> : null}
-                {lastAgentChange ? (
-                    <CanvasAgentChangeToast
-                        change={lastAgentChange}
-                        theme={theme}
-                        onView={viewLastAgentChange}
-                        onUndo={() => {
-                            undoAgentOps();
-                        }}
-                        onClose={dismissLastAgentChange}
-                    />
-                ) : null}
-
                 {canEditCanvas ? (
                     <CanvasNodeHoverToolbar
                         node={isNodeDragging || nodeImageSettingsOpen || emotionNodeId ? null : toolbarNode}
@@ -1981,10 +2005,11 @@ function InfiniteCanvasPage() {
                         onResizeStart={startAssistantResize}
                         onResizeKeyDown={resizeAssistantByKeyboard}
                         onCollapse={closeAgent}
-                        agentLaunchRequest={agentLaunchRequest}
+                        agentLaunchRequest={agentLaunchRemoteReady ? agentLaunchRequest : undefined}
                         onAgentLaunchHandled={handleAgentLaunchHandled}
                         onBeforeRun={prepareAgentRun}
                         onRuntimeEvent={handleAgentToolResult}
+                        onLocalToolResult={handleLocalAgentToolResult}
                     />
                 </Suspense>
             ) : null}

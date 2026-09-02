@@ -26,6 +26,8 @@ type Client interface {
 	OperationLogs(context.Context, string, uint64, int) (*OperationLogPage, error)
 	Backups(context.Context, int) ([]Backup, error)
 	StartOperation(context.Context, StartOperationRequest) (*Operation, error)
+	CancelOperation(context.Context, string, CancelOperationRequest) (*Operation, error)
+	RecoverOperation(context.Context, string, RecoverOperationRequest) (*Operation, error)
 }
 
 type SignedClient struct {
@@ -104,6 +106,16 @@ func (c *SignedClient) Backups(ctx context.Context, limit int) ([]Backup, error)
 
 func (c *SignedClient) StartOperation(ctx context.Context, input StartOperationRequest) (*Operation, error) {
 	return doControllerRequest[Operation](ctx, c, http.MethodPost, "/v1/operations", input)
+}
+
+func (c *SignedClient) CancelOperation(ctx context.Context, id string, input CancelOperationRequest) (*Operation, error) {
+	path := "/v1/operations/" + url.PathEscape(id) + "/cancel"
+	return doControllerRequest[Operation](ctx, c, http.MethodPost, path, input)
+}
+
+func (c *SignedClient) RecoverOperation(ctx context.Context, id string, input RecoverOperationRequest) (*Operation, error) {
+	path := "/v1/operations/" + url.PathEscape(id) + "/recover"
+	return doControllerRequest[Operation](ctx, c, http.MethodPost, path, input)
 }
 
 func doControllerRequest[T object](ctx context.Context, client *SignedClient, method string, path string, input interface{}) (*T, error) {

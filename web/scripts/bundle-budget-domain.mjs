@@ -35,3 +35,12 @@ export function collectStaticAssetClosure(manifest, sources) {
 
     return [...files].sort();
 }
+
+export function evaluateJavaScriptRequestBudget(files, maxRequests) {
+    const requestCount = files.length;
+    return {
+        requestCount,
+        maxRequests,
+        passed: requestCount <= maxRequests,
+    };
+}

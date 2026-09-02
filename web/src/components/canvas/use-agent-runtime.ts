@@ -5,6 +5,7 @@ import {
     agentRuntimeClient,
     agentRuntimeHandleStorage,
     AgentRuntimeRequestError,
+    type AgentApprovalSubmission,
     type AgentClarificationAnswerInput,
     type AgentRuntimeClient,
     type AgentRuntimeEvent,
@@ -16,6 +17,7 @@ import {
     type AgentThreadHistoryTurn,
 } from "@/services/api/agent-runtime";
 import { initialAgentConversationState, reduceAgentConversation, type AgentConversationState } from "./agent-conversation-reducer";
+import { AGENT_RUNTIME_DECISION_BUDGET } from "./canvas-agent-runtime-configuration";
 
 const terminalStatuses = new Set(["succeeded", "failed", "cancelled"]);
 const liveSubscriptionStatuses = new Set<AgentRuntimeView["state"]["status"]>(["queued", "running", "waiting_tool"]);
@@ -163,6 +165,18 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
         }
     }, [canvasId, client]);
 
+    const refreshCurrentRun = useCallback(async () => {
+        if (!view) throw new Error("当前没有可刷新的 Agent 运行");
+        const expectedRunID = view.run.id;
+        const expectedThreadID = view.run.threadId;
+        const next = await client.getRun(expectedRunID);
+        if (next.run.id !== expectedRunID || next.run.threadId !== expectedThreadID || threadIdRef.current !== expectedThreadID) {
+            throw new Error("Agent 运行刷新后的归属与当前会话不一致");
+        }
+        adoptView(next);
+        await reloadThreads();
+    }, [adoptView, client, reloadThreads, view]);
+
     const scheduleThreadReload = useCallback(() => {
         if (historyReloadTimerRef.current) clearTimeout(historyReloadTimerRef.current);
         historyReloadTimerRef.current = setTimeout(() => {
@@ -244,7 +258,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
                     setThreadId(handle.threadId);
                     setPendingUserMessage(handle.pendingRun.userMessage);
                     setPendingConfiguration(handle.pendingRun.configuration);
-                    const resumed = await client.startRun(handle.threadId, { ...handle.pendingRun, maxSteps: 8 });
+                    const resumed = await client.startRun(handle.threadId, { ...handle.pendingRun, maxSteps: AGENT_RUNTIME_DECISION_BUDGET });
                     if (cancelled || historyRequestRef.current !== historyRequestID) return;
                     pendingRunRef.current = undefined;
                     setPendingUserMessage("");
@@ -289,10 +303,8 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
         }
         setConnection("connecting");
         let closeSubscription: () => void = () => undefined;
-        // UI text is reconstructed from the durable event log after a refresh. The
-        // saved cursor still fences business side effects, so replay never repeats
-        // canvas mutations, notifications, or persisted recovery progress.
-        closeSubscription = client.subscribe(runId, 0, {
+        const afterSequence = cursorRef.current;
+        closeSubscription = client.subscribe(runId, afterSequence, {
             onOpen: () => {
                 if (stoppingRunIDRef.current !== runId) setConnection("connected");
             },
@@ -311,9 +323,9 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
                     setError("Agent 实时事件与当前会话归属冲突");
                     return;
                 }
-                setTimeline((current) => appendAgentTimelineEvent(current, event));
                 if (event.sequence <= cursorRef.current) return;
                 cursorRef.current = event.sequence;
+                setTimeline((current) => appendAgentTimelineEvent(current, event));
                 void storage.save(canvasId, { threadId: event.threadId, activeRunId: runId, lastSequence: event.sequence }).catch((cause: unknown) => setError(errorMessage(cause, "Agent 事件游标保存失败")));
                 onRuntimeEventRef.current?.(event);
                 scheduleThreadReload();
@@ -356,7 +368,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
                 setPendingUserMessage(request.userMessage);
                 setPendingConfiguration(request.configuration);
                 await persist(null, activeThreadId);
-                const started = await client.startRun(activeThreadId, { ...request, maxSteps: 8 });
+                const started = await client.startRun(activeThreadId, { ...request, maxSteps: AGENT_RUNTIME_DECISION_BUDGET });
                 pendingRunRef.current = undefined;
                 setPendingUserMessage("");
                 setPendingConfiguration(null);
@@ -418,10 +430,19 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
     }, [adoptView, busy, client, reloadThreads, scheduleThreadReload, view]);
 
     const decideApproval = useCallback(
-        async (decision: "approved" | "rejected") => {
+        async (submission: AgentApprovalSubmission) => {
             const call = view?.state.status === "waiting_approval" ? view.state.pendingToolCall : undefined;
-            if (!call || !view || busy) return;
-            const rejectedRunID = decision === "rejected" ? view.run.id : "";
+            const approval = view?.state.status === "waiting_approval" ? view.pendingApproval : undefined;
+            if (!call || !approval || !view || busy) return;
+            if (approval.toolCallId !== call.toolCallId || approval.toolName !== call.toolName || approval.actionVersion !== call.actionVersion) {
+                setError("审批提案与当前工具调用不一致，请刷新后重试");
+                return;
+            }
+            if (submission.toolCallId !== call.toolCallId || submission.actionVersion !== call.actionVersion || submission.proposalHash !== approval.proposalHash) {
+                setError("审批提交身份已变化，请刷新后由 Agent 创建新提案");
+                return;
+            }
+            const rejectedRunID = submission.decision === "rejected" ? view.run.id : "";
             if (rejectedRunID) {
                 stoppingRunIDRef.current = rejectedRunID;
                 if (runRefreshTimerRef.current) {
@@ -433,7 +454,14 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             setBusy(true);
             setError("");
             try {
-                adoptView(await client.submitApproval(view.run.id, { toolCallId: call.toolCallId, actionVersion: call.actionVersion, decision }));
+                adoptView(
+                    await client.submitApproval(view.run.id, {
+                        toolCallId: call.toolCallId,
+                        actionVersion: call.actionVersion,
+                        decision: submission.decision,
+                        proposalHash: approval.proposalHash,
+                    }),
+                );
             } catch (cause) {
                 if (rejectedRunID && stoppingRunIDRef.current === rejectedRunID) stoppingRunIDRef.current = "";
                 setError(errorMessage(cause, "审批提交失败"));
@@ -530,6 +558,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             newThread,
             selectThread,
             reloadThreads,
+            refreshCurrentRun,
         }),
         [
             busy,
@@ -543,6 +572,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             pendingConfiguration,
             pendingUserMessage,
             reloadThreads,
+            refreshCurrentRun,
             restored,
             selectThread,
             sendOrSteer,

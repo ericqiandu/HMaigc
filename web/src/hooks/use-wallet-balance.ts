@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { getWallet } from "@/services/api/wallet";
+import { getWalletBalance } from "@/services/api/wallet";
 
 const WALLET_REFRESH_INTERVAL_MS = 30_000;
 
@@ -15,8 +15,8 @@ export function useWalletBalance(userId?: string, enabled = true) {
         }
         setRefreshing(true);
         try {
-            const wallet = await getWallet(1, 1);
-            setAvailableMicrocredits(wallet.account.availableMicrocredits);
+            const balance = await getWalletBalance();
+            setAvailableMicrocredits(balance.account.availableMicrocredits);
         } catch {
             // 顶栏余额是只读辅助信息，读取失败时保留上次成功值，避免短暂网络错误造成闪烁。
         } finally {

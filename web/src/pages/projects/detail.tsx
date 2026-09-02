@@ -31,7 +31,7 @@ export default function ProjectDetailPage() {
     const queryClient = useQueryClient();
     const { message } = App.useApp();
     const activeView: DetailView = chapterId ? "chapters" : views.some((item) => item.key === view) ? (view as DetailView) : "overview";
-    const detail = useQuery({ queryKey: ["project", projectId], queryFn: () => getProject(projectId), enabled: Boolean(projectId), refetchOnMount: "always" });
+    const detail = useQuery({ queryKey: ["project", projectId], queryFn: () => getProject(projectId), enabled: Boolean(projectId) });
     const refreshProject = () => {
         void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
         void queryClient.invalidateQueries({ queryKey: ["projects"] });

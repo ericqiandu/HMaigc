@@ -90,12 +90,14 @@ func Models() []any {
 		&model.CanvasProject{},
 		&model.CanvasCollaborator{},
 		&model.CanvasChange{},
+		&model.CanvasProjectDeletion{},
 		&model.AgentThread{},
 		&model.AgentRun{},
 		&model.AgentTimelineItem{},
 		&model.AgentProductionPlanVersion{},
 		&model.AgentProductionArtifact{},
 		&model.AgentRunEvent{},
+		&model.AgentExternalDecision{},
 		&model.AgentCheckpoint{},
 		&model.AgentToolCall{},
 		&model.CanvasShare{},
@@ -103,11 +105,19 @@ func Models() []any {
 		&model.Announcement{},
 		&model.UserAnnouncementRead{},
 		&model.Task{},
+		&model.TaskOutbox{},
 		&model.Session{},
 		&model.Message{},
 		&model.TaskLog{},
 		&model.SessionFile{},
 		&model.Result{},
+		&model.AgentProductionGraphVersion{},
+		&model.AgentProductionStage{},
+		&model.AgentSpecialistRun{},
+		&model.AgentArtifact{},
+		&model.AgentArtifactRevision{},
+		&model.AgentAssetBindingRevision{},
+		&model.AgentAssetPublication{},
 	}
 }
 
@@ -133,6 +143,9 @@ func MigrateSchema(db *gorm.DB) error {
 			return err
 		}
 		if err := migrateAgentRuntimeSkillChecksums(tx); err != nil {
+			return err
+		}
+		if err := backfillAgentMediaCapabilityIdempotencyKeys(tx); err != nil {
 			return err
 		}
 		if err := seedFirstPartySkills(tx); err != nil {
@@ -207,6 +220,9 @@ func MigrateSchema(db *gorm.DB) error {
 			return err
 		}
 		if err := EnsureAgentRuntimeIntegritySchema(tx); err != nil {
+			return err
+		}
+		if err := EnsureAgentProductionRuntimeSchema(tx); err != nil {
 			return err
 		}
 		return EnsureWatermarkPolicyIntegritySchema(tx)

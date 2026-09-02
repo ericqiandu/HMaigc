@@ -170,7 +170,14 @@ export type CanvasNodeMetadata = {
     mimeType?: string;
     bytes?: number;
     durationMs?: number;
+    mediaProvenance?: {
+        kind: "video_last_frame";
+        sourceNodeId: string;
+    };
     assetId?: string;
+    artifactId?: string;
+    artifactRevisionId?: string;
+    projectionId?: string;
     teamResourceId?: string;
     teamResourceTeamId?: string;
     assetTags?: string[];
@@ -212,6 +219,7 @@ export type CanvasNodeMetadata = {
     };
     actionBoardRows?: number;
     actionBoardColumns?: number;
+    agentRunId?: string;
     taskId?: string;
     taskStatus?: "queued" | "running" | "succeeded" | "failed" | "cancelled" | string;
     taskProgress?: number;

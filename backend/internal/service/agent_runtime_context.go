@@ -12,9 +12,11 @@ import (
 )
 
 const agentRuntimeModelPromptPrefix = "以下 JSON 是本轮唯一可信的运行事实。请自主决定直接交付、发起结构化追问或调用一个可用工具，并严格按系统约定返回一个 JSON 对象：\n"
+const agentRuntimeModelContextLimit = 512 * 1024
 
 type agentRuntimeCallableModelFact struct {
 	ChannelID             string                        `json:"channelId"`
+	ModelRecordID         string                        `json:"modelRecordId"`
 	Model                 string                        `json:"model"`
 	DisplayName           string                        `json:"displayName"`
 	Capability            string                        `json:"capability"`
@@ -25,16 +27,14 @@ type agentRuntimeCallableModelFact struct {
 	ProviderCapabilities  *PublicProviderCapabilities   `json:"providerCapabilities,omitempty"`
 }
 
-type agentRuntimeProductionPlanFact struct {
-	PlanKey           string                             `json:"planKey"`
-	PlanVersion       int                                `json:"planVersion"`
-	Title             string                             `json:"title"`
-	TargetDurationMS  int                                `json:"targetDurationMs"`
-	Script            string                             `json:"script"`
-	References        []agentruntime.ReferenceAssetDraft `json:"references"`
-	Shots             []agentruntime.ShotPlanDraft       `json:"shots"`
-	Artifacts         []agentProductionArtifactResult    `json:"artifacts"`
-	CommitArtifactIDs []string                           `json:"commitArtifactIds"`
+type agentRuntimeCallableToolFact struct {
+	Name             agentruntime.ToolName      `json:"name"`
+	ActionVersion    int                        `json:"actionVersion"`
+	RiskLevel        agentruntime.ToolRiskLevel `json:"riskLevel"`
+	RequiredAccess   agentruntime.AccessLevel   `json:"requiredAccess"`
+	ApprovalRequired bool                       `json:"approvalRequired"`
+	ArgumentsSchema  json.RawMessage            `json:"argumentsSchema,omitempty"`
+	ResultSchema     json.RawMessage            `json:"resultSchema,omitempty"`
 }
 
 func (s *Service) agentRuntimeModelPrompt(scope agentruntime.Scope, state agentruntime.RuntimeState) (string, error) {
@@ -50,8 +50,11 @@ func (s *Service) agentRuntimeModelPrompt(scope agentruntime.Scope, state agentr
 	if err != nil {
 		return "", err
 	}
-	productionPlan, err := s.agentRuntimeProductionPlanFact(scope)
+	run, err := s.repo.AgentRunForScope(scope)
 	if err != nil {
+		return "", err
+	}
+	if err := validateAgentRuntimeExecutionContract(*run); err != nil {
 		return "", err
 	}
 	var deliveryEvidence *agentruntime.DeliveryEvidence
@@ -65,35 +68,14 @@ func (s *Service) agentRuntimeModelPrompt(scope agentruntime.Scope, state agentr
 		deliveryEvidence = &evidence
 		deliveryVerification = &verification
 	}
-	return encodeAgentRuntimeModelPrompt(scope, state, canvas.Revision, models, productionPlan, deliveryEvidence, deliveryVerification)
-}
-
-func (s *Service) agentRuntimeProductionPlanFact(scope agentruntime.Scope) (*agentRuntimeProductionPlanFact, error) {
-	record, err := s.repo.ActiveAgentProductionPlanForThread(scope)
-	if err != nil || record == nil {
-		return nil, err
-	}
-	var references []agentruntime.ReferenceAssetDraft
-	if err := json.Unmarshal([]byte(record.Plan.ReferencesJSON), &references); err != nil {
-		return nil, errors.New("active agent production plan references are invalid")
-	}
-	var shots []agentruntime.ShotPlanDraft
-	if err := json.Unmarshal([]byte(record.Plan.ShotsJSON), &shots); err != nil {
-		return nil, errors.New("active agent production plan shots are invalid")
-	}
-	fact := &agentRuntimeProductionPlanFact{
-		PlanKey: record.Plan.PlanKey, PlanVersion: record.Plan.Version, Title: record.Plan.Title,
-		TargetDurationMS: record.Plan.TargetDurationMS, Script: record.Plan.Script, References: references, Shots: shots,
-		Artifacts: make([]agentProductionArtifactResult, 0, len(record.Artifacts)), CommitArtifactIDs: make([]string, 0, len(record.Artifacts)),
-	}
-	for _, artifact := range record.Artifacts {
-		fact.Artifacts = append(fact.Artifacts, agentProductionArtifactResult{
-			ArtifactID: artifact.ID, Kind: artifact.Kind, ReferenceKey: artifact.ReferenceKey, ShotKey: artifact.ShotKey, Status: artifact.Status,
-		})
-		fact.CommitArtifactIDs = append(fact.CommitArtifactIDs, artifact.ID)
-	}
-	sort.Strings(fact.CommitArtifactIDs)
-	return fact, nil
+	return encodeAgentRuntimeModelPrompt(
+		scope,
+		state,
+		canvas.Revision,
+		models,
+		deliveryEvidence,
+		deliveryVerification,
+	)
 }
 
 func (s *Service) agentRuntimeCallableModels(actorUserID string) ([]agentRuntimeCallableModelFact, error) {
@@ -118,17 +100,33 @@ func (s *Service) agentRuntimeCallableModels(actorUserID string) ([]agentRuntime
 		if err != nil {
 			return nil, err
 		}
+		modelRecordIDs := make(map[string]string, len(items))
+		for _, modelItem := range items {
+			modelKey := strings.TrimSpace(modelItem.ModelKey)
+			modelRecordID := strings.TrimSpace(modelItem.ID)
+			if modelKey == "" || modelRecordID == "" {
+				return nil, errors.New("agent callable model identity is invalid")
+			}
+			if _, duplicate := modelRecordIDs[modelKey]; duplicate {
+				return nil, errors.New("agent callable model identity is invalid")
+			}
+			modelRecordIDs[modelKey] = modelRecordID
+		}
 		public := publicChannel(channel, false, items, hasMembership)
 		for _, item := range public.ModelCosts {
 			if !item.Accessible || !agentRuntimeMediaCapability(item.Capability) {
 				continue
 			}
+			modelRecordID, found := modelRecordIDs[item.Model]
+			if !found {
+				return nil, errors.New("agent callable model identity is invalid")
+			}
 			result = append(result, agentRuntimeCallableModelFact{
-				ChannelID: channel.ID, Model: item.Model, DisplayName: item.DisplayName, Capability: item.Capability,
+				ChannelID: channel.ID, ModelRecordID: modelRecordID, Model: item.Model, DisplayName: item.DisplayName, Capability: item.Capability,
 				BillingMode: item.BillingMode, PriceStrategy: item.PriceStrategy,
 				UnitPriceMicrocredits: item.UnitPriceMicrocredits,
 				PriceTiers:            append([]PublicChannelModelPriceTier(nil), item.PriceTiers...),
-				ProviderCapabilities:  item.ProviderCapabilities,
+				ProviderCapabilities:  clonePublicProviderCapabilities(item.ProviderCapabilities),
 			})
 		}
 	}
@@ -149,22 +147,57 @@ func encodeAgentRuntimeModelPrompt(
 	state agentruntime.RuntimeState,
 	canvasRevision int64,
 	models []agentRuntimeCallableModelFact,
-	productionPlan *agentRuntimeProductionPlanFact,
 	deliveryEvidence *agentruntime.DeliveryEvidence,
 	deliveryVerification *agentruntime.DeliveryVerification,
 ) (string, error) {
+	callableTools, err := agentRuntimeCallableTools(state.Configuration.ExecutionMode)
+	if err != nil {
+		return "", err
+	}
 	context := agentRuntimeModelContext{
-		RunID: scope.RunID, CanvasID: scope.CanvasID, CanvasRevision: canvasRevision, StepNumber: state.StepNumber, MaxSteps: state.MaxSteps,
+		RunID: scope.RunID, CanvasID: scope.CanvasID, Scope: agentRuntimeScopeFact{
+			TenantKind: scope.TenantKind, TenantID: scope.TenantID, ActorUserID: scope.ActorUserID,
+			DomainProjectID: scope.DomainProjectID, CanvasID: scope.CanvasID, ThreadID: scope.ThreadID,
+		}, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion, CanvasRevision: canvasRevision, StepNumber: state.StepNumber, MaxSteps: state.MaxSteps,
 		UserMessage: state.UserMessage, ExpectedDelivery: state.ExpectedDelivery, DeliveryEvidence: deliveryEvidence,
 		Verification: deliveryVerification, LastToolResult: state.LastToolResult, DecisionFeedback: state.DecisionFeedback, PreviousMessage: state.FinalMessage,
-		Configuration: promptAgentRuntimeConfiguration(state), LoadedSkillDirs: append([]string(nil), state.LoadedSkillDirs...), CallableModels: models,
-		ClarificationHistory: append([]agentruntime.CompletedClarification(nil), state.ClarificationHistory...), ProductionPlan: productionPlan,
+		Configuration: promptAgentRuntimeConfiguration(state), LoadedSkillDirs: append([]string(nil), state.LoadedSkillDirs...), CallableTools: callableTools, CallableModels: models,
+		ClarificationHistory: append([]agentruntime.CompletedClarification(nil), state.ClarificationHistory...), Limits: state.Limits,
 	}
 	encoded, err := json.Marshal(context)
 	if err != nil {
 		return "", err
 	}
+	if len(encoded) > agentRuntimeModelContextLimit {
+		return "", errors.New("agent runtime model context exceeds limit")
+	}
 	return agentRuntimeModelPromptPrefix + string(encoded), nil
+}
+
+func agentRuntimeCallableTools(mode agentruntime.ExecutionMode) ([]agentRuntimeCallableToolFact, error) {
+	if mode != agentruntime.ExecutionGuided && mode != agentruntime.ExecutionAutomatic {
+		return nil, errors.New("agent runtime callable tool facts are invalid")
+	}
+	registry, err := newAgentCapabilityRegistry(nil)
+	if err != nil {
+		return nil, err
+	}
+	descriptors := registry.Descriptors()
+	tools := make([]agentRuntimeCallableToolFact, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		policy, found := agentruntime.ToolPolicyForSchema(descriptor.Name, agentruntime.CurrentToolSchemaVersion)
+		if !found || policy.RiskLevel != descriptor.RiskLevel || policy.RequiredAccess != descriptor.RequiredAccess {
+			return nil, errors.New("agent runtime capability descriptor conflicts with policy")
+		}
+		tools = append(tools, agentRuntimeCallableToolFact{
+			Name: descriptor.Name, ActionVersion: descriptor.ActionVersion, RiskLevel: descriptor.RiskLevel,
+			RequiredAccess:   descriptor.RequiredAccess,
+			ApprovalRequired: agentruntime.ApprovalRequiredFor(policy, mode),
+			ArgumentsSchema:  append(json.RawMessage(nil), descriptor.ArgumentsSchema...),
+			ResultSchema:     append(json.RawMessage(nil), descriptor.ResultSchema...),
+		})
+	}
+	return tools, nil
 }
 
 func promptAgentRuntimeConfiguration(state agentruntime.RuntimeState) agentruntime.RunConfiguration {
@@ -208,7 +241,17 @@ func frozenAgentRuntimeModelContext(scope agentruntime.Scope, state agentruntime
 	if err := validateAgentRuntimeCallableModels(frozen.CallableModels); err != nil {
 		return agentRuntimeModelContext{}, err
 	}
-	expected, err := encodeAgentRuntimeModelPrompt(scope, state, frozen.CanvasRevision, frozen.CallableModels, frozen.ProductionPlan, frozen.DeliveryEvidence, frozen.Verification)
+	if frozen.ToolSchemaVersion != agentruntime.CurrentToolSchemaVersion {
+		return agentRuntimeModelContext{}, errors.New(agentruntime.FailureRuntimeSchemaRetired)
+	}
+	expected, err := encodeAgentRuntimeModelPrompt(
+		scope,
+		state,
+		frozen.CanvasRevision,
+		frozen.CallableModels,
+		frozen.DeliveryEvidence,
+		frozen.Verification,
+	)
 	if err != nil {
 		return agentRuntimeModelContext{}, err
 	}
@@ -220,16 +263,22 @@ func frozenAgentRuntimeModelContext(scope agentruntime.Scope, state agentruntime
 
 func validateAgentRuntimeCallableModels(models []agentRuntimeCallableModelFact) error {
 	seen := make(map[string]struct{}, len(models))
+	seenRecordIDs := make(map[string]struct{}, len(models))
 	previous := ""
 	for _, item := range models {
 		item.ChannelID = strings.TrimSpace(item.ChannelID)
+		item.ModelRecordID = strings.TrimSpace(item.ModelRecordID)
 		item.Model = strings.TrimSpace(item.Model)
 		item.DisplayName = strings.TrimSpace(item.DisplayName)
 		item.BillingMode = strings.TrimSpace(item.BillingMode)
 		item.PriceStrategy = strings.TrimSpace(item.PriceStrategy)
-		if item.ChannelID == "" || item.Model == "" || item.DisplayName == "" || !agentRuntimeMediaCapability(item.Capability) || item.BillingMode == "" || item.PriceStrategy == "" {
+		if item.ChannelID == "" || item.ModelRecordID == "" || item.Model == "" || item.DisplayName == "" || !agentRuntimeMediaCapability(item.Capability) || item.BillingMode == "" || item.PriceStrategy == "" {
 			return errors.New("agent callable model facts are invalid")
 		}
+		if _, duplicate := seenRecordIDs[item.ModelRecordID]; duplicate {
+			return errors.New("agent callable model facts are invalid")
+		}
+		seenRecordIDs[item.ModelRecordID] = struct{}{}
 		key := item.ChannelID + "\x00" + item.Model
 		if _, duplicate := seen[key]; duplicate || (previous != "" && key < previous) {
 			return errors.New("agent callable model facts are invalid")
@@ -237,6 +286,9 @@ func validateAgentRuntimeCallableModels(models []agentRuntimeCallableModelFact) 
 		seen[key] = struct{}{}
 		previous = key
 		priced := item.UnitPriceMicrocredits > 0
+		if item.Capability == "vision" && item.BillingMode == "token_usage" && item.PriceStrategy == "token" && item.UnitPriceMicrocredits == 0 && len(item.PriceTiers) == 0 && item.ProviderCapabilities != nil && item.ProviderCapabilities.SupportsTokenUsageBilling && item.ProviderCapabilities.MaxInputImageTokens > 0 {
+			priced = true
+		}
 		usageMetrics := make(map[string]struct{}, len(item.PriceTiers))
 		for _, tier := range item.PriceTiers {
 			resolution := strings.TrimSpace(tier.Resolution)
@@ -267,7 +319,7 @@ func validateAgentRuntimeCallableModels(models []agentRuntimeCallableModelFact) 
 
 func agentRuntimeMediaCapability(capability string) bool {
 	switch strings.TrimSpace(capability) {
-	case "image", "video", "audio":
+	case "image", "video", "audio", "vision":
 		return true
 	default:
 		return false

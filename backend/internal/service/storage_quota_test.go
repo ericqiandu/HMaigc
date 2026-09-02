@@ -82,7 +82,8 @@ func TestSaveTaskCompletionPersistsRelatedRowsTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := model.Session{ID: "session-1", UserID: "user-1", Status: model.SessionStatusActive}
-	task := model.Task{ID: "task-1", UserID: "user-1", SessionID: session.ID, Status: model.TaskStatusRunning, LeaseOwner: "worker-1", InputJSON: `{"mode":"text"}`}
+	originalInputJSON := `{"mode":"text","secret":"must-remain-signed-at-rest"}`
+	task := model.Task{ID: "task-1", UserID: "user-1", SessionID: session.ID, Status: model.TaskStatusRunning, LeaseOwner: "worker-1", LeaseGeneration: 1, LeaseToken: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", InputJSON: originalInputJSON}
 	if err := db.Create(&session).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -103,6 +104,16 @@ func TestSaveTaskCompletionPersistsRelatedRowsTogether(t *testing.T) {
 	}
 	if task.Status != model.TaskStatusSucceeded || messageCount != 1 || resultCount != 2 {
 		t.Fatalf("completion = status:%s messages:%d results:%d", task.Status, messageCount, resultCount)
+	}
+	stored, err := svc.repo.Task(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.InputJSON != originalInputJSON || task.InputJSON != originalInputJSON {
+		t.Fatalf("signed task input changed on completion: stored=%q task=%q", stored.InputJSON, task.InputJSON)
+	}
+	if output := taskForOutput(*stored); output.InputJSON != `{"mode":"text"}` {
+		t.Fatalf("public task input = %q, want redacted metadata", output.InputJSON)
 	}
 }
 
@@ -143,7 +154,16 @@ func TestSaveCancelledTaskResultKeepsCancelledStatusAndPersistsAssetFact(t *test
 	if err := db.AutoMigrate(&model.SystemSetting{}, &model.Task{}, &model.Result{}, &model.Asset{}, &model.CanvasProject{}, &model.Session{}, &model.Message{}, &model.TaskLog{}, &model.ApiCallLog{}, &model.BillingOrder{}); err != nil {
 		t.Fatal(err)
 	}
-	task := model.Task{ID: "cancelled-task", UserID: "user", Status: model.TaskStatusCancelled, BillingOrderID: "billing", ProviderRequestID: "provider-task", InputJSON: `{"mode":"video","secret":"removed"}`}
+	originalInputJSON := `{"mode":"video","secret":"must-remain-signed-at-rest"}`
+	now := time.Now().UTC()
+	leaseExpiresAt := now.Add(time.Minute)
+	task := model.Task{
+		ID: "cancelled-task", UserID: "user", Status: model.TaskStatusCancelled,
+		BillingOrderID: "billing", ProviderRequestID: "provider-task", InputJSON: originalInputJSON,
+		CancelRequestedAt: &now, CancelReasonCode: "user_requested",
+		LeaseOwner: "reconcile-worker", LeaseExpiresAt: &leaseExpiresAt, LeaseGeneration: 2,
+		LeaseToken: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
 	if err := db.Create(&task).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -166,6 +186,9 @@ func TestSaveCancelledTaskResultKeepsCancelledStatusAndPersistsAssetFact(t *test
 	if stored.Status != model.TaskStatusCancelled || stored.ResultJSON != string(resultJSON) || result.Payload != string(resultJSON) {
 		t.Fatalf("cancelled result = task:%#v result:%#v", stored, result)
 	}
+	if stored.InputJSON != originalInputJSON || task.InputJSON != originalInputJSON {
+		t.Fatalf("signed task input changed on cancellation: stored=%q task=%q", stored.InputJSON, task.InputJSON)
+	}
 	var order model.BillingOrder
 	if err := db.First(&order, "id = ?", task.BillingOrderID).Error; err != nil {
 		t.Fatal(err)
@@ -184,7 +207,7 @@ func TestCancelledProviderTaskRemainsClaimableForResultReconciliation(t *testing
 		t.Fatal(err)
 	}
 	past := time.Now().Add(-time.Minute)
-	task := model.Task{ID: "cancel-reconcile", UserID: "user", Status: model.TaskStatusCancelled, ProviderRequestID: "provider-task", PollStage: "cancel_reconcile", NextPollAt: &past}
+	task := model.Task{ID: "cancel-reconcile", UserID: "user", Status: model.TaskStatusCancelled, ProviderRequestID: "provider-task", PollStage: "cancel_reconcile", NextPollAt: &past, CancelRequestedAt: &past, CancelReasonCode: "user_requested"}
 	if err := db.Create(&task).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +219,7 @@ func TestCancelledProviderTaskRemainsClaimableForResultReconciliation(t *testing
 	if claimed == nil || claimed.ID != task.ID || claimed.Status != model.TaskStatusCancelled || claimed.LeaseOwner != "reconcile-worker" {
 		t.Fatalf("cancel reconciliation claim = %#v", claimed)
 	}
-	if err := repo.RenewTaskLease(task.ID, "reconcile-worker", time.Minute); err != nil {
+	if err := repo.RenewTaskLease(claimed.ID, claimed.LeaseOwner, claimed.LeaseGeneration, claimed.LeaseToken, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 }

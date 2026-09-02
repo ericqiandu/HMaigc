@@ -131,7 +131,7 @@ func TestAgentRuntimeInterruptWinsAgainstImmediateNonVisibleProviderCompletion(t
 		flusher.Flush()
 		close(requestStarted)
 		<-releaseProvider
-		writeAgentRuntimeChatStream(t, writer, "chatcmpl-interrupted-tool", `{"kind":"tool_call","toolCall":{"toolCallId":"tool-after-interrupt","toolName":"skill.load","actionVersion":1,"arguments":{"dir":"selected-skill"},"expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`, 12, 0, 3)
+		writeAgentRuntimeChatStream(t, writer, "chatcmpl-interrupted-final", `{"kind":"final","final":{"message":"这条中断后的结果不得提交。","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`, 12, 0, 3)
 	}))
 	defer server.Close()
 

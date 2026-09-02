@@ -1,5 +1,35 @@
 # Domain Glossary
 
+## Agent 运行（Agent Run）
+
+用户在一个已授权项目与画布作用域内发起的一次可恢复 Agent 执行。新运行固定冻结 Runtime、Policy、Tool schema、模型、Skills、用户目标、最大步骤和绝对截止时间；模型决策、工具调用、审批、事件、交付合同和终态都属于同一运行身份。刷新、断线或进程重启只能从持久事实恢复该运行，不能创建平行执行链。
+
+_Avoid_: 浏览器会话、临时对话任务、Production Graph
+
+## 原子 Agent 能力（Atomic Agent Capability）
+
+Agent 可调用的最小服务端能力，输入、输出、副作用和授权边界都由严格 schema 定义。当前仅有 `canvas.read`、`canvas.apply_ops`、`assets.read`、`assets.publish`、`media.generate`、`skills.load` 六项；模型可以自主组合它们，但后端不替模型维护固定工作流、意图路由或 Specialist 顺序。
+
+_Avoid_: Specialist、Stage、工作流步骤、前端动作脚本
+
+## Agent 审批提案（Agent Approval Proposal）
+
+写入或付费能力执行前持久化的不可变授权对象。提案冻结租户、用户、项目、画布、工具身份、精确参数、副作用摘要、价格（如适用）、有效期和 SHA-256；用户的批准或拒绝只作用于该提案。参数、作用域、价格、有效期或哈希变化后必须建立新提案，既有批准不得扩张为后续操作的通用授权。
+
+_Avoid_: 一键全流程授权、前端确认状态、可变报价确认
+
+## Agent 交付合同（Agent Delivery Contract）
+
+首个模型决策冻结的 `expectedDelivery`，描述本次运行必须交付的产物类型与结构性完成条件。运行期间只能用真实 ToolCall、Task、BillingOrder、Resource、Asset 和画布 revision 构成 `deliveryEvidence`，再由通用 `deliveryVerification` 判断是否满足；说明文字、计划、占位节点或任务已提交均不能单独证明完成。
+
+_Avoid_: 助手已经回复、任务已经创建、前端显示完成
+
+## 历史 Agent 审计事实（Historical Agent Audit Fact）
+
+旧 Runtime 的 Specialist、Stage、Production Graph、Artifact Ledger、视觉分析和媒体装配记录。它们仅用于读取既有终态、账务与资源来源，不得恢复执行、映射成当前原子能力、迁移为新模型决策或作为运行时回退路径；非终态旧运行只能在操作者授权后按原子退役契约收口。
+
+_Avoid_: 兼容模式、旧 Agent 回退、历史任务续跑
+
 ## 邀请关系（Referral Relationship）
 
 新用户在首次注册时通过有效邀请码与邀请人建立的永久归属关系。一个受邀用户最多绑定一个邀请人，绑定后不可更换；自我邀请与注册完成后的补绑均不成立。关系状态只允许从待奖励进入已奖励或取消资格，原始绑定事实必须保留用于审计。

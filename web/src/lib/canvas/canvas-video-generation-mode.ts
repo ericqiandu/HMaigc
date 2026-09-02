@@ -20,6 +20,10 @@ export function resolveVideoGenerationMode(metadata?: CanvasNodeMetadata): Canva
     return "text";
 }
 
+export function videoGenerationModeConflictReason(metadata: CanvasNodeMetadata | undefined, counts: VideoReferenceCounts): string | undefined {
+    return resolveVideoGenerationMode(metadata) === "text" && counts.image > 0 ? "已连接图片，断开后可使用文生视频" : undefined;
+}
+
 export function videoModeOperation(mode: CanvasVideoGenerationMode, counts: VideoReferenceCounts): CanvasVideoEditOperation {
     if (mode === "text") return "text_to_video";
     if (mode === "omni_reference") {
@@ -59,7 +63,11 @@ export function videoModeMetadataPatch({
 
 export function selectVideoGenerationContext<T extends VideoGenerationReferenceContext>(metadata: CanvasNodeMetadata | undefined, context: T): T {
     const mode = resolveVideoGenerationMode(metadata);
-    if (mode === "text") return { ...context, referenceImages: [], referenceVideos: [], referenceAudios: [], imageCount: 0, videoCount: 0, audioCount: 0 };
+    if (mode === "text") {
+        const conflictReason = videoGenerationModeConflictReason(metadata, { image: context.referenceImages.length, video: context.referenceVideos.length, audio: context.referenceAudios.length });
+        if (conflictReason) throw new Error(conflictReason);
+        return { ...context, referenceImages: [], referenceVideos: [], referenceAudios: [], imageCount: 0, videoCount: 0, audioCount: 0 };
+    }
     if (mode === "image" || mode === "first_last_frame") {
         const requiredIds = [metadata?.videoStartFrameNodeId, mode === "first_last_frame" ? metadata?.videoEndFrameNodeId : undefined].filter((value): value is string => Boolean(value));
         const referenceImages = requiredIds.map((id) => context.referenceImages.find((image) => image.id === id)).filter((image): image is ReferenceImage => Boolean(image));

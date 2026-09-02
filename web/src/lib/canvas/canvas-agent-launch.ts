@@ -34,6 +34,11 @@ export function canvasAgentProjectTitle(prompt: string) {
     return normalized.length > PROJECT_TITLE_LIMIT ? `${normalized.slice(0, PROJECT_TITLE_LIMIT)}…` : normalized;
 }
 
+export function handoffCanvasAgentLaunch(creation: { id: string; remoteReady: Promise<void> }, openCanvas: (canvasId: string) => void, handleRemoteFailure: (error: unknown) => void) {
+    openCanvas(creation.id);
+    void creation.remoteReady.catch(handleRemoteFailure);
+}
+
 export function hasCanvasAgentLaunchRecord(sessions: CanvasAssistantSession[], launchRequestId: string) {
     return sessions.some((session) => session.pendingBackendSession?.launchRequestId === launchRequestId || session.messages.some((message) => objectField(message.detail, "launchRequestId") === launchRequestId));
 }

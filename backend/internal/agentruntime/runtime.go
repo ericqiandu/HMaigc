@@ -6,12 +6,22 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"sort"
 	"strings"
+	"time"
 )
 
 const maxRuntimeSteps = 24
+const maxRuntimeToolCalls = 64
+
+const FailureRuntimeDeadlineExceeded = "runtime_deadline_exceeded"
+
+type RuntimeLimits struct {
+	MaxToolCalls  int       `json:"maxToolCalls"`
+	ToolCallsUsed int       `json:"toolCallsUsed"`
+	StartedAt     time.Time `json:"startedAt"`
+	DeadlineAt    time.Time `json:"deadlineAt"`
+}
 
 type RuntimeState struct {
 	StateVersion         int                      `json:"stateVersion"`
@@ -32,6 +42,7 @@ type RuntimeState struct {
 	Configuration        RunConfiguration         `json:"configuration"`
 	LoadedSkillDirs      []string                 `json:"loadedSkillDirs,omitempty"`
 	PendingSteers        []PendingSteer           `json:"pendingSteers,omitempty"`
+	Limits               *RuntimeLimits           `json:"limits,omitempty"`
 }
 
 type SteerRequest struct {
@@ -46,22 +57,32 @@ type PendingSteer struct {
 }
 
 type GenerationModelSelection struct {
-	ChannelID string `json:"channelId"`
-	Model     string `json:"model"`
+	ChannelID     string `json:"channelId"`
+	ModelRecordID string `json:"modelRecordId,omitempty"`
+	Model         string `json:"model"`
+	PriceVersion  int64  `json:"priceVersion,omitempty"`
 }
 
 type GenerationModelSelections struct {
-	Image *GenerationModelSelection `json:"image,omitempty"`
-	Video *GenerationModelSelection `json:"video,omitempty"`
+	Image  *GenerationModelSelection `json:"image,omitempty"`
+	Video  *GenerationModelSelection `json:"video,omitempty"`
+	Audio  *GenerationModelSelection `json:"audio,omitempty"`
+	Vision *GenerationModelSelection `json:"vision,omitempty"`
 }
 
 type SkillSelection struct {
-	Dir          string `json:"dir"`
-	Name         string `json:"name"`
-	Description  string `json:"description"`
-	Instructions string `json:"instructions"`
-	Version      int    `json:"version"`
-	Checksum     string `json:"checksum"`
+	Dir                string                  `json:"dir"`
+	Name               string                  `json:"name"`
+	Description        string                  `json:"description"`
+	Instructions       string                  `json:"instructions"`
+	Version            int                     `json:"version"`
+	Checksum           string                  `json:"checksum"`
+	CapabilityManifest SkillCapabilityManifest `json:"capabilityManifest"`
+	SourceKind         string                  `json:"sourceKind,omitempty"`
+	SourceURL          string                  `json:"sourceUrl,omitempty"`
+	SourceRevision     string                  `json:"sourceRevision,omitempty"`
+	SourceLicense      string                  `json:"sourceLicense,omitempty"`
+	PublishedAt        string                  `json:"publishedAt,omitempty"`
 }
 
 type ExecutionMode string
@@ -74,9 +95,12 @@ const (
 type ResourceAttachment struct {
 	ResourceID string `json:"resourceId"`
 	Name       string `json:"name"`
+	Kind       string `json:"kind"`
 	MIMEType   string `json:"mimeType"`
+	SizeBytes  int64  `json:"sizeBytes"`
 	Width      int    `json:"width,omitempty"`
 	Height     int    `json:"height,omitempty"`
+	DurationMS int64  `json:"durationMs,omitempty"`
 }
 
 // RunConfiguration is an immutable snapshot of the user's explicit composer choices.
@@ -94,9 +118,13 @@ type RuntimeInput struct {
 }
 
 type RuntimeTransition struct {
-	State            RuntimeState
-	EventKinds       []EventKind
-	RejectedToolCall *ToolCallDecision
+	State                RuntimeState
+	EventKinds           []EventKind
+	RejectedToolCall     *ToolCallDecision
+	ToolReplay           *ToolReplay
+	ApprovalProposalHash string
+	ApprovalCostQuote    *ApprovalCostQuote
+	ApprovalResolution   ApprovalResolution
 }
 
 type ToolResolution struct {
@@ -137,6 +165,24 @@ type ToolApproval struct {
 	ToolCallID    string
 	ActionVersion int
 	Decision      ToolApprovalDecision
+	ProposalHash  string
+}
+
+type ApprovalResolution string
+
+const (
+	ApprovalResolutionApproved    ApprovalResolution = "approved"
+	ApprovalResolutionRejected    ApprovalResolution = "rejected"
+	ApprovalResolutionInvalidated ApprovalResolution = "invalidated"
+	ApprovalProposalExpired       string             = "approval_proposal_expired"
+	ApprovalProposalMismatch      string             = "approval_proposal_mismatch"
+)
+
+type ToolApprovalInvalidation struct {
+	ToolCallID    string
+	ActionVersion int
+	ProposalHash  string
+	ErrorCode     string
 }
 
 func AppendSteer(current RuntimeState, request SteerRequest) (RuntimeTransition, bool, error) {
@@ -161,6 +207,7 @@ func AppendSteer(current RuntimeState, request SteerRequest) (RuntimeTransition,
 		return RuntimeTransition{}, false, ErrSteerConflict
 	}
 	next := current
+	next.Limits = cloneRuntimeLimits(current.Limits)
 	next.StateVersion++
 	next.PendingSteers = append(append([]PendingSteer(nil), current.PendingSteers...), PendingSteer{
 		ClientRequestID: request.ClientRequestID,
@@ -223,6 +270,23 @@ func runtimeStatusTerminal(status RunStatus) bool {
 	return status == RunSucceeded || status == RunFailed || status == RunCancelled
 }
 
+// ExpireRuntimeAt applies the immutable runtime deadline stored in the
+// checkpoint. Recovery calls this before resuming work so a restart cannot
+// extend the execution window.
+func ExpireRuntimeAt(current RuntimeState, now time.Time) (RuntimeTransition, bool, error) {
+	if err := validateRuntimeState(current); err != nil {
+		return RuntimeTransition{}, false, err
+	}
+	if now.IsZero() {
+		return RuntimeTransition{}, false, errors.New("agent runtime deadline check time is invalid")
+	}
+	if current.Limits == nil || runtimeStatusTerminal(current.Status) || now.Before(current.Limits.DeadlineAt) {
+		return RuntimeTransition{State: current}, false, nil
+	}
+	transition, err := Terminate(current, FailureRuntimeDeadlineExceeded)
+	return transition, err == nil, err
+}
+
 // BeginModelRequest 在首个供应商请求发出前持久化 queued -> running；
 // 后续模型步骤已经处于 running，不重复制造状态事件。
 func BeginModelRequest(current RuntimeState) (RuntimeTransition, error) {
@@ -233,6 +297,7 @@ func BeginModelRequest(current RuntimeState) (RuntimeTransition, error) {
 		return RuntimeTransition{}, errors.New("agent runtime is not queued for a model request")
 	}
 	next := current
+	next.Limits = cloneRuntimeLimits(current.Limits)
 	next.StateVersion++
 	next.Status = RunRunning
 	if err := validateRuntimeState(next); err != nil {
@@ -294,10 +359,14 @@ func Terminate(current RuntimeState, failureCode string) (RuntimeTransition, err
 }
 
 func Advance(current RuntimeState, input RuntimeInput) (RuntimeTransition, error) {
+	return AdvanceForToolSchema(current, input, CurrentToolSchemaVersion)
+}
+
+func AdvanceForToolSchema(current RuntimeState, input RuntimeInput, toolSchemaVersion int) (RuntimeTransition, error) {
 	if err := validateAdvancingState(current); err != nil {
 		return RuntimeTransition{}, err
 	}
-	if err := input.Decision.Validate(); err != nil {
+	if err := input.Decision.ValidateForToolSchema(toolSchemaVersion); err != nil {
 		return RuntimeTransition{}, err
 	}
 	var decisionExpected ExpectedDelivery
@@ -309,6 +378,7 @@ func Advance(current RuntimeState, input RuntimeInput) (RuntimeTransition, error
 		decisionExpected = input.Decision.Final.ExpectedDelivery
 	}
 	next := current
+	next.Limits = cloneRuntimeLimits(current.Limits)
 	next.StateVersion++
 	next.StepNumber++
 	if current.ExpectedDelivery == nil {
@@ -366,9 +436,17 @@ func Advance(current RuntimeState, input RuntimeInput) (RuntimeTransition, error
 			next.FailureCode = "step_budget_exhausted"
 			return RuntimeTransition{State: next, EventKinds: []EventKind{EventRunFailed}}, nil
 		}
-		policy, ok := ToolPolicyFor(input.Decision.ToolCall.ToolName)
+		policy, ok := ToolPolicyForSchema(input.Decision.ToolCall.ToolName, toolSchemaVersion)
 		if !ok {
 			return RuntimeTransition{}, errors.New("agent tool policy is unavailable")
+		}
+		if next.Limits != nil {
+			if next.Limits.ToolCallsUsed >= next.Limits.MaxToolCalls {
+				next.Status = RunFailed
+				next.FailureCode = "tool_call_budget_exhausted"
+				return RuntimeTransition{State: next, EventKinds: []EventKind{EventRunFailed}}, nil
+			}
+			next.Limits.ToolCallsUsed++
 		}
 		next.Status = RunWaitingTool
 		next.PendingToolCall = input.Decision.ToolCall
@@ -515,7 +593,7 @@ func ResolveTool(current RuntimeState, resolution ToolResolution) (RuntimeTransi
 		ToolCallID: resolution.ToolCallID, ActionVersion: resolution.ActionVersion,
 		Succeeded: resolution.Succeeded, Output: append(json.RawMessage(nil), output...), ErrorCode: resolution.ErrorCode,
 	}
-	if resolution.Succeeded && current.PendingToolCall.ToolName == ToolSkillLoad {
+	if resolution.Succeeded && current.PendingToolCall.ToolName == ToolSkillsLoad {
 		loaded, err := resolvedSkillDir(current.Configuration.Skills, resolution.Output)
 		if err != nil {
 			return RuntimeTransition{}, err
@@ -560,6 +638,7 @@ func ReviewToolApproval(current RuntimeState, approval ToolApproval) (RuntimeTra
 		return RuntimeTransition{}, errors.New("agent runtime is not waiting for tool approval")
 	}
 	approval.ToolCallID = strings.TrimSpace(approval.ToolCallID)
+	approval.ProposalHash = strings.TrimSpace(approval.ProposalHash)
 	if approval.ToolCallID != current.PendingToolCall.ToolCallID || approval.ActionVersion != current.PendingToolCall.ActionVersion {
 		return RuntimeTransition{}, errors.New("agent tool approval identity is invalid")
 	}
@@ -576,12 +655,12 @@ func ReviewToolApproval(current RuntimeState, approval ToolApproval) (RuntimeTra
 				ToolCallID: approval.ToolCallID, ActionVersion: approval.ActionVersion,
 				Succeeded: false, Output: json.RawMessage(`{}`), ErrorCode: "step_budget_exhausted",
 			}
-			return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunFailed}}, nil
+			return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunFailed}, ApprovalProposalHash: approval.ProposalHash, ApprovalResolution: ApprovalResolutionApproved}, nil
 		}
 		next.Status = RunWaitingTool
-		return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventRunStatusChanged}}, nil
+		return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventRunStatusChanged}, ApprovalProposalHash: approval.ProposalHash, ApprovalResolution: ApprovalResolutionApproved}, nil
 	case ToolApprovalRejected:
-		next.Status = RunCancelled
+		next.Status = RunRunning
 		next.PendingToolCall = nil
 		next.PendingToolStarted = false
 		next.LastToolResult = &ToolResult{
@@ -589,10 +668,56 @@ func ReviewToolApproval(current RuntimeState, approval ToolApproval) (RuntimeTra
 			Succeeded: false, Output: json.RawMessage(`{}`), ErrorCode: "tool_approval_rejected",
 		}
 		next.FailureCode = ""
-		return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunInterrupted}}, nil
+		if next.StepNumber >= next.MaxSteps {
+			next.Status = RunFailed
+			next.FailureCode = "step_budget_exhausted"
+			return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunFailed}, ApprovalProposalHash: approval.ProposalHash, ApprovalResolution: ApprovalResolutionRejected}, nil
+		}
+		return RuntimeTransition{State: next, EventKinds: []EventKind{EventApprovalDecided, EventToolResult, EventRunStatusChanged}, ApprovalProposalHash: approval.ProposalHash, ApprovalResolution: ApprovalResolutionRejected}, nil
 	default:
 		return RuntimeTransition{}, errors.New("agent tool approval decision is invalid")
 	}
+}
+
+func InvalidateToolApproval(current RuntimeState, invalidation ToolApprovalInvalidation) (RuntimeTransition, error) {
+	if err := validateRuntimeState(current); err != nil {
+		return RuntimeTransition{}, err
+	}
+	if current.Status != RunWaitingApproval || current.PendingToolCall == nil {
+		return RuntimeTransition{}, errors.New("agent runtime is not waiting for tool approval")
+	}
+	invalidation.ToolCallID = strings.TrimSpace(invalidation.ToolCallID)
+	invalidation.ProposalHash = strings.TrimSpace(invalidation.ProposalHash)
+	invalidation.ErrorCode = strings.TrimSpace(invalidation.ErrorCode)
+	if invalidation.ToolCallID != current.PendingToolCall.ToolCallID || invalidation.ActionVersion != current.PendingToolCall.ActionVersion {
+		return RuntimeTransition{}, errors.New("agent tool approval invalidation identity is invalid")
+	}
+	if !validSHA256(invalidation.ProposalHash) {
+		return RuntimeTransition{}, errors.New("agent tool approval invalidation proposal hash is invalid")
+	}
+	if invalidation.ErrorCode != ApprovalProposalExpired && invalidation.ErrorCode != ApprovalProposalMismatch {
+		return RuntimeTransition{}, errors.New("agent tool approval invalidation error code is invalid")
+	}
+	next := current
+	next.StateVersion++
+	next.Status = RunRunning
+	next.PendingToolCall = nil
+	next.PendingToolStarted = false
+	next.LastToolResult = &ToolResult{
+		ToolCallID: invalidation.ToolCallID, ActionVersion: invalidation.ActionVersion,
+		Succeeded: false, Output: json.RawMessage(`{}`), ErrorCode: invalidation.ErrorCode,
+	}
+	next.FailureCode = ""
+	events := []EventKind{EventToolResult, EventRunStatusChanged}
+	if next.StepNumber >= next.MaxSteps {
+		next.Status = RunFailed
+		next.FailureCode = "step_budget_exhausted"
+		events = []EventKind{EventToolResult, EventRunFailed}
+	}
+	return RuntimeTransition{
+		State: next, EventKinds: events, ApprovalProposalHash: invalidation.ProposalHash,
+		ApprovalResolution: ApprovalResolutionInvalidated,
+	}, nil
 }
 
 func validateAdvancingState(state RuntimeState) error {
@@ -617,6 +742,9 @@ func validateRuntimeState(state RuntimeState) error {
 	}
 	if !state.Status.Valid() {
 		return errors.New("agent runtime status is invalid")
+	}
+	if err := validateRuntimeLimits(state.Limits); err != nil {
+		return err
 	}
 	if state.PendingToolStarted && ((state.Status != RunWaitingTool && state.Status != RunCancelled) || state.PendingToolCall == nil) {
 		return errors.New("agent runtime tool execution state is invalid")
@@ -650,6 +778,32 @@ func validateRuntimeState(state RuntimeState) error {
 		return err
 	}
 	return nil
+}
+
+func cloneRuntimeLimits(limits *RuntimeLimits) *RuntimeLimits {
+	if limits == nil {
+		return nil
+	}
+	cloned := *limits
+	return &cloned
+}
+
+func validateRuntimeLimits(limits *RuntimeLimits) error {
+	if limits == nil {
+		return nil
+	}
+	if limits.MaxToolCalls < 1 || limits.MaxToolCalls > maxRuntimeToolCalls ||
+		limits.ToolCallsUsed < 0 || limits.ToolCallsUsed > limits.MaxToolCalls ||
+		limits.StartedAt.IsZero() || limits.DeadlineAt.IsZero() || !limits.DeadlineAt.After(limits.StartedAt) {
+		return errors.New("agent runtime limits are invalid")
+	}
+	return nil
+}
+
+// ValidateRuntimeState verifies a persisted checkpoint before recovery resumes
+// provider or tool execution. It performs no mutation and accepts no fallback.
+func ValidateRuntimeState(state RuntimeState) error {
+	return validateRuntimeState(state)
 }
 
 func validatePendingSteers(pendingSteers []PendingSteer) error {
@@ -707,30 +861,18 @@ func validateClarificationState(state RuntimeState) error {
 	return nil
 }
 
-type resolvedSkillLoad struct {
-	Dir          string `json:"dir"`
-	Name         string `json:"name"`
-	Version      int    `json:"version"`
-	Instructions string `json:"instructions"`
-}
-
 func resolvedSkillDir(selected []SkillSelection, output json.RawMessage) (string, error) {
-	decoder := json.NewDecoder(bytes.NewReader(output))
-	decoder.DisallowUnknownFields()
-	var result resolvedSkillLoad
-	if err := decoder.Decode(&result); err != nil {
+	decoded, err := DecodeCapabilityResult(ToolSkillsLoad, output)
+	if err != nil {
 		return "", errors.New("agent skill load result is invalid")
 	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+	result, ok := decoded.(SkillsLoadResult)
+	if !ok {
 		return "", errors.New("agent skill load result is invalid")
 	}
-	result.Dir = strings.TrimSpace(result.Dir)
-	result.Name = strings.TrimSpace(result.Name)
-	result.Instructions = strings.TrimSpace(result.Instructions)
 	for _, skill := range selected {
-		if skill.Dir == result.Dir && skill.Name == result.Name && skill.Version == result.Version && skill.Instructions == result.Instructions {
-			return result.Dir, nil
+		if skill.Dir == result.SkillDir && skill.Version == result.Version && skill.Checksum == result.Checksum && skill.Instructions == result.Instructions {
+			return result.SkillDir, nil
 		}
 	}
 	return "", errors.New("agent skill load result conflicts with frozen selection")
@@ -784,15 +926,19 @@ func ValidateRunConfiguration(configuration RunConfiguration) error {
 	if configuration.ExecutionMode != ExecutionGuided && configuration.ExecutionMode != ExecutionAutomatic {
 		return errors.New("agent runtime execution mode is invalid")
 	}
-	for _, selection := range []*GenerationModelSelection{configuration.GenerationModels.Image, configuration.GenerationModels.Video} {
+	for _, selection := range []*GenerationModelSelection{configuration.GenerationModels.Image, configuration.GenerationModels.Video, configuration.GenerationModels.Audio, configuration.GenerationModels.Vision} {
 		if selection == nil {
 			continue
 		}
 		selection.ChannelID = strings.TrimSpace(selection.ChannelID)
+		selection.ModelRecordID = strings.TrimSpace(selection.ModelRecordID)
 		selection.Model = strings.TrimSpace(selection.Model)
-		if selection.ChannelID == "" || len(selection.ChannelID) > 80 || selection.Model == "" || len(selection.Model) > 120 {
+		if selection.ChannelID == "" || len(selection.ChannelID) > 80 || len(selection.ModelRecordID) > 80 || selection.Model == "" || len(selection.Model) > 120 || selection.PriceVersion < 0 {
 			return errors.New("agent runtime generation model selection is invalid")
 		}
+	}
+	if vision := configuration.GenerationModels.Vision; vision != nil && (vision.ModelRecordID == "" || vision.PriceVersion <= 0) {
+		return errors.New("agent runtime vision model snapshot is invalid")
 	}
 	if len(configuration.Skills) > 8 {
 		return errors.New("agent runtime skill selection is invalid")
@@ -816,26 +962,75 @@ func ValidateRunConfiguration(configuration RunConfiguration) error {
 		}
 		previousDir = skill.Dir
 		totalInstructions += len(skill.Instructions)
+		if len(skill.CapabilityManifest.Specialists) > 0 || len(skill.CapabilityManifest.Tools) > 0 || len(skill.CapabilityManifest.ArtifactSchemas) > 0 {
+			if err := ValidateSkillCapabilityManifest(skill.CapabilityManifest); err != nil {
+				return errors.New("agent runtime skill capability manifest is invalid")
+			}
+			if strings.TrimSpace(skill.SourceKind) != skill.SourceKind || strings.TrimSpace(skill.SourceLicense) != skill.SourceLicense ||
+				skill.SourceKind == "" || len(skill.SourceKind) > 32 || skill.SourceLicense == "" || len(skill.SourceLicense) > 80 ||
+				strings.TrimSpace(skill.SourceURL) != skill.SourceURL || len(skill.SourceURL) > 1000 ||
+				strings.TrimSpace(skill.SourceRevision) != skill.SourceRevision || len(skill.SourceRevision) > 160 ||
+				strings.TrimSpace(skill.PublishedAt) != skill.PublishedAt || skill.PublishedAt == "" || len(skill.PublishedAt) > 64 {
+				return errors.New("agent runtime frozen skill source facts are invalid")
+			}
+		}
 	}
 	if totalInstructions > 64*1024 {
 		return errors.New("agent runtime skill selection is invalid")
 	}
-	if len(configuration.Attachments) > 4 {
+	if len(configuration.Attachments) > 12 {
 		return errors.New("agent runtime attachment selection is invalid")
 	}
 	previousResourceID := ""
+	var totalAttachmentBytes int64
 	for _, attachment := range configuration.Attachments {
 		attachment.ResourceID = strings.TrimSpace(attachment.ResourceID)
 		attachment.Name = strings.TrimSpace(attachment.Name)
+		attachment.Kind = strings.TrimSpace(attachment.Kind)
 		attachment.MIMEType = strings.TrimSpace(attachment.MIMEType)
 		if attachment.ResourceID == "" || len(attachment.ResourceID) > 80 || attachment.Name == "" || len(attachment.Name) > 240 ||
-			!strings.HasPrefix(attachment.MIMEType, "image/") || len(attachment.MIMEType) > 120 || attachment.Width < 0 || attachment.Height < 0 ||
+			!validFrozenMediaMIME(attachment.Kind, attachment.MIMEType) || len(attachment.MIMEType) > 120 || attachment.SizeBytes <= 0 ||
+			attachment.SizeBytes > 4<<30 || !validFrozenMediaDimensions(attachment) ||
 			(previousResourceID != "" && attachment.ResourceID <= previousResourceID) {
 			return errors.New("agent runtime attachment selection is invalid")
 		}
+		if totalAttachmentBytes > (4<<30)-attachment.SizeBytes {
+			return errors.New("agent runtime attachment selection is invalid")
+		}
+		totalAttachmentBytes += attachment.SizeBytes
 		previousResourceID = attachment.ResourceID
 	}
 	return nil
+}
+
+func validFrozenMediaMIME(kind string, mimeType string) bool {
+	if mimeType == "" || strings.ToLower(mimeType) != mimeType || strings.ContainsAny(mimeType, "; ") {
+		return false
+	}
+	prefix := kind + "/"
+	if kind != "image" && kind != "audio" && kind != "video" || !strings.HasPrefix(mimeType, prefix) || len(mimeType) <= len(prefix) {
+		return false
+	}
+	for _, character := range strings.TrimPrefix(mimeType, prefix) {
+		if (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '.' || character == '+' || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validFrozenMediaDimensions(attachment ResourceAttachment) bool {
+	switch attachment.Kind {
+	case "image":
+		return attachment.Width > 0 && attachment.Height > 0 && attachment.DurationMS >= 0
+	case "audio":
+		return attachment.Width == 0 && attachment.Height == 0 && attachment.DurationMS > 0
+	case "video":
+		return attachment.Width > 0 && attachment.Height > 0 && attachment.DurationMS > 0
+	default:
+		return false
+	}
 }
 
 func validFailureCode(value string) bool {

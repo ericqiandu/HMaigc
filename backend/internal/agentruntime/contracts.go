@@ -7,6 +7,17 @@ import (
 
 type TenantKind string
 
+type ReasoningHost string
+
+const (
+	ReasoningHostManaged    ReasoningHost = "managed"
+	ReasoningHostLocalCodex ReasoningHost = "local_codex"
+)
+
+func (host ReasoningHost) Valid() bool {
+	return host == ReasoningHostManaged || host == ReasoningHostLocalCodex
+}
+
 const (
 	TenantPersonal TenantKind = "personal"
 	TenantTeam     TenantKind = "team"
@@ -42,9 +53,32 @@ func (status ThreadStatus) Valid() bool {
 type RunStatus string
 
 const (
-	CurrentRuntimeVersion    = 2
-	CurrentPolicyVersion     = 2
-	CurrentToolSchemaVersion = 3
+	ProductionRuntimeVersion         = 4
+	ProductionPolicyVersion          = 4
+	ProductionToolSchemaVersion      = 5
+	CurrentProductionSchemaVersion   = 2
+	ProductionAgentUIProtocolVersion = 4
+	CloudRuntimeVersion              = 5
+	CloudPolicyVersion               = 5
+	CloudToolSchemaVersion           = 8
+	CloudAgentUIProtocolVersion      = 5
+	RetiredCloudToolSchemaVersion    = 7
+	RetiredRuntimeVersion            = 3
+	RetiredPolicyVersion             = 3
+	RetiredToolSchemaVersion         = 4
+	RetiredProductionSchemaVersion   = 1
+	RetiredAgentUIProtocolVersion    = 3
+	LegacyRuntimeVersion             = 2
+	LegacyPolicyVersion              = 2
+	LegacyToolSchemaVersion          = 3
+
+	// Current* is a hard cut to the cloud capability runtime. Production*
+	// remains an immutable historical fact for v5 audit records only.
+	CurrentRuntimeVersion    = CloudRuntimeVersion
+	CurrentPolicyVersion     = CloudPolicyVersion
+	CurrentToolSchemaVersion = CloudToolSchemaVersion
+
+	FailureRuntimeSchemaRetired = "runtime_schema_retired"
 
 	RunQueued          RunStatus = "queued"
 	RunRunning         RunStatus = "running"
@@ -55,6 +89,98 @@ const (
 	RunFailed          RunStatus = "failed"
 	RunCancelled       RunStatus = "cancelled"
 )
+
+type SpecialistKey string
+
+const (
+	SpecialistNarrative     SpecialistKey = "narrative"
+	SpecialistAsset         SpecialistKey = "asset"
+	SpecialistStoryboard    SpecialistKey = "storyboard"
+	SpecialistVisual        SpecialistKey = "visual"
+	SpecialistVideoAssembly SpecialistKey = "video_assembly"
+	SpecialistAudio         SpecialistKey = "audio"
+)
+
+func (key SpecialistKey) Valid() bool {
+	switch key {
+	case SpecialistNarrative, SpecialistAsset, SpecialistStoryboard, SpecialistVisual, SpecialistVideoAssembly, SpecialistAudio:
+		return true
+	default:
+		return false
+	}
+}
+
+type ProductionStageStatus string
+
+const (
+	StagePlanned        ProductionStageStatus = "planned"
+	StageRunning        ProductionStageStatus = "running"
+	StageAwaitingReview ProductionStageStatus = "awaiting_review"
+	StageApproved       ProductionStageStatus = "approved"
+	StageCompleted      ProductionStageStatus = "completed"
+	StageFailed         ProductionStageStatus = "failed"
+	StageStopped        ProductionStageStatus = "stopped"
+	StageStale          ProductionStageStatus = "stale"
+)
+
+func (status ProductionStageStatus) Valid() bool {
+	switch status {
+	case StagePlanned, StageRunning, StageAwaitingReview, StageApproved, StageCompleted, StageFailed, StageStopped, StageStale:
+		return true
+	default:
+		return false
+	}
+}
+
+type StageReviewDecision string
+
+const (
+	StageReviewApprove         StageReviewDecision = "approved"
+	StageReviewRequestRevision StageReviewDecision = "revision_requested"
+	StageReviewStop            StageReviewDecision = "stopped"
+)
+
+func (decision StageReviewDecision) Valid() bool {
+	return decision == StageReviewApprove || decision == StageReviewRequestRevision || decision == StageReviewStop
+}
+
+type ReviewPolicy string
+
+const ReviewRequired ReviewPolicy = "required"
+
+func (policy ReviewPolicy) Valid() bool {
+	return policy == ReviewRequired
+}
+
+type CostPolicy string
+
+const (
+	CostNone             CostPolicy = "none"
+	CostApprovalRequired CostPolicy = "approval_required"
+)
+
+func (policy CostPolicy) Valid() bool {
+	return policy == CostNone || policy == CostApprovalRequired
+}
+
+// AgentToolName keeps one canonical decoder-facing tool identity across
+// current cloud capabilities and immutable historical audit records.
+type AgentToolName = ToolName
+
+const (
+	ToolSpecialistDelegate AgentToolName = "specialist.delegate"
+	ToolVisionAnalyze      AgentToolName = "vision.analyze"
+	ToolCanvasProject      AgentToolName = "canvas.project"
+)
+
+type StageReviewCommand struct {
+	StageVersion      int64                   `json:"stageVersion"`
+	RevisionID        string                  `json:"revisionId"`
+	Decision          StageReviewDecision     `json:"decision"`
+	ClientRequestID   string                  `json:"clientRequestId"`
+	Comment           string                  `json:"comment,omitempty"`
+	PublicationIntent *AssetPublicationIntent `json:"publicationIntent,omitempty"`
+}
 
 func (status RunStatus) Valid() bool {
 	switch status {

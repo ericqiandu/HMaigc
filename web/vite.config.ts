@@ -6,14 +6,26 @@ import { defineConfig } from "vite";
 
 const webDir = dirname(fileURLToPath(import.meta.url));
 const appVersion = readFileSync(resolve(webDir, "../VERSION"), "utf8").trim();
-const staticAssetBaseURL = (process.env.VITE_STATIC_ASSET_BASE_URL || "").trim();
+const staticAssetBaseURL = (process.env.VITE_STATIC_ASSET_BASE_URL ?? "").trim();
 
-if (staticAssetBaseURL && !staticAssetBaseURL.startsWith("https://")) {
-    throw new Error("VITE_STATIC_ASSET_BASE_URL 必须使用 HTTPS");
+function validateStaticAssetBaseURL(value: string): string {
+    if (!value) return "/";
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
+        throw new Error("VITE_STATIC_ASSET_BASE_URL 必须是无凭据、查询或片段的 HTTPS URL");
+    }
+    return `${url.toString().replace(/\/+$/, "")}/`;
 }
 
+export const criticalUiCodeSplittingGroup = {
+    name: "app-ui-core",
+    test: /node_modules[\\/]antd[\\/]es[\\/](?:app|config-provider)(?:[\\/]|$)/,
+    priority: 10,
+    includeDependenciesRecursively: true,
+};
+
 export default defineConfig({
-    base: staticAssetBaseURL ? `${staticAssetBaseURL.replace(/\/+$/, "")}/` : "/",
+    base: validateStaticAssetBaseURL(staticAssetBaseURL),
     plugins: [react()],
     define: {
         __APP_VERSION__: JSON.stringify(appVersion),
@@ -39,5 +51,26 @@ export default defineConfig({
     build: {
         manifest: true,
         chunkSizeWarningLimit: 900,
+        rolldownOptions: {
+            output: {
+                codeSplitting: {
+                    groups: [
+                        {
+                            name: "icons",
+                            test: /node_modules[\\/]lucide-react[\\/]/,
+                            priority: 30,
+                            includeDependenciesRecursively: false,
+                        },
+                        {
+                            name: "react-core",
+                            test: /node_modules[\\/](?:react|react-dom|react-router|scheduler)[\\/]/,
+                            priority: 20,
+                            includeDependenciesRecursively: false,
+                        },
+                        criticalUiCodeSplittingGroup,
+                    ],
+                },
+            },
+        },
     },
 });

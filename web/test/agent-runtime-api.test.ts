@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { agentRuntimeClient, parseAgentRuntimeEvent, parseAgentRuntimeView, parseAgentThreadHistory } from "../src/services/api/agent-runtime";
+import { agentRuntimeClient, parseAgentRuntimeEvent, parseAgentRuntimeView, parseAgentThreadHistory, type AgentToolName } from "../src/services/api/agent-runtime";
 
 const state = {
     stateVersion: 2,
@@ -10,14 +10,22 @@ const state = {
     clarificationHistory: [],
     pendingToolCall: {
         toolCallId: "tool-1",
-        toolName: "production.render",
+        toolName: "canvas.apply_ops",
         actionVersion: 3,
-        arguments: { baseRevision: 7, patch: { upsertNodes: [] } },
+        arguments: {
+            canvasId: "canvas-1",
+            baseRevision: 7,
+            clientMutationId: "mutation-1",
+            operations: [{ operationId: "operation-1", type: "select_nodes", nodeIds: ["node-1"] }],
+        },
         expectedDelivery: { kind: "canvas_change", targetCanvasId: "canvas-1", completionCriteria: [{ fact: "canvas_revision", artifact: "canvas_revision" }] },
     },
     userMessage: "整理当前画布",
     configuration: {
-        generationModels: { image: { channelId: "channel-image", model: "gpt-image-2" } },
+        generationModels: {
+            image: { channelId: "channel-image", model: "gpt-image-2" },
+            vision: { channelId: "channel-deepseek", modelRecordId: "vision-record-1", model: "deepseek-v4-flash-vision-exp", priceVersion: 4 },
+        },
         skills: [{ dir: "storyboard", name: "分镜", description: "生成分镜", instructions: "按镜头输出", version: 1, checksum: "a".repeat(64) }],
         attachments: [{ resourceId: "resource-1", name: "参考图.png", mimeType: "image/png", width: 1024, height: 1024 }],
         executionMode: "automatic",
@@ -30,6 +38,7 @@ const view = {
         threadId: "thread-1",
         actorUserId: "user-1",
         clientRequestId: "request-1",
+        reasoningHost: "managed",
         status: "waiting_approval",
         lastEventSequence: 4,
         stateVersion: 2,
@@ -37,20 +46,29 @@ const view = {
         maxSteps: 8,
         modelRecordId: "model-1",
         modelKey: "agent-model",
-        toolSchemaVersion: 1,
-        runtimeVersion: 1,
-        policyVersion: 1,
+        toolSchemaVersion: 8,
+        runtimeVersion: 5,
+        policyVersion: 5,
         createdAt: "2026-08-15T00:00:00Z",
         updatedAt: "2026-08-15T00:00:01Z",
     },
     state,
+    pendingApproval: {
+        toolCallId: "tool-1",
+        toolName: "canvas.apply_ops",
+        actionVersion: 3,
+        proposalHash: "b".repeat(64),
+        expiresAt: "2026-08-15T00:05:00Z",
+        effect: { kind: "canvas_mutation", summary: "执行 1 项画布操作", targetIds: ["canvas-1"] },
+    },
 };
+const { pendingApproval: _pendingApproval, ...viewWithoutPendingApproval } = view;
 
 test("Agent Runtime DTO 严格保留审批身份与结构化参数", () => {
     expect(parseAgentRuntimeView(view)).toEqual(view);
     expect(
         parseAgentRuntimeEvent({
-            protocolVersion: 2,
+            protocolVersion: 5,
             threadId: "thread-1",
             runId: "run-1",
             sequence: 4,
@@ -60,22 +78,164 @@ test("Agent Runtime DTO 严格保留审批身份与结构化参数", () => {
             payload: { toolCallId: "tool-1", actionVersion: 3 },
             createdAt: "2026-08-15T00:00:01Z",
         }),
-    ).toEqual({ protocolVersion: 2, threadId: "thread-1", runId: "run-1", sequence: 4, kind: "approval.requested", itemId: "approval-1", itemKind: "approval", payload: { toolCallId: "tool-1", actionVersion: 3 }, createdAt: "2026-08-15T00:00:01Z" });
+    ).toEqual({ protocolVersion: 5, threadId: "thread-1", runId: "run-1", sequence: 4, kind: "approval.requested", itemId: "approval-1", itemKind: "approval", payload: { toolCallId: "tool-1", actionVersion: 3 }, createdAt: "2026-08-15T00:00:01Z" });
 });
 
-test.each(["skill.load", "production.plan", "production.render", "canvas.commit"])("Agent Runtime DTO 接受当前生产工具 %s", (toolName) => {
+test("付费媒体审批严格保留服务端冻结报价", () => {
+    const mediaState = {
+        ...state,
+        pendingToolCall: {
+            ...state.pendingToolCall,
+            toolName: "media.generate",
+            arguments: {
+                mediaKind: "video",
+                modelRecordId: "video-model-record",
+                modelKey: "seedance-2.0",
+                parameters: { prompt: "雨夜追逐", durationSeconds: 5 },
+                sourceResourceIds: [],
+                targetCanvasNodeId: "video-node",
+                clientRequestId: "generate-video-1",
+            },
+        },
+    };
+    const mediaView = {
+        ...view,
+        state: mediaState,
+        pendingApproval: {
+            ...view.pendingApproval,
+            toolName: "media.generate",
+            effect: { kind: "media_generation", summary: "生成 video 媒体", targetIds: ["video-node"] },
+            quote: {
+                modelRecordId: "video-model-record",
+                modelKey: "seedance-2.0",
+                priceVersion: 7,
+                amountMicrocredits: 1_250_000,
+            },
+        },
+    };
+
+    expect(parseAgentRuntimeView(mediaView).pendingApproval?.quote).toEqual(mediaView.pendingApproval.quote);
+    const { quote: _quote, ...missingQuote } = mediaView.pendingApproval;
+    expect(() => parseAgentRuntimeView({ ...mediaView, pendingApproval: missingQuote })).toThrow("冻结报价");
+});
+
+test("付费视觉审批严格绑定 Run 冻结模型与报价", () => {
+    const visionArguments = {
+        modelRecordId: "vision-record-1",
+        modelKey: "deepseek-v4-flash-vision-exp",
+        sourceResourceIds: ["resource-1"],
+        prompt: "提取画面事实",
+        detail: "low",
+        clientRequestId: "vision-request-1",
+    } as const;
+    const visionView = {
+        ...view,
+        state: { ...state, pendingToolCall: { ...state.pendingToolCall, toolName: "vision.analyze", arguments: visionArguments } },
+        pendingApproval: {
+            ...view.pendingApproval,
+            toolName: "vision.analyze",
+            effect: { kind: "vision_analysis", summary: "理解 1 张图片", targetIds: ["resource-1"] },
+            quote: { modelRecordId: "vision-record-1", modelKey: "deepseek-v4-flash-vision-exp", priceVersion: 4, amountMicrocredits: 800 },
+        },
+    };
+
+    expect(parseAgentRuntimeView(visionView).pendingApproval?.quote).toEqual(visionView.pendingApproval.quote);
+    const { quote: _quote, ...missingQuote } = visionView.pendingApproval;
+    expect(() => parseAgentRuntimeView({ ...visionView, pendingApproval: missingQuote })).toThrow("冻结报价");
+});
+
+test("服务端 Run 响应保留合法音频模型选择", () => {
+    const responseView = {
+        ...view,
+        state: {
+            ...state,
+            configuration: {
+                ...state.configuration,
+                generationModels: {
+                    ...state.configuration.generationModels,
+                    audio: { channelId: "channel-audio", model: "tts-model" },
+                },
+            },
+        },
+    };
+
+    expect(parseAgentRuntimeView(responseView).state.configuration.generationModels.audio).toEqual({
+        channelId: "channel-audio",
+        model: "tts-model",
+    });
+});
+
+test("Agent UI v5 拒绝退役的产物审核事件与旧协议", () => {
+    const event = {
+        protocolVersion: 5,
+        threadId: "thread-1",
+        runId: "run-1",
+        sequence: 9,
+        kind: "item.completed",
+        itemId: "artifact-review-1",
+        itemKind: "artifact",
+        payload: {
+            contentType: "artifact_review",
+            stageId: "stage-script",
+            stageVersion: 3,
+            artifactId: "artifact-script",
+            revisionId: "revision-script-1",
+            artifactSchema: "script_bundle.v1",
+            summary: "剧本初稿待确认",
+        },
+        createdAt: "2026-08-28T00:00:00Z",
+    } as const;
+
+    expect(() => parseAgentRuntimeEvent(event)).toThrow("退役");
+    expect(() => parseAgentRuntimeEvent({ ...event, protocolVersion: 2 })).toThrow("协议版本");
+    expect(() => parseAgentRuntimeEvent({ ...event, payload: { ...event.payload, signedUrl: "https://example.test/transient" } })).toThrow();
+
+    expect(() =>
+        parseAgentRuntimeEvent({
+            ...event,
+            itemId: "stage-review-1",
+            itemKind: "approval",
+            payload: {
+                contentType: "stage_review_resolution",
+                stageId: "stage-script",
+                stageVersion: 3,
+                revisionId: "revision-script-1",
+                decision: "approved",
+                clientRequestId: "review-1",
+                resultStageVersion: 4,
+                resultStatus: "approved",
+                resultReviewRevisionId: "revision-script-1",
+                resultUpdatedAt: "2026-08-28T00:00:00Z",
+            },
+        }),
+    ).toThrow("退役");
+});
+
+const productionToolCases: Array<[AgentToolName, Record<string, unknown>]> = [
+    ["canvas.read", { canvasId: "canvas-1", selectedNodeIds: ["node-1"], includeViewport: true }],
+    ["canvas.apply_ops", state.pendingToolCall.arguments],
+    ["assets.read", { domainProjectId: "project-1", resourceIds: ["resource-1"], limit: 20 }],
+    ["assets.publish", { resourceId: "resource-1", domainProjectId: "project-1", displayName: "角色图", clientMutationId: "publish-1" }],
+    ["media.generate", { mediaKind: "image", modelRecordId: "model-1", modelKey: "gpt-image-2", parameters: { prompt: "生成角色图" }, sourceResourceIds: [], targetCanvasNodeId: "node-1", clientRequestId: "generate-1" }],
+    ["vision.analyze", { modelRecordId: "vision-record-1", modelKey: "deepseek-v4-flash-vision-exp", sourceResourceIds: ["resource-1"], prompt: "提取画面事实", detail: "low", clientRequestId: "vision-1" }],
+    ["skills.load", { skillDir: "storyboard", version: 1, checksum: "a".repeat(64) }],
+];
+
+test.each(productionToolCases)("Agent Runtime DTO 接受当前生产工具 %s", (toolName, toolArguments) => {
     const productionState = {
         ...state,
         status: "waiting_tool",
         pendingToolCall: {
             ...state.pendingToolCall,
             toolName,
+            arguments: toolArguments,
         },
     };
     const productionView = {
         ...view,
         run: { ...view.run, status: "waiting_tool" },
         state: productionState,
+        pendingApproval: undefined,
     };
 
     expect(parseAgentRuntimeView(productionView).state.pendingToolCall?.toolName).toBe(toolName);
@@ -88,13 +248,13 @@ test("模型决策拒绝状态保留结构化自修事实", () => {
         status: "running",
         decisionFeedback: { code: "model_decision_invalid", reason: "answer delivery facts are inconsistent" },
     };
-    expect(parseAgentRuntimeView({ ...view, run: { ...view.run, status: "running" }, state: repairState }).state.decisionFeedback).toEqual(repairState.decisionFeedback);
+    expect(parseAgentRuntimeView({ ...viewWithoutPendingApproval, run: { ...view.run, status: "running" }, state: repairState }).state.decisionFeedback).toEqual(repairState.decisionFeedback);
 });
 
 test.each(["required_skill_not_loaded", "clarification_identity_reused"])("Agent Runtime DTO 接受后端自修反馈 %s", (code) => {
     const { pendingToolCall: _pendingToolCall, ...stateWithoutPendingTool } = state;
     const parsed = parseAgentRuntimeView({
-        ...view,
+        ...viewWithoutPendingApproval,
         run: { ...view.run, status: "running" },
         state: { ...stateWithoutPendingTool, status: "running", decisionFeedback: { code, reason: "repair required" } },
     });
@@ -114,7 +274,7 @@ test("交付合同漂移状态保留冻结合同修复事实", () => {
         },
         decisionFeedback: { code: "delivery_contract_changed", reason: "expectedDelivery must remain frozen" },
     };
-    expect(parseAgentRuntimeView({ ...view, run: { ...view.run, status: "running" }, state: repairState }).state.expectedDelivery).toEqual(repairState.expectedDelivery);
+    expect(parseAgentRuntimeView({ ...viewWithoutPendingApproval, run: { ...view.run, status: "running" }, state: repairState }).state.expectedDelivery).toEqual(repairState.expectedDelivery);
 });
 
 test("运行配置缺少附件或执行模式时显式拒绝而不是插入默认值", () => {
@@ -124,13 +284,39 @@ test("运行配置缺少附件或执行模式时显式拒绝而不是插入默�
     expect(() => parseAgentRuntimeView({ ...view, state: { ...state, configuration: withoutAttachments } })).toThrow("attachments");
 });
 
+test("当前 Run 严格保留服务端冻结的视觉模型且拒绝缺失或畸形版本", () => {
+    const parsed = parseAgentRuntimeView(view);
+    expect(parsed.state.configuration.generationModels.vision).toEqual({
+        channelId: "channel-deepseek",
+        modelRecordId: "vision-record-1",
+        model: "deepseek-v4-flash-vision-exp",
+        priceVersion: 4,
+    });
+
+    const { vision: _vision, ...withoutVision } = state.configuration.generationModels;
+    expect(() => parseAgentRuntimeView({ ...view, state: { ...state, configuration: { ...state.configuration, generationModels: withoutVision } } })).toThrow("vision");
+    expect(() =>
+        parseAgentRuntimeView({
+            ...view,
+            state: {
+                ...state,
+                configuration: {
+                    ...state.configuration,
+                    generationModels: { ...state.configuration.generationModels, vision: { ...state.configuration.generationModels.vision, priceVersion: 0 } },
+                },
+            },
+        }),
+    ).toThrow("priceVersion");
+});
+
 test("旧终态运行只读投影显式保留 historical 配置而不伪造用户选择", () => {
     const { pendingToolCall: _pendingToolCall, ...terminalState } = state;
     const parsed = parseAgentRuntimeView({
-        ...view,
+        ...viewWithoutPendingApproval,
         run: {
             ...view.run,
             status: "failed",
+            toolSchemaVersion: 1,
             runtimeVersion: 1,
             policyVersion: 1,
             completedAt: "2026-08-15T00:00:02Z",
@@ -151,6 +337,38 @@ test("旧终态运行只读投影显式保留 historical 配置而不伪造用�
     expect(parsed.state.configuration.executionMode).toBe("historical");
     expect(parsed.state.configuration.skills).toEqual([]);
     expect(parsed.state.configuration.attachments).toEqual([]);
+});
+
+test("终态 v3 运行保留原始执行模式并允许只读查看", () => {
+    const { pendingToolCall: _pendingToolCall, ...terminalState } = state;
+    const parsed = parseAgentRuntimeView({
+        ...viewWithoutPendingApproval,
+        run: {
+            ...view.run,
+            status: "failed",
+            runtimeVersion: 3,
+            policyVersion: 3,
+            toolSchemaVersion: 4,
+            completedAt: "2026-08-15T00:00:02Z",
+        },
+        state: {
+            ...terminalState,
+            status: "failed",
+            failureCode: "legacy_failure",
+        },
+    });
+
+    expect(parsed.state.configuration.executionMode).toBe("automatic");
+    expect(parsed.run.runtimeVersion).toBe(3);
+});
+
+test("活动运行只接受 5/5/8 合同，旧 v3 不可继续执行", () => {
+    expect(() =>
+        parseAgentRuntimeView({
+            ...view,
+            run: { ...view.run, runtimeVersion: 3, policyVersion: 3, toolSchemaVersion: 4 },
+        }),
+    ).toThrow("3/3/4");
 });
 
 test("historical 执行模式只接受首代已终结运行", () => {
@@ -177,7 +395,7 @@ test("未知运行状态与事件类型显式失败", () => {
     expect(() => parseAgentRuntimeView({ ...view, state: { ...state, status: "thinking" } })).toThrow("不受支持");
     expect(() =>
         parseAgentRuntimeEvent({
-            protocolVersion: 2,
+            protocolVersion: 5,
             threadId: "thread-1",
             runId: "run-1",
             sequence: 5,
@@ -305,7 +523,23 @@ test("会话历史拒绝状态、归属、时间、数量和必填字段冲突",
     ).toThrow("连续");
     expect(() =>
         parseAgentThreadHistory({
-            items: [{ ...history.items[0], turns: [{ ...history.items[0]!.turns[0], items: [{ ...history.items[0]!.turns[0]!.items[0], kind: "artifact", content: { artifactId: "artifact-1", kind: "image", planKey: "plan-1", planVersion: 1, resourceId: "resource-1", status: "succeeded", signedUrl: "https://example.invalid/signed" } }] }] }],
+            items: [
+                {
+                    ...history.items[0],
+                    turns: [
+                        {
+                            ...history.items[0]!.turns[0],
+                            items: [
+                                {
+                                    ...history.items[0]!.turns[0]!.items[0],
+                                    kind: "artifact",
+                                    content: { artifactId: "artifact-1", kind: "image", planKey: "plan-1", planVersion: 1, resourceId: "resource-1", status: "succeeded", signedUrl: "https://example.invalid/signed" },
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
         }),
     ).toThrow("signedUrl");
 });
@@ -366,7 +600,7 @@ const waitingInputState = {
 
 test("结构化追问 DTO 保留 pending、历史与 UI 时间线事件", () => {
     const parsed = parseAgentRuntimeView({
-        ...view,
+        ...viewWithoutPendingApproval,
         run: { ...view.run, status: "waiting_input" },
         state: waitingInputState,
     });
@@ -374,12 +608,14 @@ test("结构化追问 DTO 保留 pending、历史与 UI 时间线事件", () => 
     expect(parsed.state.pendingClarification?.answers[0]?.customText).toBe("都市夜景");
     expect(parsed.state.clarificationHistory[0]?.answers[0]?.customText).toBe("BMW X5");
     for (const kind of ["item.started", "item.delta", "item.completed"] as const) {
-        expect(parseAgentRuntimeEvent({ protocolVersion: 2, threadId: "thread-1", runId: "run-1", sequence: 7, kind, itemId: "clarification-1", itemKind: "clarification", payload: { request: clarificationRequest }, createdAt: "2026-08-15T00:00:04Z" }).kind).toBe(kind);
+        expect(
+            parseAgentRuntimeEvent({ protocolVersion: 5, threadId: "thread-1", runId: "run-1", sequence: 7, kind, itemId: "clarification-1", itemKind: "clarification", payload: { request: clarificationRequest }, createdAt: "2026-08-15T00:00:04Z" }).kind,
+        ).toBe(kind);
     }
 });
 
 test("UI 事件拒绝未知协议、缺失 itemId 与非法运行载荷", () => {
-    const base = { protocolVersion: 2, threadId: "thread-1", runId: "run-1", sequence: 8, createdAt: "2026-08-15T00:00:05Z" };
+    const base = { protocolVersion: 5, threadId: "thread-1", runId: "run-1", sequence: 8, createdAt: "2026-08-15T00:00:05Z" };
     expect(() => parseAgentRuntimeEvent({ ...base, protocolVersion: 1, kind: "item.delta", itemId: "message-1", payload: { delta: "a" } })).toThrow("协议版本");
     expect(() => parseAgentRuntimeEvent({ ...base, kind: "item.delta", payload: { delta: "a" } })).toThrow("itemId");
     expect(() => parseAgentRuntimeEvent({ ...base, kind: "item.delta", itemId: "message-1", payload: { delta: "a" } })).toThrow("itemKind");
@@ -391,7 +627,12 @@ test("UI 事件拒绝未知协议、缺失 itemId 与非法运行载荷", () => 
 });
 
 test.each(["user_message", "agent_message", "status", "clarification", "tool_call", "tool_result", "approval", "artifact", "error"] as const)("会话历史接受首期 Item 类型 %s", (kind) => {
-    const content = kind === "artifact" ? { artifactId: "artifact-1", kind: "image", planKey: "plan-1", planVersion: 1, resourceId: "resource-1", status: "succeeded" } : {};
+    const content =
+        kind === "artifact"
+            ? { artifactId: "artifact-1", kind: "image", planKey: "plan-1", planVersion: 1, resourceId: "resource-1", status: "succeeded" }
+            : kind === "tool_call"
+              ? { toolCallId: "tool-1", toolName: "canvas.read", actionVersion: 3, started: true }
+              : {};
     const source = history.items[0]!.turns[0]!.items[0]!;
     const parsed = parseAgentThreadHistory({ items: [{ ...history.items[0], turns: [{ ...history.items[0]!.turns[0], items: [{ ...source, kind, content }] }] }] });
     expect(parsed.items[0]?.turns[0]?.items[0]?.kind).toBe(kind);
@@ -506,10 +747,7 @@ test("追加指令与停止请求使用严格控制契约", async () => {
         await agentRuntimeClient.steer("run /1", { clientRequestId: "steer-1", message: "镜头节奏更快", expectedStateVersion: 2 });
         await agentRuntimeClient.interrupt("run /1", { expectedStateVersion: 3 });
         expect(requests.map((request) => request.url.endsWith("/agent/runs/run%20%2F1/steer") || request.url.endsWith("/agent/runs/run%20%2F1/interrupt"))).toEqual([true, true]);
-        expect(requests.map((request) => request.body)).toEqual([
-            { clientRequestId: "steer-1", message: "镜头节奏更快", expectedStateVersion: 2 },
-            { expectedStateVersion: 3 },
-        ]);
+        expect(requests.map((request) => request.body)).toEqual([{ clientRequestId: "steer-1", message: "镜头节奏更快", expectedStateVersion: 2 }, { expectedStateVersion: 3 }]);
     } finally {
         globalThis.fetch = originalFetch;
     }

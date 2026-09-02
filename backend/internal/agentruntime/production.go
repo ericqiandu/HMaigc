@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const (
@@ -13,6 +14,7 @@ const (
 
 type ImageRenderConfig struct {
 	Size                  string `json:"size"`
+	Resolution            string `json:"resolution"`
 	Quality               string `json:"quality,omitempty"`
 	Count                 int    `json:"count"`
 	TransparentBackground bool   `json:"transparentBackground,omitempty"`
@@ -26,14 +28,26 @@ type VideoRenderConfig struct {
 }
 
 type FrozenRenderQuote struct {
-	AmountMicrocredits        int64  `json:"amountMicrocredits"`
-	PerTaskAmountMicrocredits int64  `json:"perTaskAmountMicrocredits"`
-	PriceVersion              int64  `json:"priceVersion"`
-	BillingMode               string `json:"billingMode"`
-	PricingResolution         string `json:"pricingResolution,omitempty"`
-	PricingInputVariant       string `json:"pricingInputVariant,omitempty"`
-	Quantity                  int64  `json:"quantity"`
-	QuoteFingerprint          string `json:"quoteFingerprint"`
+	AmountMicrocredits        int64     `json:"amountMicrocredits"`
+	PerTaskAmountMicrocredits int64     `json:"perTaskAmountMicrocredits"`
+	PriceVersion              int64     `json:"priceVersion"`
+	BillingMode               string    `json:"billingMode"`
+	PricingResolution         string    `json:"pricingResolution,omitempty"`
+	PricingInputVariant       string    `json:"pricingInputVariant,omitempty"`
+	Quantity                  int64     `json:"quantity"`
+	QuoteFingerprint          string    `json:"quoteFingerprint"`
+	QuoteID                   string    `json:"quoteId"`
+	ApprovalFingerprint       string    `json:"approvalFingerprint"`
+	TaskID                    string    `json:"taskId"`
+	BillingIdempotencyKey     string    `json:"billingIdempotencyKey"`
+	ChannelModelID            string    `json:"channelModelId"`
+	Capability                string    `json:"capability"`
+	TaskType                  string    `json:"taskType"`
+	Operation                 string    `json:"operation"`
+	Prompt                    string    `json:"prompt"`
+	ParametersJSON            string    `json:"parametersJson"`
+	ProviderCapabilitiesJSON  string    `json:"providerCapabilitiesJson"`
+	ExpiresAt                 time.Time `json:"expiresAt"`
 }
 
 type ProductionVideoInputMode string

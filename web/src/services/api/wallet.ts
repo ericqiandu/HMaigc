@@ -1,5 +1,6 @@
 import axios from "axios";
 import type { ModelBrandKey } from "@/lib/model-brands";
+import type { ProviderModelCapabilities } from "@/stores/use-config-store";
 
 const api = axios.create({ baseURL: import.meta.env.VITE_CANVAS_BACKEND_URL || "/api", withCredentials: true });
 
@@ -71,14 +72,14 @@ export type ChannelModel = {
     estimatedDurationSeconds: number;
     brandKey: ModelBrandKey;
     accessPolicy: "authenticated" | "member";
-    capability: "text" | "image" | "video" | "audio";
+    capability: "text" | "image" | "video" | "audio" | "vision";
     billingMode: "fixed_request" | "per_second" | "token_usage";
     priceStrategy: "flat" | "image_resolution" | "video_resolution" | "token";
     unitPriceMicrocredits: number;
     priceTiers: Array<{
         id: string;
         resolution: string;
-        inputVariant: "" | "standard" | "standard_audio" | "reference_video";
+        inputVariant: "" | "standard" | "standard_audio" | "reference_video" | "low" | "medium" | "high";
         usageMetric: string;
         includedQuantity: number;
         unitPriceMicrocredits: number;
@@ -87,13 +88,7 @@ export type ChannelModel = {
     priceConfigured: boolean;
     enabled: boolean;
     priceVersion: number;
-    providerCapabilities?: {
-        resolutions: string[];
-        inputVariants: Array<"standard" | "standard_audio" | "reference_video">;
-        referenceVideoResolutions: string[];
-        generatedAudioResolutions: string[];
-        supportsTokenUsageBilling?: boolean;
-    };
+    providerCapabilities?: ProviderModelCapabilities;
     createdAt: string;
     updatedAt: string;
 };
@@ -101,7 +96,7 @@ export type ChannelModel = {
 export type ChannelModelInput = Omit<ChannelModel, "id" | "channelId" | "priceTiers" | "priceVersion" | "createdAt" | "updatedAt"> & {
     priceTiers: Array<{
         resolution: string;
-        inputVariant: "" | "standard" | "standard_audio" | "reference_video";
+        inputVariant: "" | "standard" | "standard_audio" | "reference_video" | "low" | "medium" | "high";
         usageMetric?: string;
         includedQuantity?: number;
         unitPriceMicrocredits: number;
@@ -214,6 +209,10 @@ export type BillingOrder = {
 
 export function getWallet(page = 1, limit = 30, type = "all") {
     return request<WalletSummary>(api.get("/wallet", { params: { type, page, limit } }));
+}
+
+export function getWalletBalance() {
+    return request<{ account: CreditAccount }>(api.get("/wallet/balance"));
 }
 
 export function redeemCredits(code: string) {

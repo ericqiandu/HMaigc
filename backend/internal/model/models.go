@@ -659,15 +659,16 @@ type Skill struct {
 
 // SkillVersion 只允许新增；已发布版本的指令与校验值不得原地修改。
 type SkillVersion struct {
-	ID           string     `json:"id" gorm:"primaryKey;size:120"`
-	SkillID      string     `json:"skillId" gorm:"size:80;index;uniqueIndex:idx_skill_version_number,priority:1"`
-	Version      int        `json:"version" gorm:"uniqueIndex:idx_skill_version_number,priority:2"`
-	Instructions string     `json:"instructions" gorm:"type:text"`
-	Checksum     string     `json:"checksum" gorm:"size:64"`
-	Changelog    string     `json:"changelog" gorm:"size:500"`
-	CreatedBy    string     `json:"createdBy" gorm:"size:80"`
-	PublishedAt  *time.Time `json:"publishedAt" gorm:"index"`
-	CreatedAt    time.Time  `json:"createdAt"`
+	ID                     string     `json:"id" gorm:"primaryKey;size:120"`
+	SkillID                string     `json:"skillId" gorm:"size:80;index;uniqueIndex:idx_skill_version_number,priority:1"`
+	Version                int        `json:"version" gorm:"uniqueIndex:idx_skill_version_number,priority:2"`
+	Instructions           string     `json:"instructions" gorm:"type:text"`
+	Checksum               string     `json:"checksum" gorm:"size:64"`
+	CapabilityManifestJSON string     `json:"-" gorm:"type:text;not null;default:'{}'"`
+	Changelog              string     `json:"changelog" gorm:"size:500"`
+	CreatedBy              string     `json:"createdBy" gorm:"size:80"`
+	PublishedAt            *time.Time `json:"publishedAt" gorm:"index"`
+	CreatedAt              time.Time  `json:"createdAt"`
 }
 
 type Resource struct {
@@ -988,16 +989,21 @@ type UserAnnouncementRead struct {
 }
 
 type TaskAudience string
+type TaskExecutionKind string
 
 const (
 	TaskAudienceCustomer TaskAudience = "customer"
 	TaskAudienceInternal TaskAudience = "internal"
+
+	TaskExecutionProvider           TaskExecutionKind = "provider"
+	TaskExecutionLocalMediaAssembly TaskExecutionKind = "local_media_assembly"
 )
 
 type Task struct {
 	ID                           string              `json:"id" gorm:"primaryKey;size:36"`
 	UserID                       string              `json:"userId" gorm:"index;size:36;index:idx_tasks_user_created,priority:1;index:idx_tasks_user_capability_status,priority:1"`
 	Audience                     TaskAudience        `json:"audience" gorm:"not null;default:customer;size:16;index;check:task_audience_valid,audience IN ('customer','internal')"`
+	ExecutionKind                TaskExecutionKind   `json:"executionKind" gorm:"not null;default:provider;size:32;index;check:task_execution_kind_valid,execution_kind IN ('provider','local_media_assembly')"`
 	SessionID                    string              `json:"sessionId" gorm:"index;size:36"`
 	ProjectID                    string              `json:"projectId" gorm:"index;size:80"`
 	Type                         string              `json:"type" gorm:"index;size:64"`
@@ -1007,6 +1013,9 @@ type Task struct {
 	Progress                     int                 `json:"progress"`
 	Prompt                       string              `json:"prompt"`
 	Operation                    string              `json:"operation" gorm:"size:64"`
+	ExecutionEnvelope            string              `json:"-" gorm:"type:text"`
+	ExecutionEnvelopeKeyID       string              `json:"-" gorm:"size:128;index"`
+	ExecutionPayloadDigest       string              `json:"-" gorm:"size:64;index"`
 	Provider                     string              `json:"provider" gorm:"size:64"`
 	Model                        string              `json:"model" gorm:"size:120"`
 	BillingOrderID               string              `json:"billingOrderId,omitempty" gorm:"index;size:36"`
@@ -1024,6 +1033,10 @@ type Task struct {
 	NextPollAt                   *time.Time          `json:"nextPollAt,omitempty" gorm:"index"`
 	LeaseOwner                   string              `json:"-" gorm:"index;size:120"`
 	LeaseExpiresAt               *time.Time          `json:"-" gorm:"index;index:idx_tasks_claim,priority:2"`
+	LeaseGeneration              uint64              `json:"-" gorm:"not null;default:0"`
+	LeaseToken                   string              `json:"-" gorm:"not null;default:'';size:64"`
+	CancelRequestedAt            *time.Time          `json:"cancelRequestedAt,omitempty" gorm:"index"`
+	CancelReasonCode             string              `json:"cancelReasonCode,omitempty" gorm:"size:64"`
 	InputJSON                    string              `json:"inputJson" gorm:"type:text"`
 	ResultJSON                   string              `json:"resultJson" gorm:"type:text"`
 	Error                        string              `json:"error"`

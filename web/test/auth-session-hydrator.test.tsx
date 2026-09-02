@@ -58,19 +58,27 @@ describe("AuthSessionHydrator public startup", () => {
     });
 
     test("records an anonymous hydrated fact when the session request fails", async () => {
+        const recordedErrors: unknown[][] = [];
+        const originalConsoleError = console.error;
+        console.error = (...values: unknown[]) => recordedErrors.push(values);
         requestSession = () => Promise.reject(new Error("session unavailable"));
         const { AuthSessionHydrator } = await import("../src/components/auth/auth-session-hydrator");
         const host = document.createElement("div");
         document.body.append(host);
         root = createRoot(host);
 
-        await act(async () => {
-            root?.render(createElement(AuthSessionHydrator, null, createElement("main", { className: "public-startup-content" }, "登录页")));
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        try {
+            await act(async () => {
+                root?.render(createElement(AuthSessionHydrator, null, createElement("main", { className: "public-startup-content" }, "登录页")));
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+        } finally {
+            console.error = originalConsoleError;
+        }
 
         expect(host.querySelector(".public-startup-content")?.textContent).toBe("登录页");
         expect(appliedSessions).toEqual([{ user: null, systemChannels: [] }]);
+        expect(recordedErrors[0]?.[0]).toBe("登录会话读取失败");
     });
 });

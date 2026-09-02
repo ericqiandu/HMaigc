@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -36,6 +37,11 @@ type UserDataSummary struct {
 	TeamSubscriptionActive bool                    `json:"teamSubscriptionActive,omitempty"`
 	CreatedAt              time.Time               `json:"createdAt"`
 	UpdatedAt              time.Time               `json:"updatedAt"`
+}
+
+type CanvasProjectDeletionSummary struct {
+	ID        string    `json:"id"`
+	DeletedAt time.Time `json:"deletedAt"`
 }
 
 func (s *Service) UserAssetSummaries(userID string) ([]UserDataSummary, error) {
@@ -207,6 +213,18 @@ func (s *Service) UserCanvasProjectSummaries(userID string) ([]UserDataSummary, 
 	return result, nil
 }
 
+func (s *Service) UserCanvasProjectDeletions(userID string) ([]CanvasProjectDeletionSummary, error) {
+	deletions, err := s.repo.CanvasProjectDeletionsForActor(userID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]CanvasProjectDeletionSummary, 0, len(deletions))
+	for _, deletion := range deletions {
+		result = append(result, CanvasProjectDeletionSummary{ID: deletion.CanvasID, DeletedAt: deletion.DeletedAt})
+	}
+	return result, nil
+}
+
 func (s *Service) UserCanvasProject(userID string, id string) (json.RawMessage, error) {
 	project, access, err := s.canvasAccess(userID, id)
 	if err != nil {
@@ -236,6 +254,11 @@ func (s *Service) CreateUserCanvasProject(userID string, raw json.RawMessage) (U
 		}
 		return UserDataSummary{}, &AuthError{Status: 409, Message: "画布已存在，内容必须通过版本化变更通道保存"}
 	}
+	if _, deletionErr := s.repo.CanvasProjectDeletion(project.ID); deletionErr == nil {
+		return UserDataSummary{}, &AuthError{Status: http.StatusGone, Message: "画布已删除，不能使用原 ID 重新创建"}
+	} else if !errors.Is(deletionErr, gorm.ErrRecordNotFound) {
+		return UserDataSummary{}, deletionErr
+	}
 	usage, err := s.repo.UserStorageUsage(userID)
 	if err != nil {
 		return UserDataSummary{}, err
@@ -258,14 +281,22 @@ func (s *Service) CreateUserCanvasProject(userID string, raw json.RawMessage) (U
 }
 
 func (s *Service) DeleteUserCanvasProject(userID string, id string) error {
-	_, access, err := s.canvasAccess(userID, id)
+	project, access, err := s.canvasAccess(userID, id)
 	if err != nil {
+		var authErr *AuthError
+		if errors.As(err, &authErr) && authErr.Status == http.StatusNotFound {
+			if _, deletionErr := s.repo.CanvasProjectDeletionForActor(userID, strings.TrimSpace(id)); deletionErr == nil {
+				return nil
+			} else if !errors.Is(deletionErr, gorm.ErrRecordNotFound) {
+				return deletionErr
+			}
+		}
 		return err
 	}
 	if !access.CanManage {
 		return Forbidden("当前用户不能删除该画布")
 	}
-	return s.repo.DeleteCanvasProjectWithCollaboration(id)
+	return s.repo.DeleteCanvasProjectWithCollaboration(project, userID, time.Now().UTC())
 }
 
 func (s *Service) ReplaceUserCanvasProjects(userID string, req CanvasProjectsSyncRequest) ([]json.RawMessage, error) {

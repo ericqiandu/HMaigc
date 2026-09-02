@@ -2,8 +2,9 @@ import localforage from "localforage";
 import { nanoid } from "nanoid";
 
 import { getActiveUserScope } from "@/lib/user-scope";
-import { resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, resolveResourceUrl, uploadResourceFile } from "@/services/api/resources";
-import { getCachedResourceBlob, getCachedResourceObjectUrl, primeResourceBlobCache } from "@/services/resource-blob-cache";
+import { resourceFileUrl, resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
+import { getCachedResourceBlob, primeResourceBlobCache } from "@/services/resource-blob-cache";
+import { persistMediaByUserScope } from "@/services/media-upload-policy";
 
 export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
 
@@ -11,31 +12,39 @@ const store = localforage.createInstance({ name: "infinite-canvas", storeName: "
 const objectUrls = new Map<string, string>();
 
 export async function uploadMediaFile(input: string | Blob, prefix = "file"): Promise<UploadedFile> {
+    const scope = getActiveUserScope();
     const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
     const previewUrl = URL.createObjectURL(blob);
     const meta: { width?: number; height?: number; durationMs?: number } = blob.type.startsWith("video/") ? await readVideoMeta(previewUrl) : blob.type.startsWith("audio/") ? await readAudioMeta(previewUrl) : {};
-    try {
-        const kind = blob.type.startsWith("video/") ? "video" : blob.type.startsWith("audio/") ? "audio" : "file";
-        const resource = await uploadResourceFile(blob, kind, { width: meta.width, height: meta.height, fileName: input instanceof File ? input.name : undefined });
-        await primeResourceBlobCache(resourceStorageKey(resource.id), blob).catch(() => "");
-        URL.revokeObjectURL(previewUrl);
-        return { url: resource.publicUrl || resourceFileUrl(resource.id), storageKey: resourceStorageKey(resource.id), bytes: resource.size || blob.size, mimeType: resource.mimeType || blob.type || "application/octet-stream", width: resource.width || meta.width, height: resource.height || meta.height, durationMs: resource.durationMs || meta.durationMs };
-    } catch {
-        // OSS is optional during local/self-hosted setup. Keep the existing local fallback.
-    }
-    const storageKey = `${prefix}:${getActiveUserScope()}:${nanoid()}`;
-    await store.setItem(storageKey, blob);
-    const url = previewUrl;
-    objectUrls.set(storageKey, url);
-    return { url, storageKey, bytes: blob.size, mimeType: blob.type || "application/octet-stream", ...meta };
+    return persistMediaByUserScope(
+        scope,
+        async () => {
+            try {
+                const kind = blob.type.startsWith("video/") ? "video" : blob.type.startsWith("audio/") ? "audio" : "file";
+                const resource = await uploadResourceFile(blob, kind, { width: meta.width, height: meta.height, fileName: input instanceof File ? input.name : undefined });
+                return { url: resourceFileUrl(resource.id), storageKey: resourceStorageKey(resource.id), bytes: resource.size || blob.size, mimeType: resource.mimeType || blob.type || "application/octet-stream", width: resource.width || meta.width, height: resource.height || meta.height, durationMs: resource.durationMs || meta.durationMs };
+            } finally {
+                URL.revokeObjectURL(previewUrl);
+            }
+        },
+        async () => {
+            const storageKey = `${prefix}:${scope}:${nanoid()}`;
+            try {
+                await store.setItem(storageKey, blob);
+            } catch (error) {
+                URL.revokeObjectURL(previewUrl);
+                throw error;
+            }
+            objectUrls.set(storageKey, previewUrl);
+            return { url: previewUrl, storageKey, bytes: blob.size, mimeType: blob.type || "application/octet-stream", ...meta };
+        },
+    );
 }
 
 export async function resolveMediaUrl(storageKey?: string, fallback = "") {
     if (!storageKey) return fallback;
-    if (resourceIdFromStorageKey(storageKey)) {
-        const cached = await getCachedResourceObjectUrl(storageKey).catch(() => "");
-        return cached || resolveResourceUrl(storageKey, fallback);
-    }
+    const resourceId = resourceIdFromStorageKey(storageKey);
+    if (resourceId) return resourceFileUrl(resourceId);
     const cached = objectUrls.get(storageKey);
     if (cached) return cached;
     const blob = await store.getItem<Blob>(storageKey);

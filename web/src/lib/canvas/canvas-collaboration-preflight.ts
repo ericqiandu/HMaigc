@@ -1,10 +1,11 @@
 import type { CanvasAccess, CanvasCollaborationState } from "@/services/api/canvas-collaboration";
 
-export async function requireEditableCanvasCollaboration(
-    currentAccess: CanvasAccess | null,
-    hasAuthoritativeBaseline: boolean,
-    loadState: () => Promise<CanvasCollaborationState>,
-): Promise<CanvasCollaborationState | null> {
+export async function prepareAgentCanvasRun(ensureRemoteCanvas: () => Promise<void>, flushCollaboration: () => Promise<void>): Promise<void> {
+    await ensureRemoteCanvas();
+    await flushCollaboration();
+}
+
+export async function requireEditableCanvasCollaboration(currentAccess: CanvasAccess | null, hasAuthoritativeBaseline: boolean, loadState: () => Promise<CanvasCollaborationState>): Promise<CanvasCollaborationState | null> {
     if (currentAccess && hasAuthoritativeBaseline) {
         if (!currentAccess.canEdit) throw new Error("当前用户没有画布编辑权限");
         return null;

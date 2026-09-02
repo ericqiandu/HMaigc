@@ -548,7 +548,7 @@ func parseAnalyticsTime(value string) (time.Time, bool) {
 
 func normalizeCapability(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "text", "image", "video", "audio":
+	case "text", "image", "video", "audio", "vision":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return ""
@@ -915,7 +915,7 @@ func mergeCurrency(current string, next string) string {
 
 func capabilityFromTaskType(taskType string) string {
 	value := strings.ToLower(taskType)
-	for _, capability := range []string{"video", "image", "audio", "text"} {
+	for _, capability := range []string{"vision", "video", "image", "audio", "text"} {
 		if strings.Contains(value, capability) {
 			return capability
 		}
@@ -992,7 +992,38 @@ func (s *Service) estimateCallCost(log *model.ApiCallLog) {
 	cost += log.InputTokens * pricing.InputPerMillionMicros / 1_000_000
 	cost += log.OutputTokens * pricing.OutputPerMillionMicros / 1_000_000
 	cost += log.CachedTokens * pricing.CachedPerMillionMicros / 1_000_000
-	cost += int64(log.MediaCount) * pricing.PerMediaMicros
+	mediaUnitCost := pricing.PerMediaMicros
+	if log.Capability == "image" && log.MediaCount > 0 {
+		baseTiers := make([]model.ModelPricingTier, 0, len(pricing.Tiers))
+		for _, tier := range pricing.Tiers {
+			if strings.TrimSpace(tier.UsageMetric) == "" {
+				baseTiers = append(baseTiers, tier)
+			}
+		}
+		if len(baseTiers) > 0 {
+			if strings.TrimSpace(log.PricingSpecification) == "" {
+				log.CostAvailable = false
+				log.CostCalculationError = "图片请求缺少分辨率与画质成本规格"
+				log.Currency = pricing.Currency
+				return
+			}
+			matched := false
+			for _, tier := range baseTiers {
+				if strings.EqualFold(strings.TrimSpace(tier.Specification), strings.TrimSpace(log.PricingSpecification)) {
+					mediaUnitCost = tier.SupplierCostMicros
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				log.CostAvailable = false
+				log.CostCalculationError = "图片请求未配置成本规格 " + strings.TrimSpace(log.PricingSpecification)
+				log.Currency = pricing.Currency
+				return
+			}
+		}
+	}
+	cost += int64(log.MediaCount) * mediaUnitCost
 	cost += int64(log.VideoSeconds) * pricing.PerVideoSecondMicros
 	usageTier, usageTierErr := supplierInputImageUsageTier(pricing.Tiers)
 	if usageTierErr != nil {
@@ -1002,7 +1033,7 @@ func (s *Service) estimateCallCost(log *model.ApiCallLog) {
 		return
 	}
 	usageCostFactAvailable := log.Billable
-	if pricing.PerMediaMicros > 0 {
+	if mediaUnitCost > 0 {
 		usageCostFactAvailable = log.MediaCount > 0
 	}
 	if usageTier != nil && usageCostFactAvailable {
@@ -1094,6 +1125,8 @@ func (s *Service) EnrichAPICallLog(log *model.ApiCallLog, responseBody []byte) {
 			log.MediaCount = len(images)
 		} else if imageURLs, ok := payload["image_urls"].([]any); ok {
 			log.MediaCount = len(imageURLs)
+		} else if strings.TrimSpace(stringField(payload, "image_url")) != "" {
+			log.MediaCount = 1
 		}
 	}
 	if log.Capability == "audio" && log.Status == model.ApiCallStatusSucceeded {

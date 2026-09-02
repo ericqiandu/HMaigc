@@ -6,17 +6,40 @@
 
 新用户在注册事务内同时创建数字 ID 映射；任一写入失败时，用户、推荐关系、积分账户和验证码消费全部回滚。服务升级会按 `users.created_at + users.id` 的稳定顺序为历史用户补齐映射，重复迁移或多实例并发启动只接受 `user_id` 唯一事实，不得重新编号。认证链路若找不到映射必须显式失败，禁止临时使用 UUID、哈希值或默认数字掩盖迁移缺口。
 
+## 画布跨客户端删除事实
+
+`canvas_project_deletions` 以 `canvas_id` 为永久唯一键，保存画布删除时的个人所有者、团队作用域、真实操作者和服务端删除时间。墓碑不保存标题、节点、提示词、聊天正文或媒体地址，不参与用户存储配额；它只负责向其他浏览器传播删除事实，并阻止陈旧本地缓存以相同 ID 重新创建画布。
+
+删除操作在同一数据库事务中先写墓碑，再删除 `canvas_changes`、`canvas_collaborators`、`canvas_shares` 和 `canvas_projects`。任一步失败时墓碑和所有画布事实一起回滚。个人墓碑只对原所有者可见；团队墓碑只对当前有效团队成员可见。仍有权看到墓碑的用户重复删除时幂等成功，无权用户保持 404；任何客户端再次创建墓碑 ID 都返回 HTTP 410，不生成替代 ID 或覆盖删除事实。
+
+历史版本的硬删除没有可恢复的删除时间和作用域，升级不会伪造历史墓碑。若旧浏览器已经把历史删除画布重新同步回来，需要在升级后再删除一次，才能建立首条可跨客户端传播的删除事实。
+
 ## Agent Runtime 作用域与恢复事实
 
-单一 Agent Runtime 当前建立服务端作用域、恢复事实、计费模型决策循环、工具审批、画布确定性修改、真实生成任务协调与版本化影视生产计划。七张核心表职责如下：
+单一 Agent Runtime 当前建立服务端作用域、恢复事实、计费模型决策循环、工具审批、画布确定性修改、真实生成任务协调与版本化影视生产计划。核心表职责如下：
 
-- `agent_threads` 固定个人或团队租户、创建用户、领域项目和画布；租户与权限只能由现有画布权限服务签发，浏览器不能提交或覆盖这些身份事实；
-- `agent_runs` 保存一次运行的 actor、客户端幂等请求号、显式状态、最后事件序号及冻结的 runtime/policy/tool schema 版本；`thread_id + client_request_id` 唯一；
+- `agent_threads` 固定推理宿主、外部线程身份、个人或团队租户、创建用户、领域项目和画布；租户与权限只能由现有画布权限服务签发，浏览器不能提交或覆盖这些身份事实；
+- `agent_runs` 保存一次运行的推理宿主、actor、客户端幂等请求号、显式状态、最后事件序号及冻结的 runtime/policy/tool schema 版本；`thread_id + client_request_id` 唯一，托管运行与本机 Codex 运行不能互换推理宿主或模型身份；
 - `agent_run_events` 以 `run_id + sequence` 唯一保存有序事件；序号由数据库原子递增，不依赖进程内计数器；
 - `agent_checkpoints` 以同一 run/sequence 保存可恢复状态版本；事件、序号和 checkpoint 在一个事务内提交或回滚；
-- `agent_tool_calls` 以 `run_id + tool_call_id + action_version` 唯一冻结工具名、完整参数、风险、权限、审批、幂等键、执行开始时间与真实结果；审批和执行只能消费当前 checkpoint 指向的精确调用版本。
+- `agent_external_decisions` 为本机 Codex 每次结构化决策保存不可变幂等回执，冻结请求摘要、预期状态版本和结果状态版本；回执与 Runtime 状态转换必须在同一事务提交，重复请求只能读取同一结果，载荷或预期版本变化必须冲突；
+- `agent_tool_calls` 以 `run_id + tool_call_id + action_version` 唯一冻结工具名、完整参数、风险、权限、审批、幂等键、执行开始时间与真实结果；审批和执行只能消费当前 checkpoint 指向的精确调用版本。`media.generate` 还以租户、用户、项目、画布、线程、目标节点和客户端请求号派生稳定商业幂等键：首个活动或成功调用独占该键，失败调用释放，重放调用只保存原始 run/tool/action 来源而不再次占有商业身份；
 - `agent_production_plan_versions` 以 `tenant_kind + tenant_id + domain_project_id + canvas_id + plan_key + version` 唯一追加不可变的生产计划版本，并绑定来源 run、基础版本、剧本和总时长；相同业务键可在不同租户和画布独立存在，同一 Scope 的同一基础版本只允许一个事实胜出；
 - `agent_production_artifacts` 以 `plan_version_id + shot_key + kind` 唯一保存一份脚本 Artifact 及逐镜头分镜图、视频片段 Ledger；Task、BillingOrder 与 Resource 只能各绑定一次，状态与 attempt 使用 CAS 转换。
+
+多专家生产运行时采用七张新表，不覆盖、不回填、不双写上述旧生产表。当前迁移仅安装 schema 与唯一索引；在 Specialist Runtime、审核、计费、资产发布、画布投影和 UI protocol v3 全部完成并通过硬切门禁以前，用户入口仍不向这些表写入生产事实：
+
+- `agent_production_graph_versions` 追加不可变 Graph 版本；完整 scope 下 `graph_key + version` 唯一，`stages_json` 不允许原地修改；
+- `agent_production_stages` 以 `graph_version_id + stage_key` 唯一保存阶段控制事实；只有状态、精确审核 revision、错误和 `version` CAS 生命周期可变，Artifact 内容不进入本表；
+- `agent_specialist_runs` 冻结父 Run scope、阶段、专家版本、继承模型、Skill 版本、工具 allowlist 与交付合同，并用 `version` CAS 保存心跳、结果或失败终态；
+- `agent_artifacts` 是稳定 Artifact 身份与 head revision 的可变 CAS 行；完整 scope 下 `artifact_key` 唯一；
+- `agent_artifact_revisions` 以 `artifact_id + revision` 唯一追加 schema、payload、Resource、上游精确 revision、模型请求身份、Skill 版本和创建者。该表没有更新时间，也不得提供 payload/resource/upstream 的更新方法；
+- `agent_asset_binding_revisions` 追加角色、场景、道具等绑定快照，完整 scope 下 `binding_key + revision` 唯一；
+- `agent_asset_publications` 以 `tenant_kind + tenant_id + domain_project_id + artifact_revision_id + publication_purpose` 建立幂等发布身份，只通过 `version` CAS 收口发布状态和现有 Asset/Version/Link/Representation 身份。
+
+七张表都显式保存 `tenant_kind + tenant_id + actor_user_id + domain_project_id + canvas_id + thread_id + run_id`。仓储层必须把这些列同时写入 SQL 查询条件，不能只凭 Artifact、Stage 或 Publication 主键推断所有权。
+
+旧 Runtime 退役采用“审计先行、运维显式执行”的单一路径。审计按 runtime version/status 汇总非终态 Run，并读取待审批/待执行/执行中 Tool、内部及旧媒体 Task、活动媒体 Artifact、未结 Billing 和 Checkpoint 完整性；旧媒体事实按 `created_by_run_id` 关联的计划版本继续追踪 Task 与 Billing，不能依赖 Agent 专用 operation 或账单幂等键。任一运行中工具、活动 Task、活动 Artifact、未结账单或不可终止 Checkpoint 都会阻止退役。安全退役在单事务内把 Run 终结为 `runtime_schema_retired`，追加连续 sequence 的失败事件和 Checkpoint，关闭进行中的时间线并标记尚未执行的 Tool；既有终态 Run 不变，重复调用为零新增。当前迁移不会修改 `CurrentRuntimeVersion`，用户入口仍使用 Runtime v2，最终硬切由后续发布门禁单独完成。
 
 Agent thread/run 的所有读取都必须在 SQL 查询中同时约束 tenant、actor、project、canvas、thread 和 run，不允许查询后再用应用内过滤补权限。事件与 checkpoint JSON 有硬字节上限，超限或非法 JSON 显式失败，不截断；这些表禁止保存供应商 Key、Authorization header 或原始上游错误对象。
 
@@ -127,6 +150,10 @@ Agent 文本模型使用同一张 `billing_orders` 的 `token_usage` 模式，�
 筷子账号硬切为一个共享逻辑凭据，全部筷子模型的 `channel_models.provider_credential_id` 指向同一记录；凭据并发上限也以该 ID 为跨渠道共享作用域，不能把视频、图片和 Agent 渠道分别跑满。旧的按系列凭据只用于一次性启动迁移：Key 不一致时迁移显式失败，禁止挑选其中一个或静默覆盖。
 
 任务的供应商事实不再维护平行状态表：`tasks` 保存请求标识、轮询阶段、终态与结果，`billing_orders` 保存渠道、模型、冻结价格档位、供应商请求号和费用核对状态。创建请求在是否已被上游接受无法确认时，账单必须进入 `uncertain`；该任务在管理员完成核对前禁止重新生成，避免重复创建并再次产生供应商费用。取消与上游成功并发时，成功结果和生成记录继续持久化，任务保持取消，账单进入待核对。
+
+Task 终态采用数据库提交与外部唤醒分离的持久 Outbox：`task_outboxes` 以 `idempotency_key` 唯一保存 Agent Run 唤醒事件、严格 JSON 载荷、可投递时间、尝试次数、租约和最终送达事实。供应商成功时，Task 成功 CAS、Result/Session/Message、固定价结算或 Token 账单 `uncertain` 审计，以及 Outbox 事件必须在同一事务提交；任一写入失败全部回滚，用户不会看到“任务成功但账务或恢复事件缺失”的半状态。取消后的迟到成功同样在一个事务内保留 Result、维持 Task 取消、标记费用待核对并写入 Outbox。后台 Dispatcher 只在事务提交后领取 Outbox；进程崩溃或投递失败会由租约到期重领，成功投递后以同一租约 CAS 标记 `delivered`，重复领取只允许触发幂等的 Agent 状态推进，不重复创建 Task、计费或资产。
+
+每个新建 Task 同时保存不可变的签名执行事实：`execution_envelope` 是 HMAC-SHA256 签名的规范 JSON，绑定租户、项目、画布、Run、Artifact Revision、Task ID/类型、请求用户、提示词与输入 JSON 的组合载荷摘要及失效时间；`execution_envelope_key_id` 标识签名密钥版本，`execution_payload_digest` 保存该规范执行载荷的 SHA-256 摘要。信封和摘要不通过用户接口返回，也不保存供应商 Key、Authorization header 或原始输入正文。Worker 在写任务日志、建立供应商请求边界或执行本地媒体装配前必须重新读取数据库事实并验签；缺失、过期、密钥未知、作用域不符、计费订单归属不符或载荷被修改都会使任务显式失败。重试与创建幂等复用同样先核对签名及摘要，同一 Task ID 不允许换载荷再次发送。完成或取消后的结果写入不得改写已签名 `input_json`，用户接口只在响应副本上生成脱敏摘要，保证历史 Task 仍可审计验证。
 
 金额单位必须随字段解释：用户售价与冻结订单金额使用 `microcredits`；供应商参考成本使用货币 `micros`；供应商原始余额和账单金额使用 `amount_subunits` 十进制字符串。`total_tokens` 和余额同样以十进制字符串保存，避免超过 JavaScript 安全整数或数据库固定整数范围后丢失精度；币种必须由同一事实记录的显式字段解释，禁止跨单位直接相加。
 

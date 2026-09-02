@@ -105,7 +105,11 @@ export function useCanvasUpload({
         try {
             const result = await ensureCanvasNodeAsset({ canvasId, domainProjectId, node, source: "canvas-upload" });
             setNodes((current) => current.map((item) => item.id === node.id ? { ...item, metadata: { ...item.metadata, assetId: result.assetId } } : item));
-            if (domainProjectId) await queryClient.invalidateQueries({ queryKey: ["project", domainProjectId] });
+            if (domainProjectId) {
+                void queryClient.invalidateQueries({ queryKey: ["project", domainProjectId] }).catch((error: unknown) => {
+                    console.warn("项目资产查询刷新失败", { projectId: domainProjectId, error });
+                });
+            }
             return true;
         } catch (error) {
             message.warning(error instanceof Error ? `媒体已添加到画布，但素材同步失败：${error.message}` : "媒体已添加到画布，但素材同步失败");

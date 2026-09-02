@@ -75,7 +75,6 @@ describe("admin final route system", () => {
             "/admin/settings/runtime-policy",
             "/admin/agent-runs",
             "/admin/logs",
-            "/admin/operations",
         ]);
         expect(new Set(navigationPaths).size).toBe(navigationPaths.length);
         expect(modelCenterPaths).toEqual(["/admin/models", "/admin/models/kuaizi", "/admin/models/pricing"]);

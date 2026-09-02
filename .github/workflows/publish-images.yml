@@ -65,52 +65,31 @@ jobs:
 
       - name: Test web
         working-directory: web
-        run: bun test
+        run: bun run test
 
       - name: Build web
         working-directory: web
         run: bun run build
 
       - name: Verify payment checkout Nginx sentinels
-        env:
-          HMAIGC_STATIC_ASSET_BASE_URL: ${{ vars.HMAIGC_STATIC_ASSET_BASE_URL }}
         run: bash scripts/tests/verify-payment-checkout-nginx.test.sh
 
       - name: Verify membership checkout in production Chromium
         working-directory: web
         env:
           HMAIGC_CHROMIUM_EXECUTABLE: ${{ steps.setup-chrome.outputs.chrome-path }}
-          HMAIGC_STATIC_ASSET_BASE_URL: ${{ vars.HMAIGC_STATIC_ASSET_BASE_URL }}
         run: bun run verify:membership-checkout-browser
 
       - name: Validate production Compose
-        env:
-          HMAIGC_IMAGE_REGISTRY: ghcr.io/example
-          HMAIGC_VERSION: v0.0.0-ci
-          HMAIGC_OPS_VERSION: v0.0.0-ci
-          POSTGRES_PASSWORD: ci-only-password
-          CANVAS_DATABASE_DRIVER: sqlite
-          DATABASE_URL: ""
-          REDIS_URL: ""
-          CANVAS_DATA_PATH: ./.local/ci-data
-          CANVAS_ENVIRONMENT: production
-          CANVAS_CORS_ORIGINS: https://ci.example.invalid
-        run: |
-          docker compose -f docker-compose.yml config -q
-          docker compose -f docker-compose.production.yml config -q
-          docker compose -f deploy/docker-compose.ops.yml config -q
-
-      - name: Build operations controller image
-        run: >-
-          docker build
-          --file backend/Dockerfile.ops
-          --build-arg APP_VERSION=v0.0.0-ci
-          --build-arg APP_COMMIT=${{ github.sha }}
-          --tag hmaigc-ops-controller:ci
-          .
+        run: bash scripts/validate-production-compose.sh
 
       - name: Test install upgrade and rollback orchestration
-        run: bash deploy/tests/hmaigc-smoke.sh
+        run: |
+          bash deploy/tests/hmaigc-smoke.sh
+          bash deploy/tests/hmaigc-release-runner-smoke.sh
+
+      - name: Verify source deployment workflow contract
+        run: bash scripts/tests/validate-source-deploy-workflow.test.sh
 
       - name: Verify release tag matches application version
         if: startsWith(github.ref, 'refs/tags/')
@@ -150,16 +129,16 @@ jobs:
           : "${STATIC_OSS_PREFIX:?缺少仓库变量 HMAIGC_STATIC_OSS_PREFIX}"
           : "${STATIC_OSS_ACCESS_KEY_ID:?缺少仓库密钥 HMAIGC_STATIC_OSS_ACCESS_KEY_ID}"
           : "${STATIC_OSS_ACCESS_KEY_SECRET:?缺少仓库密钥 HMAIGC_STATIC_OSS_ACCESS_KEY_SECRET}"
-          [[ "$STATIC_ASSET_BASE_URL" == https://* ]] || {
-            echo "HMAIGC_STATIC_ASSET_BASE_URL 必须使用 HTTPS" >&2
-            exit 1
-          }
-          [[ "$STATIC_ASSET_BASE_URL" != */ ]] || {
-            echo "HMAIGC_STATIC_ASSET_BASE_URL 末尾不能包含 /" >&2
-            exit 1
-          }
           [[ "$STATIC_ASSET_BASE_URL" == "https://static.hm.kunagent.com/hmaigc/web" ]] || {
-            echo "HMAIGC_STATIC_ASSET_BASE_URL 必须使用已备案的中国大陆 CDN 域名 https://static.hm.kunagent.com/hmaigc/web，禁止直接 OSS 读取域名" >&2
+            echo "HMAIGC_STATIC_ASSET_BASE_URL 必须精确使用 https://static.hm.kunagent.com/hmaigc/web" >&2
+            exit 1
+          }
+          [[ "$STATIC_OSS_ENDPOINT" == https://* ]] || {
+            echo "HMAIGC_STATIC_OSS_ENDPOINT 必须使用 HTTPS" >&2
+            exit 1
+          }
+          [[ "$STATIC_OSS_PREFIX" == "hmaigc/web" ]] || {
+            echo "HMAIGC_STATIC_OSS_PREFIX 必须精确使用 hmaigc/web" >&2
             exit 1
           }
 
@@ -212,9 +191,12 @@ jobs:
             --silent \
             --show-error \
             --location \
+            --connect-timeout 5 \
+            --max-time 15 \
             --retry 8 \
             --retry-all-errors \
             --retry-delay 5 \
+            --retry-max-time 120 \
             "$STATIC_RELEASE_URL" \
             --output /tmp/static-manifest.json
           grep -F "\"release\": \"${GITHUB_REF_NAME}\"" /tmp/static-manifest.json >/dev/null
@@ -251,8 +233,6 @@ jobs:
             dockerfile: Dockerfile
           - image: hmaigc-backend
             dockerfile: backend/Dockerfile
-          - image: hmaigc-ops-controller
-            dockerfile: backend/Dockerfile.ops
 
     steps:
       - name: Checkout repository
@@ -290,7 +270,7 @@ jobs:
           path: release-web-dist
 
       - name: Build and push Go service image
-        if: matrix.image == 'hmaigc-backend' || matrix.image == 'hmaigc-ops-controller'
+        if: matrix.image == 'hmaigc-backend'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -331,9 +311,138 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
+  deploy-production:
+    name: Deploy tagged source to production
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    concurrency:
+      group: hmaigc-production
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v4
+
+      - name: Validate production deployment configuration
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.HMAIGC_PRODUCTION_HOST }}
+          DEPLOY_USER: ${{ secrets.HMAIGC_PRODUCTION_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.HMAIGC_PRODUCTION_SSH_KEY }}
+          DEPLOY_SSH_HOST_KEY: ${{ secrets.HMAIGC_PRODUCTION_SSH_HOST_KEY }}
+          DEPLOY_PORT: ${{ vars.HMAIGC_PRODUCTION_PORT }}
+          DEPLOY_ROOT: ${{ vars.HMAIGC_PRODUCTION_DEPLOY_ROOT }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+            echo "production tag must be a shell-safe semantic version" >&2
+            exit 1
+          }
+          : "${DEPLOY_HOST:?missing HMAIGC_PRODUCTION_HOST secret}"
+          : "${DEPLOY_USER:?missing HMAIGC_PRODUCTION_USER secret}"
+          : "${DEPLOY_SSH_KEY:?missing HMAIGC_PRODUCTION_SSH_KEY secret}"
+          : "${DEPLOY_SSH_HOST_KEY:?missing HMAIGC_PRODUCTION_SSH_HOST_KEY secret}"
+          : "${DEPLOY_ROOT:?missing HMAIGC_PRODUCTION_DEPLOY_ROOT variable}"
+          DEPLOY_PORT="${DEPLOY_PORT:-22}"
+          [[ "$DEPLOY_HOST" =~ ^[0-9A-Za-z.:-]+$ ]] || { echo "invalid production host" >&2; exit 1; }
+          [[ "$DEPLOY_USER" =~ ^[A-Za-z_][0-9A-Za-z_-]*$ ]] || { echo "invalid production user" >&2; exit 1; }
+          [[ "$DEPLOY_PORT" =~ ^[0-9]+$ ]] && ((DEPLOY_PORT >= 1 && DEPLOY_PORT <= 65535)) || {
+            echo "invalid production SSH port" >&2
+            exit 1
+          }
+          [[ "$DEPLOY_ROOT" =~ ^/[0-9A-Za-z._/-]+$ ]] \
+            && [[ "$DEPLOY_ROOT" != "/" ]] \
+            && [[ "$DEPLOY_ROOT" != *".."* ]] \
+            && [[ "$DEPLOY_ROOT" != *"//"* ]] || {
+            echo "production deploy root must be a dedicated absolute path" >&2
+            exit 1
+          }
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" >"$HOME/.ssh/hmaigc-production"
+          printf '%s\n' "$DEPLOY_SSH_HOST_KEY" >"$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/hmaigc-production" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/hmaigc-production" >/dev/null
+          ssh-keygen -l -f "$HOME/.ssh/known_hosts" >/dev/null
+          printf 'DEPLOY_HOST=%s\nDEPLOY_USER=%s\nDEPLOY_PORT=%s\nDEPLOY_ROOT=%s\n' \
+            "$DEPLOY_HOST" "$DEPLOY_USER" "$DEPLOY_PORT" "$DEPLOY_ROOT" >>"$GITHUB_ENV"
+
+      - name: Build immutable deployment bundle
+        id: production-bundle
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          BUNDLE_ROOT="$RUNNER_TEMP/hmaigc-${GITHUB_REF_NAME}"
+          BUNDLE_ARCHIVE="$RUNNER_TEMP/production-release-bundle.tgz"
+          install -d -m 755 "$BUNDLE_ROOT/deploy"
+          cp docker-compose.production.yml "$BUNDLE_ROOT/docker-compose.production.yml"
+          cp deploy/hmaigc.sh "$BUNDLE_ROOT/deploy/hmaigc.sh"
+          cp deploy/hmaigc-release-runner.sh "$BUNDLE_ROOT/deploy/hmaigc-release-runner.sh"
+          cp -R deploy/lib "$BUNDLE_ROOT/deploy/lib"
+          (
+            cd "$BUNDLE_ROOT"
+            find docker-compose.production.yml deploy -type f -print0 \
+              | sort -z \
+              | xargs -0 sha256sum >bundle.sha256
+          )
+          tar -C "$BUNDLE_ROOT" -czf "$BUNDLE_ARCHIVE" .
+          test -s "$BUNDLE_ARCHIVE"
+          BUNDLE_SHA256="$(sha256sum "$BUNDLE_ARCHIVE" | awk '{print $1}')"
+          printf 'archive=%s\nsha256=%s\n' \
+            "$BUNDLE_ARCHIVE" "$BUNDLE_SHA256" >>"$GITHUB_OUTPUT"
+
+      - name: Transfer and execute tagged deployment
+        shell: bash
+        env:
+          BUNDLE_ARCHIVE: ${{ steps.production-bundle.outputs.archive }}
+          BUNDLE_SHA256: ${{ steps.production-bundle.outputs.sha256 }}
+        run: |
+          set -Eeuo pipefail
+          : "${BUNDLE_ARCHIVE:?deployment bundle output is missing}"
+          : "${BUNDLE_SHA256:?deployment bundle checksum output is missing}"
+          test -s "$BUNDLE_ARCHIVE"
+          printf '%s  %s\n' "$BUNDLE_SHA256" "$BUNDLE_ARCHIVE" | sha256sum -c -
+          SSH_TARGET="${DEPLOY_USER}@${DEPLOY_HOST}"
+          SSH_OPTIONS=(
+            -i "$HOME/.ssh/hmaigc-production"
+            -p "$DEPLOY_PORT"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -o ConnectTimeout=15
+          )
+          RELEASE_DIR="$DEPLOY_ROOT/releases/$GITHUB_REF_NAME"
+          STAGING_DIR="$DEPLOY_ROOT/staging/$GITHUB_REF_NAME-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+
+          ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+            "install -d -m 755 '$DEPLOY_ROOT/releases' '$DEPLOY_ROOT/staging' '$DEPLOY_ROOT/shared' '$STAGING_DIR'"
+          tar -xOf "$BUNDLE_ARCHIVE" ./bundle.sha256 >/dev/null
+          cat "$BUNDLE_ARCHIVE" \
+            | ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" "tar -xzf - -C '$STAGING_DIR'"
+          ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" "bash -se" <<REMOTE_VERIFY
+          set -Eeuo pipefail
+          cd '$STAGING_DIR'
+          sha256sum -c bundle.sha256
+          if [[ -e '$RELEASE_DIR' ]]; then
+            cmp -s bundle.sha256 '$RELEASE_DIR/bundle.sha256' || {
+              echo 'existing release bundle does not match this tag' >&2
+              exit 1
+            }
+            rm -rf -- '$STAGING_DIR'
+          else
+            mv -- '$STAGING_DIR' '$RELEASE_DIR'
+          fi
+          REMOTE_VERIFY
+          ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" \
+            "bash '$RELEASE_DIR/deploy/hmaigc-release-runner.sh' '$GITHUB_REF_NAME' '$DEPLOY_ROOT'"
+
   release:
     name: Publish GitHub release notes
-    needs: publish
+    needs: deploy-production
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:

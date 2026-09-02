@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"time"
 
 	"infinite-canvas/backend/internal/agentruntime"
@@ -142,9 +143,9 @@ func (r *Repository) AgentThreadHistory(scope agentruntime.Scope, limit int) ([]
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		var threads []model.AgentThread
 		if err := tx.Where(`tenant_kind = ? AND tenant_id = ? AND created_by_user_id = ?
-			AND domain_project_id = ? AND canvas_id = ? AND status = ?`,
+			AND domain_project_id = ? AND canvas_id = ? AND status = ? AND reasoning_host = ?`,
 			scope.TenantKind, scope.TenantID, scope.ActorUserID, scope.DomainProjectID,
-			scope.CanvasID, agentruntime.ThreadActive).
+			scope.CanvasID, agentruntime.ThreadActive, agentruntime.ReasoningHostManaged).
 			Order(`COALESCE((SELECT MAX(agent_runs.updated_at) FROM agent_runs
 				WHERE agent_runs.thread_id = agent_threads.id), agent_threads.updated_at) DESC, agent_threads.id DESC`).
 			Limit(limit).Find(&threads).Error; err != nil {
@@ -216,7 +217,8 @@ func agentThreadHistoryFacts(
 		thread := row.AgentThread
 		if thread.TenantKind != scope.TenantKind || thread.TenantID != scope.TenantID ||
 			thread.CreatedByUserID != scope.ActorUserID || thread.DomainProjectID != scope.DomainProjectID ||
-			thread.CanvasID != scope.CanvasID || thread.Status != agentruntime.ThreadActive || row.ActivityAt.IsZero() {
+			thread.CanvasID != scope.CanvasID || thread.Status != agentruntime.ThreadActive ||
+			thread.ReasoningHost != agentruntime.ReasoningHostManaged || thread.ExternalThreadID != "" || row.ActivityAt.IsZero() {
 			return nil, errors.New("agent thread history scope facts are inconsistent")
 		}
 		threadByID[thread.ID] = thread
@@ -229,7 +231,8 @@ func agentThreadHistoryFacts(
 	for _, run := range runs {
 		thread, ok := threadByID[run.ThreadID]
 		if !ok || run.ActorUserID != scope.ActorUserID || run.UpdatedAt.Before(run.CreatedAt) ||
-			run.LastEventSequence < 0 || run.StateVersion < 0 || run.StepNumber < 0 || run.MaxSteps < 0 {
+			run.ReasoningHost != agentruntime.ReasoningHostManaged || run.LastEventSequence < 0 ||
+			run.StateVersion < 0 || run.StepNumber < 0 || run.MaxSteps < 0 {
 			return nil, errors.New("agent thread history run facts are inconsistent")
 		}
 		if thread.ID != run.ThreadID {
@@ -352,19 +355,23 @@ func rebuildTerminalAgentTimeline(scope agentruntime.Scope, run model.AgentRun, 
 				ContentJSON: json.RawMessage(event.PayloadJSON),
 			}
 		case agentruntime.EventArtifactAvailable:
-			var payload agentHistoryArtifactPayload
-			if err := json.Unmarshal([]byte(event.PayloadJSON), &payload); err != nil || payload.ArtifactID == "" ||
-				payload.PlanKey == "" || payload.PlanVersion < 1 || payload.ResourceID == "" || !payload.Status.Valid() {
-				return nil, errors.New("terminal agent artifact facts are invalid")
+			var err error
+			mutation, err = agentArtifactTimelineMutation(run.ID, event)
+			if err != nil {
+				return nil, errors.Join(errors.New("terminal agent artifact facts are invalid"), err)
 			}
-			mutation = &TimelineMutation{
-				ItemID: agentFactID("timeline", run.ID, "artifact", payload.ArtifactID), Kind: model.AgentTimelineItemArtifact,
-				ToStatus: model.AgentTimelineItemCompleted, SourceEventSequence: event.Sequence,
-				ContentJSON: json.RawMessage(event.PayloadJSON),
+		case agentruntime.EventApprovalDecided:
+			stageMutation, matched, err := agentStageReviewTimelineMutation(run.ID, event)
+			if err != nil {
+				return nil, err
+			}
+			if matched {
+				mutation = stageMutation
 			}
 		case agentruntime.EventModelDelta:
 			continue
-		default:
+		}
+		if mutation == nil {
 			var state agentruntime.RuntimeState
 			if err := json.Unmarshal([]byte(event.PayloadJSON), &state); err != nil || state.StateVersion < 1 || !state.Status.Valid() {
 				return nil, errors.New("terminal agent runtime event state is invalid")
@@ -463,13 +470,47 @@ func applyRebuiltAgentTimelineMutation(
 		return errors.New("rebuilt agent timeline item identity is duplicated")
 	}
 	item := &(*items)[index]
-	if item.Kind != mutation.Kind || item.Status != *mutation.FromStatus || agentTimelineStatusTerminal(item.Status) {
+	lateCancelledAssemblyOutput := isLateCancelledAssemblyOutput(*item, mutation)
+	if item.Kind != mutation.Kind || (!lateCancelledAssemblyOutput &&
+		(item.Status != *mutation.FromStatus || agentTimelineStatusTerminal(item.Status))) {
 		return errors.New("rebuilt agent timeline transition conflicts with prior facts")
 	}
+	completedAt := item.CompletedAt
 	item.Status = mutation.ToStatus
 	item.SourceEventSequence = mutation.SourceEventSequence
 	item.ContentJSON = string(mutation.ContentJSON)
-	item.CompletedAt = agentTimelineCompletedAt(mutation.ToStatus, now)
+	if !lateCancelledAssemblyOutput {
+		completedAt = agentTimelineCompletedAt(mutation.ToStatus, now)
+	}
+	item.CompletedAt = completedAt
 	item.UpdatedAt = now
 	return nil
+}
+
+func isLateCancelledAssemblyOutput(item model.AgentTimelineItem, mutation TimelineMutation) bool {
+	if item.Kind != model.AgentTimelineItemToolCall || item.Status != model.AgentTimelineItemInterrupted ||
+		mutation.Kind != model.AgentTimelineItemToolCall || mutation.ToStatus != model.AgentTimelineItemInterrupted {
+		return false
+	}
+	next, err := agentruntime.DecodeMediaAssemblyTimelineContent(mutation.ContentJSON)
+	if err != nil || next.TaskStatus != agentruntime.MediaAssemblyTaskCancelled || next.Final == nil || next.Final.Adopted {
+		return false
+	}
+	if previous, err := agentruntime.DecodeMediaAssemblyTimelineContent([]byte(item.ContentJSON)); err == nil {
+		return previous.ToolCallID == next.ToolCallID && previous.ActionVersion == next.ActionVersion &&
+			previous.TaskID == next.TaskID && previous.PlanRevision == next.PlanRevision && reflect.DeepEqual(previous.Output, next.Output)
+	}
+	var interrupted map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(item.ContentJSON), &interrupted); err != nil || len(interrupted) != 3 {
+		return false
+	}
+	var toolCallID string
+	var actionVersion int
+	var wasInterrupted bool
+	if json.Unmarshal(interrupted["toolCallId"], &toolCallID) != nil ||
+		json.Unmarshal(interrupted["actionVersion"], &actionVersion) != nil ||
+		json.Unmarshal(interrupted["interrupted"], &wasInterrupted) != nil {
+		return false
+	}
+	return toolCallID == next.ToolCallID && actionVersion == next.ActionVersion && wasInterrupted
 }

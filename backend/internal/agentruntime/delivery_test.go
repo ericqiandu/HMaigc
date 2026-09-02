@@ -29,9 +29,40 @@ func TestVerifyDeliveryUsesOnlyStructuredFacts(t *testing.T) {
 			evidence: agentruntime.DeliveryEvidence{Artifacts: []agentruntime.DeliveryArtifact{{Kind: agentruntime.ArtifactImage, URL: "https://cdn.example.com/result.png"}}}, want: agentruntime.VerificationSatisfied,
 		},
 		{
+			name:     "generated task resource satisfied before asset publication",
+			expected: agentruntime.ExpectedDelivery{Kind: agentruntime.DeliveryGeneratedAsset, RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactImage}, CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactArtifact, Artifact: agentruntime.ArtifactImage}}},
+			evidence: agentruntime.DeliveryEvidence{Artifacts: []agentruntime.DeliveryArtifact{{
+				Kind: agentruntime.ArtifactImage, ResourceID: "resource-generated", URL: "/api/resources/resource-generated/file",
+				ResourceReady: true, SourceTaskID: "task-generated", SourceTaskSucceeded: true,
+			}}}, want: agentruntime.VerificationSatisfied,
+		},
+		{
 			name:     "mixed requires both facts",
 			expected: agentruntime.ExpectedDelivery{Kind: agentruntime.DeliveryMixed, RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactVideo}, TargetCanvasID: "canvas-1", CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactCanvasRevision}, {Fact: agentruntime.DeliveryFactArtifact, Artifact: agentruntime.ArtifactVideo}}},
-			evidence: agentruntime.DeliveryEvidence{CanvasID: "canvas-1", CanvasRevision: 5}, want: agentruntime.VerificationRepairable,
+			evidence: agentruntime.DeliveryEvidence{CanvasID: "canvas-1", CanvasRevision: 5, CanvasCurrent: true}, want: agentruntime.VerificationRepairable,
+		},
+		{
+			name:     "mixed accepts an approved current canvas text node without a media url",
+			expected: agentruntime.ExpectedDelivery{Kind: agentruntime.DeliveryMixed, RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactText}, TargetCanvasID: "canvas-1", CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactArtifact, Artifact: agentruntime.ArtifactText}, {Fact: agentruntime.DeliveryFactCanvasRevision}}},
+			evidence: agentruntime.DeliveryEvidence{CanvasID: "canvas-1", CanvasRevision: 6, CanvasCurrent: true, Artifacts: []agentruntime.DeliveryArtifact{{
+				Kind: agentruntime.ArtifactText, ArtifactID: "script-node-1", RevisionID: "canvas-revision-6", Approved: true, CurrentRevision: true,
+			}}}, want: agentruntime.VerificationSatisfied,
+		},
+		{
+			name:     "canvas bound image rejects unrelated placeholder revision",
+			expected: agentruntime.ExpectedDelivery{Kind: agentruntime.DeliveryMixed, RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactImage, agentruntime.ArtifactCanvasRevision}, TargetCanvasID: "canvas-1", CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactCanvasBoundResource, Artifact: agentruntime.ArtifactImage}, {Fact: agentruntime.DeliveryFactCanvasRevision}}},
+			evidence: agentruntime.DeliveryEvidence{CanvasID: "canvas-1", CanvasRevision: 5, CanvasCurrent: true, Artifacts: []agentruntime.DeliveryArtifact{{
+				Kind: agentruntime.ArtifactImage, ResourceID: "resource-1", URL: "/api/resources/resource-1/file", ResourceReady: true,
+				SourceTaskID: "task-1", SourceTaskSucceeded: true, TargetCanvasNodeID: "image-node-1",
+			}}}, want: agentruntime.VerificationRepairable,
+		},
+		{
+			name:     "canvas bound image accepts exact current node binding",
+			expected: agentruntime.ExpectedDelivery{Kind: agentruntime.DeliveryMixed, RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactImage, agentruntime.ArtifactCanvasRevision}, TargetCanvasID: "canvas-1", CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactCanvasBoundResource, Artifact: agentruntime.ArtifactImage}, {Fact: agentruntime.DeliveryFactCanvasRevision}}},
+			evidence: agentruntime.DeliveryEvidence{CanvasID: "canvas-1", CanvasRevision: 6, CanvasCurrent: true, Artifacts: []agentruntime.DeliveryArtifact{{
+				Kind: agentruntime.ArtifactImage, ResourceID: "resource-1", URL: "/api/resources/resource-1/file", ResourceReady: true,
+				SourceTaskID: "task-1", SourceTaskSucceeded: true, TargetCanvasNodeID: "image-node-1", CanvasBound: true,
+			}}}, want: agentruntime.VerificationSatisfied,
 		},
 	}
 	for _, test := range cases {
@@ -59,5 +90,151 @@ func TestVerifyDeliveryRejectsInvalidContracts(t *testing.T) {
 		if actual.Status != agentruntime.VerificationFailed {
 			t.Fatalf("invalid contract verification = %#v", actual)
 		}
+	}
+}
+
+func TestFinalDeliveryRequiresApprovedExactRevisionReadyResourceAndCanvas(t *testing.T) {
+	expected := agentruntime.ExpectedDelivery{
+		Kind:              agentruntime.DeliveryMixed,
+		RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactVideo},
+		TargetCanvasID:    "canvas-1",
+		CompletionCriteria: []agentruntime.DeliveryCriterion{
+			{Fact: agentruntime.DeliveryFactArtifactRevision, Artifact: agentruntime.ArtifactVideo},
+			{Fact: agentruntime.DeliveryFactResource, Artifact: agentruntime.ArtifactVideo},
+			{Fact: agentruntime.DeliveryFactCanvasRevision},
+		},
+	}
+
+	incomplete := agentruntime.VerifyDelivery(expected, agentruntime.DeliveryEvidence{
+		Artifacts: []agentruntime.DeliveryArtifact{{
+			Kind: agentruntime.ArtifactVideo, ArtifactID: "video-1", RevisionID: "video-r1", Approved: true,
+		}},
+	})
+	if incomplete.Status != agentruntime.VerificationRepairable {
+		t.Fatalf("incomplete final delivery = %#v", incomplete)
+	}
+	wantMissing := []agentruntime.DeliveryCriterion{
+		{Fact: agentruntime.DeliveryFactResource, Artifact: agentruntime.ArtifactVideo},
+		{Fact: agentruntime.DeliveryFactCanvasRevision},
+	}
+	if len(incomplete.MissingCriteria) != len(wantMissing) {
+		t.Fatalf("missing criteria = %#v, want %#v", incomplete.MissingCriteria, wantMissing)
+	}
+	for index := range wantMissing {
+		if incomplete.MissingCriteria[index] != wantMissing[index] {
+			t.Fatalf("missing criterion %d = %#v, want %#v", index, incomplete.MissingCriteria[index], wantMissing[index])
+		}
+	}
+
+	complete := agentruntime.VerifyDelivery(expected, agentruntime.DeliveryEvidence{
+		CanvasID: "canvas-1", CanvasRevision: 8, CanvasCurrent: true,
+		Artifacts: []agentruntime.DeliveryArtifact{{
+			Kind: agentruntime.ArtifactVideo, ArtifactID: "video-1", RevisionID: "video-r1",
+			ResourceID: "resource-1", URL: "/api/resources/resource-1/file", ResourceReady: true, Approved: true,
+		}},
+	})
+	if complete.Status != agentruntime.VerificationSatisfied {
+		t.Fatalf("complete final delivery = %#v", complete)
+	}
+}
+
+func TestFinalAssemblyDeliveryRequiresSuccessfulTaskReadyResourceAndCurrentRevisions(t *testing.T) {
+	t.Parallel()
+
+	expected := agentruntime.ExpectedDelivery{
+		Kind:              agentruntime.DeliveryMixed,
+		RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactVideo, agentruntime.ArtifactCanvasRevision},
+		TargetCanvasID:    "canvas-1",
+		CompletionCriteria: []agentruntime.DeliveryCriterion{
+			{Fact: agentruntime.DeliveryFactTaskBackedResource, Artifact: agentruntime.ArtifactVideo},
+			{Fact: agentruntime.DeliveryFactCanvasRevision},
+		},
+	}
+	complete := agentruntime.DeliveryEvidence{
+		CanvasID: "canvas-1", CanvasRevision: 9, CanvasCurrent: true,
+		Artifacts: []agentruntime.DeliveryArtifact{{
+			Kind: agentruntime.ArtifactVideo, ArtifactID: "final-video", RevisionID: "final-r1",
+			ResourceID: "final-resource", URL: "/api/resources/final-resource/file", ResourceReady: true,
+			SourceTaskID: "assembly-task", SourceTaskSucceeded: true, CurrentRevision: true,
+		}},
+	}
+	if verification := agentruntime.VerifyDelivery(expected, complete); verification.Status != agentruntime.VerificationSatisfied {
+		t.Fatalf("complete assembly delivery = %#v", verification)
+	}
+
+	cases := []struct {
+		name   string
+		mutate func(*agentruntime.DeliveryEvidence)
+	}{
+		{name: "canvas revision is stale", mutate: func(e *agentruntime.DeliveryEvidence) { e.CanvasCurrent = false }},
+		{name: "assembly task is missing", mutate: func(e *agentruntime.DeliveryEvidence) { e.Artifacts[0].SourceTaskID = "" }},
+		{name: "assembly task failed", mutate: func(e *agentruntime.DeliveryEvidence) { e.Artifacts[0].SourceTaskSucceeded = false }},
+		{name: "artifact revision is stale", mutate: func(e *agentruntime.DeliveryEvidence) { e.Artifacts[0].CurrentRevision = false }},
+		{name: "resource is not ready", mutate: func(e *agentruntime.DeliveryEvidence) { e.Artifacts[0].ResourceReady = false }},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			evidence := complete
+			evidence.Artifacts = append([]agentruntime.DeliveryArtifact(nil), complete.Artifacts...)
+			testCase.mutate(&evidence)
+			verification := agentruntime.VerifyDelivery(expected, evidence)
+			if verification.Status != agentruntime.VerificationRepairable || len(verification.MissingCriteria) != 1 {
+				t.Fatalf("incomplete assembly delivery = %#v", verification)
+			}
+		})
+	}
+}
+
+func TestCurrentCapabilityDeliveryAcceptsPersistedTaskAndPublicationFactsWithoutLegacyRevisions(t *testing.T) {
+	t.Parallel()
+
+	generated := agentruntime.ExpectedDelivery{
+		Kind:              agentruntime.DeliveryGeneratedAsset,
+		RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactVideo},
+		CompletionCriteria: []agentruntime.DeliveryCriterion{
+			{Fact: agentruntime.DeliveryFactTaskBackedResource, Artifact: agentruntime.ArtifactVideo},
+		},
+	}
+	generatedEvidence := agentruntime.DeliveryEvidence{Artifacts: []agentruntime.DeliveryArtifact{{
+		Kind: agentruntime.ArtifactVideo, ResourceID: "resource-video", URL: "/api/resources/resource-video/file",
+		ResourceReady: true, SourceTaskID: "task-video", SourceTaskSucceeded: true,
+	}}}
+	if verification := agentruntime.VerifyDelivery(generated, generatedEvidence); verification.Status != agentruntime.VerificationSatisfied {
+		t.Fatalf("current media delivery = %#v", verification)
+	}
+
+	published := agentruntime.ExpectedDelivery{
+		Kind:              agentruntime.DeliveryGeneratedAsset,
+		RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactImage},
+		CompletionCriteria: []agentruntime.DeliveryCriterion{
+			{Fact: agentruntime.DeliveryFactPublication, Artifact: agentruntime.ArtifactImage},
+		},
+	}
+	publishedEvidence := agentruntime.DeliveryEvidence{Artifacts: []agentruntime.DeliveryArtifact{{
+		Kind: agentruntime.ArtifactImage, ResourceID: "resource-image", URL: "/api/resources/resource-image/file",
+		ResourceReady: true, PublicationID: "asset-image", Approved: true,
+	}}}
+	if verification := agentruntime.VerifyDelivery(published, publishedEvidence); verification.Status != agentruntime.VerificationSatisfied {
+		t.Fatalf("current asset publication delivery = %#v", verification)
+	}
+}
+
+func TestFinalDeliveryRejectsUnapprovedRevisionAndPublicationWithoutExactResource(t *testing.T) {
+	expected := agentruntime.ExpectedDelivery{
+		Kind:              agentruntime.DeliveryGeneratedAsset,
+		RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactImage},
+		CompletionCriteria: []agentruntime.DeliveryCriterion{
+			{Fact: agentruntime.DeliveryFactArtifactRevision, Artifact: agentruntime.ArtifactImage},
+			{Fact: agentruntime.DeliveryFactPublication, Artifact: agentruntime.ArtifactImage},
+		},
+	}
+	verification := agentruntime.VerifyDelivery(expected, agentruntime.DeliveryEvidence{
+		Artifacts: []agentruntime.DeliveryArtifact{{
+			Kind: agentruntime.ArtifactImage, ArtifactID: "image-1", RevisionID: "image-r1",
+			ResourceID: "resource-1", URL: "/api/resources/resource-1/file",
+		}},
+	})
+	if verification.Status != agentruntime.VerificationRepairable || len(verification.MissingCriteria) != 2 {
+		t.Fatalf("unapproved publication verification = %#v", verification)
 	}
 }

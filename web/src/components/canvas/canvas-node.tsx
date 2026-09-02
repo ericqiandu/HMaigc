@@ -9,9 +9,8 @@ import { resourceStorageLabel, resourceStorageLocation, resourceStorageTitle } f
 import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
 import { formatBytes } from "@/lib/image-utils";
 import { CONTENT_MODERATION_ERROR_CODE, isContentModerationError } from "@/lib/generation-error";
+import { canvasResourceDisplayUrl } from "@/lib/canvas-media-playback";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { resourceIdFromStorageKey } from "@/services/api/resources";
-import { cacheResourceObjectUrl, getCachedResourceObjectUrl } from "@/services/resource-blob-cache";
 import { CanvasTextDraftEditor, type CanvasTextDraftEditorHandle } from "./canvas-text-draft-editor";
 import { CanvasMediaNodeContent } from "./canvas-media-node-content";
 import { CanvasNodeAction, CanvasNodeEmptyState, CanvasNodeStatusLayout } from "./canvas-node-ui";
@@ -810,13 +809,11 @@ function ImageContent({
     batchRecovering: boolean;
     onToggleBatch?: () => void;
 }) {
-    const imageContainerRef = useRef<HTMLDivElement>(null);
-    const nearViewport = useNearViewport(imageContainerRef);
-    const { url, loading } = useNodeResourceUrl(node, nearViewport);
+    const url = canvasResourceDisplayUrl(node.metadata?.storageKey, node.metadata?.content || "");
 
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} theme={theme} onToggleBatch={onToggleBatch}>
-            <div ref={imageContainerRef} className="h-full w-full overflow-hidden">
+            <div className="h-full w-full overflow-hidden">
                 {url ? (
                     <img
                         src={url}
@@ -829,88 +826,12 @@ function ImageContent({
                     />
                 ) : (
                     <div className="grid size-full place-items-center" style={{ color: theme.node.muted }}>
-                        {loading ? <LoaderCircle className="size-5 animate-spin" /> : <ImageIcon className="size-5 opacity-45" />}
+                        <ImageIcon className="size-5 opacity-45" />
                     </div>
                 )}
             </div>
         </BatchFrame>
     );
-}
-
-function useNodeResourceUrl(node: CanvasNodeData, eager: boolean) {
-    const storageKey = node.metadata?.storageKey || "";
-    const fallback = node.metadata?.content || "";
-    const isRemoteResource = Boolean(resourceIdFromStorageKey(storageKey));
-    const [url, setUrl] = useState(isRemoteResource ? "" : fallback);
-    const [loading, setLoading] = useState(isRemoteResource && eager);
-
-    useEffect(() => {
-        let cancelled = false;
-        if (!isRemoteResource) {
-            setUrl(fallback);
-            setLoading(false);
-            return;
-        }
-        setUrl("");
-        setLoading(eager);
-        const resolve = eager ? cacheResourceObjectUrl(storageKey) : getCachedResourceObjectUrl(storageKey);
-        void resolve
-            .then((cached) => {
-                if (!cancelled) setUrl(cached || (eager ? fallback : ""));
-            })
-            .catch(() => {
-                if (!cancelled && eager) setUrl(fallback);
-            })
-            .finally(() => {
-                if (!cancelled) setLoading(false);
-            });
-        return () => {
-            cancelled = true;
-        };
-    }, [eager, fallback, isRemoteResource, storageKey]);
-
-    const load = useCallback(async () => {
-        if (url) return url;
-        if (!isRemoteResource) return fallback;
-        setLoading(true);
-        try {
-            const next = (await cacheResourceObjectUrl(storageKey)) || fallback;
-            setUrl(next);
-            return next;
-        } catch {
-            setUrl(fallback);
-            return fallback;
-        } finally {
-            setLoading(false);
-        }
-    }, [fallback, isRemoteResource, storageKey, url]);
-
-    return { url, loading, load };
-}
-
-function useNearViewport(ref: React.RefObject<Element | null>) {
-    const [nearViewport, setNearViewport] = useState(false);
-
-    useEffect(() => {
-        const element = ref.current;
-        if (!element || typeof IntersectionObserver === "undefined") {
-            setNearViewport(true);
-            return;
-        }
-        const observer = new IntersectionObserver(
-            (entries) => {
-                if (entries.some((entry) => entry.isIntersecting)) {
-                    setNearViewport(true);
-                    observer.disconnect();
-                }
-            },
-            { rootMargin: "600px" },
-        );
-        observer.observe(element);
-        return () => observer.disconnect();
-    }, [ref]);
-
-    return nearViewport;
 }
 
 function ImageInfoBar({ node }: { node: CanvasNodeData }) {

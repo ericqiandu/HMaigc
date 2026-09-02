@@ -702,7 +702,7 @@ async function runCase(browser, baseURL, testCase, tokens) {
         const unexpectedConsole = consoleEntries.filter((entry) => entry.startsWith("error:") || entry.startsWith("warning:"));
         const expectedResourceError = "error: Failed to load resource: the server responded with a status of 503 (Service Unavailable)";
         if (scenario === "unknown-get-failure" || scenario === "poll-failure" || scenario === "provider-failure") {
-            assert.equal(unexpectedConsole.length, httpFailures.length, `${label}: 预期 HTTP 失败与浏览器控制台错误数量不一致`);
+            assert.equal(unexpectedConsole.length, httpFailures.length, `${label}: 预期 HTTP 失败与浏览器控制台错误数量不一致；console=${JSON.stringify(unexpectedConsole)} http=${JSON.stringify(httpFailures)}`);
             assert.ok(
                 unexpectedConsole.every((entry) => entry === expectedResourceError),
                 `${label}: 控制台包含预期 503 之外的错误/警告`,

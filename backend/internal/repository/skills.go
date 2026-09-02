@@ -10,26 +10,27 @@ import (
 )
 
 type PublishedSkillRecord struct {
-	ID               string
-	Dir              string
-	Name             string
-	Description      string
-	Icon             string
-	CoverURL         string
-	CategoriesJSON   string
-	Status           model.SkillStatus
-	CurrentVersionID string
-	SourceKind       string
-	SourceURL        string
-	SourceRevision   string
-	SourceLicense    string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	Version          int
-	Instructions     string
-	Checksum         string
-	Changelog        string
-	PublishedAt      *time.Time
+	ID                     string
+	Dir                    string
+	Name                   string
+	Description            string
+	Icon                   string
+	CoverURL               string
+	CategoriesJSON         string
+	Status                 model.SkillStatus
+	CurrentVersionID       string
+	SourceKind             string
+	SourceURL              string
+	SourceRevision         string
+	SourceLicense          string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	Version                int
+	Instructions           string
+	Checksum               string
+	CapabilityManifestJSON string
+	Changelog              string
+	PublishedAt            *time.Time
 }
 
 type PublishedSkillQuery struct {
@@ -62,6 +63,18 @@ func (r *Repository) PublishedSkills(query PublishedSkillQuery) ([]PublishedSkil
 func (r *Repository) PublishedSkillByDir(dir string) (*PublishedSkillRecord, error) {
 	var record PublishedSkillRecord
 	err := r.publishedSkillQuery().Select(publishedSkillSelect()).Where("skills.dir = ?", dir).Take(&record).Error
+	if err != nil {
+		return nil, err
+	}
+	return &record, nil
+}
+
+func (r *Repository) PublishedSkillVersionByDir(dir string, version int) (*PublishedSkillRecord, error) {
+	var record PublishedSkillRecord
+	err := r.db.Table("skills").
+		Joins("JOIN skill_versions ON skill_versions.skill_id = skills.id").
+		Where("skills.dir = ? AND skill_versions.version = ? AND skill_versions.published_at IS NOT NULL", dir, version).
+		Select(publishedSkillSelect()).Take(&record).Error
 	if err != nil {
 		return nil, err
 	}
@@ -113,11 +126,11 @@ func (r *Repository) publishedSkillQuery() *gorm.DB {
 func publishedSkillSelect() string {
 	return "skills.id, skills.dir, skills.name, skills.description, skills.icon, skills.cover_url, skills.categories_json, skills.status, " +
 		"skills.current_version_id, skills.source_kind, skills.source_url, skills.source_revision, skills.source_license, skills.created_at, skills.updated_at, " +
-		"skill_versions.version, skill_versions.instructions, skill_versions.checksum, skill_versions.changelog, skill_versions.published_at"
+		"skill_versions.version, skill_versions.instructions, skill_versions.checksum, skill_versions.capability_manifest_json, skill_versions.changelog, skill_versions.published_at"
 }
 
 func publishedSkillCatalogSelect() string {
 	return "skills.id, skills.dir, skills.name, skills.description, skills.icon, skills.cover_url, skills.categories_json, skills.status, " +
 		"skills.current_version_id, skills.source_kind, skills.source_url, skills.source_revision, skills.source_license, skills.created_at, skills.updated_at, " +
-		"skill_versions.version, skill_versions.checksum, skill_versions.published_at"
+		"skill_versions.version, skill_versions.checksum, skill_versions.capability_manifest_json, skill_versions.published_at"
 }

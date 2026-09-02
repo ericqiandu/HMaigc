@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,25 +23,43 @@ type createAgentThreadRequest struct {
 	CanvasID string `json:"canvasId"`
 }
 
+type agentRuntimeConfigurationRequest struct {
+	GenerationModels agentruntime.GenerationModelSelections `json:"generationModels"`
+	SkillDirs        []string                               `json:"skillDirs"`
+	Attachments      []struct {
+		ResourceID string `json:"resourceId"`
+		Name       string `json:"name"`
+	} `json:"attachments"`
+	ExecutionMode agentruntime.ExecutionMode `json:"executionMode"`
+}
+
 type startAgentRunRequest struct {
-	ClientRequestID string `json:"clientRequestId"`
-	UserMessage     string `json:"userMessage"`
-	MaxSteps        int    `json:"maxSteps"`
-	Configuration   struct {
-		GenerationModels agentruntime.GenerationModelSelections `json:"generationModels"`
-		SkillDirs        []string                               `json:"skillDirs"`
-		Attachments      []struct {
-			ResourceID string `json:"resourceId"`
-			Name       string `json:"name"`
-		} `json:"attachments"`
-		ExecutionMode agentruntime.ExecutionMode `json:"executionMode"`
-	} `json:"configuration"`
+	ClientRequestID string                           `json:"clientRequestId"`
+	UserMessage     string                           `json:"userMessage"`
+	MaxSteps        int                              `json:"maxSteps"`
+	Configuration   agentRuntimeConfigurationRequest `json:"configuration"`
+}
+
+type startLocalAgentRunRequest struct {
+	CanvasID         string                           `json:"canvasId"`
+	ExternalThreadID string                           `json:"externalThreadId"`
+	ClientRequestID  string                           `json:"clientRequestId"`
+	UserMessage      string                           `json:"userMessage"`
+	MaxSteps         int                              `json:"maxSteps"`
+	Configuration    agentRuntimeConfigurationRequest `json:"configuration"`
+}
+
+type submitLocalAgentDecisionRequest struct {
+	ClientRequestID      string                     `json:"clientRequestId"`
+	ExpectedStateVersion int                        `json:"expectedStateVersion"`
+	Decision             agentruntime.ModelDecision `json:"decision"`
 }
 
 type submitAgentApprovalRequest struct {
 	ToolCallID    string                            `json:"toolCallId"`
 	ActionVersion int                               `json:"actionVersion"`
 	Decision      agentruntime.ToolApprovalDecision `json:"decision"`
+	ProposalHash  string                            `json:"proposalHash"`
 }
 
 type submitAgentClarificationResponseRequest struct {
@@ -62,11 +81,59 @@ type interruptAgentRunRequest struct {
 
 type agentRuntimeRequest interface {
 	createAgentThreadRequest | startAgentRunRequest | submitAgentApprovalRequest | submitAgentClarificationResponseRequest |
-		steerAgentRunRequest | interruptAgentRunRequest
+		steerAgentRunRequest | interruptAgentRunRequest | startLocalAgentRunRequest | submitLocalAgentDecisionRequest
 }
 
 func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
 	agent := r.Group("/agent", agentRuntimeSecurityHeaders())
+	agent.POST("/local/runs", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		var request startLocalAgentRunRequest
+		if err := decodeStrictAgentRequest(c, &request); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		view, err := svc.StartExternalAgentRun(user, service.StartExternalAgentRunInput{
+			Context: c.Request.Context(), CanvasID: request.CanvasID, ExternalThreadID: request.ExternalThreadID,
+			ClientRequestID: request.ClientRequestID, UserMessage: request.UserMessage, MaxSteps: request.MaxSteps,
+			Configuration: agentRuntimeConfigurationInput(request.Configuration),
+		})
+		if err != nil {
+			if failAgentControl(c, err) {
+				return
+			}
+			failService(c, err)
+			return
+		}
+		ok(c, view)
+	})
+	agent.POST("/local/runs/:runId/decisions", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		var request submitLocalAgentDecisionRequest
+		if err := decodeStrictAgentRequest(c, &request); err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		view, err := svc.SubmitExternalAgentDecision(user, c.Param("runId"), service.SubmitExternalAgentDecisionInput{
+			ClientRequestID: request.ClientRequestID, ExpectedStateVersion: request.ExpectedStateVersion, Decision: request.Decision,
+		})
+		if err != nil {
+			if failAgentControl(c, err) {
+				return
+			}
+			failService(c, err)
+			return
+		}
+		ok(c, view)
+	})
 	agent.GET("/threads", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -115,19 +182,10 @@ func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		attachments := make([]service.AgentRuntimeResourceInput, 0, len(request.Configuration.Attachments))
-		for _, attachment := range request.Configuration.Attachments {
-			attachments = append(attachments, service.AgentRuntimeResourceInput{ResourceID: attachment.ResourceID, Name: attachment.Name})
-		}
 		view, err := svc.StartScopedAgentRun(user, c.Param("threadId"), service.StartScopedAgentRunInput{
 			Context: c.Request.Context(), ClientRequestID: request.ClientRequestID,
 			UserMessage: request.UserMessage, MaxSteps: request.MaxSteps,
-			Configuration: service.AgentRuntimeConfigurationInput{
-				GenerationModels: request.Configuration.GenerationModels,
-				SkillDirs:        request.Configuration.SkillDirs,
-				Attachments:      attachments,
-				ExecutionMode:    request.Configuration.ExecutionMode,
-			},
+			Configuration: agentRuntimeConfigurationInput(request.Configuration),
 		})
 		if err != nil {
 			if failAgentControl(c, err) {
@@ -209,11 +267,15 @@ func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		var request submitAgentApprovalRequest
 		if err := decodeStrictAgentRequest(c, &request); err != nil {
-			fail(c, http.StatusBadRequest, err)
+			failAgentApprovalInvalid(c, err)
+			return
+		}
+		if err := validateAgentApprovalRequest(request); err != nil {
+			failAgentApprovalInvalid(c, err)
 			return
 		}
 		view, err := svc.SubmitScopedAgentApproval(user, c.Param("runId"), service.AgentToolApprovalSubmission{
-			ToolCallID: request.ToolCallID, ActionVersion: request.ActionVersion, Decision: request.Decision,
+			ToolCallID: request.ToolCallID, ActionVersion: request.ActionVersion, Decision: request.Decision, ProposalHash: request.ProposalHash,
 		})
 		if err != nil {
 			if failAgentControl(c, err) {
@@ -253,6 +315,47 @@ func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, view)
 	})
+}
+
+func agentRuntimeConfigurationInput(request agentRuntimeConfigurationRequest) service.AgentRuntimeConfigurationInput {
+	attachments := make([]service.AgentRuntimeResourceInput, 0, len(request.Attachments))
+	for _, attachment := range request.Attachments {
+		attachments = append(attachments, service.AgentRuntimeResourceInput{ResourceID: attachment.ResourceID, Name: attachment.Name})
+	}
+	return service.AgentRuntimeConfigurationInput{
+		GenerationModels: request.GenerationModels,
+		SkillDirs:        request.SkillDirs,
+		Attachments:      attachments,
+		ExecutionMode:    request.ExecutionMode,
+	}
+}
+
+func validateAgentApprovalRequest(request submitAgentApprovalRequest) error {
+	if strings.TrimSpace(request.ToolCallID) == "" || request.ActionVersion < 1 || !validLowerHexSHA256(request.ProposalHash) ||
+		(request.Decision != agentruntime.ToolApprovalApproved && request.Decision != agentruntime.ToolApprovalRejected) {
+		return errors.New("Agent 审批请求无效")
+	}
+	return nil
+}
+
+func validLowerHexSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func failAgentApprovalInvalid(c *gin.Context, err error) {
+	message := "Agent 审批请求无效"
+	if err != nil && err.Error() == "Agent 请求格式无效" {
+		message = err.Error()
+	}
+	c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "data": gin.H{"errorCode": "agent_approval_invalid"}, "msg": message})
 }
 
 func failAgentControl(c *gin.Context, err error) bool {
@@ -338,6 +441,7 @@ func agentRuntimeEventStream(svc *service.Service) gin.HandlerFunc {
 		}
 		events, view, err := svc.ReadScopedAgentEvents(user, c.Param("runId"), afterSequence, 100)
 		if err != nil {
+			log.Printf("event=agent_runtime_event_stream_read_failed stage=initial run_id=%q after_sequence=%d error=%q", c.Param("runId"), afterSequence, err.Error())
 			if failAgentRuntimeProtocol(c, err) {
 				return
 			}
@@ -372,6 +476,7 @@ func agentRuntimeEventStream(svc *service.Service) gin.HandlerFunc {
 			case <-poll.C:
 				events, view, err = svc.ReadScopedAgentEvents(user, c.Param("runId"), afterSequence, 100)
 				if err != nil {
+					log.Printf("event=agent_runtime_event_stream_read_failed stage=poll run_id=%q after_sequence=%d error=%q", c.Param("runId"), afterSequence, err.Error())
 					return
 				}
 				if err := writeAgentRuntimeEvents(c, events, &afterSequence); err != nil {

@@ -36,9 +36,14 @@ func (kind ArtifactKind) Valid() bool {
 type DeliveryFact string
 
 const (
-	DeliveryFactFinalMessage   DeliveryFact = "final_message"
-	DeliveryFactCanvasRevision DeliveryFact = "canvas_revision"
-	DeliveryFactArtifact       DeliveryFact = "artifact"
+	DeliveryFactFinalMessage        DeliveryFact = "final_message"
+	DeliveryFactCanvasRevision      DeliveryFact = "canvas_revision"
+	DeliveryFactArtifact            DeliveryFact = "artifact"
+	DeliveryFactArtifactRevision    DeliveryFact = "artifact_revision"
+	DeliveryFactResource            DeliveryFact = "resource"
+	DeliveryFactPublication         DeliveryFact = "publication"
+	DeliveryFactTaskBackedResource  DeliveryFact = "task_backed_resource"
+	DeliveryFactCanvasBoundResource DeliveryFact = "canvas_bound_resource"
 )
 
 type DeliveryCriterion struct {
@@ -107,7 +112,7 @@ func (expected ExpectedDelivery) Validate() error {
 			if criterion.Artifact != "" {
 				return errors.New("expected delivery criterion artifact is unexpected")
 			}
-		case DeliveryFactArtifact:
+		case DeliveryFactArtifact, DeliveryFactArtifactRevision, DeliveryFactResource, DeliveryFactPublication, DeliveryFactTaskBackedResource, DeliveryFactCanvasBoundResource:
 			if !criterion.Artifact.Valid() {
 				return errors.New("expected delivery criterion artifact is required")
 			}
@@ -149,14 +154,26 @@ func (expected ExpectedDelivery) Validate() error {
 }
 
 type DeliveryArtifact struct {
-	Kind ArtifactKind `json:"kind"`
-	URL  string       `json:"url"`
+	Kind                ArtifactKind `json:"kind"`
+	ArtifactID          string       `json:"artifactId,omitempty"`
+	RevisionID          string       `json:"revisionId,omitempty"`
+	ResourceID          string       `json:"resourceId,omitempty"`
+	URL                 string       `json:"url,omitempty"`
+	ResourceReady       bool         `json:"resourceReady,omitempty"`
+	Approved            bool         `json:"approved,omitempty"`
+	PublicationID       string       `json:"publicationId,omitempty"`
+	SourceTaskID        string       `json:"sourceTaskId,omitempty"`
+	SourceTaskSucceeded bool         `json:"sourceTaskSucceeded,omitempty"`
+	CurrentRevision     bool         `json:"currentRevision,omitempty"`
+	TargetCanvasNodeID  string       `json:"targetCanvasNodeId,omitempty"`
+	CanvasBound         bool         `json:"canvasBound,omitempty"`
 }
 
 type DeliveryEvidence struct {
 	FinalMessage   string             `json:"finalMessage,omitempty"`
 	CanvasID       string             `json:"canvasId,omitempty"`
 	CanvasRevision int64              `json:"canvasRevision,omitempty"`
+	CanvasCurrent  bool               `json:"canvasCurrent,omitempty"`
 	Artifacts      []DeliveryArtifact `json:"artifacts,omitempty"`
 }
 
@@ -178,12 +195,12 @@ func VerifyDelivery(expected ExpectedDelivery, evidence DeliveryEvidence) Delive
 	if err := expected.Validate(); err != nil {
 		return DeliveryVerification{Status: VerificationFailed, Rationale: err.Error()}
 	}
-	artifacts := make(map[ArtifactKind]bool, len(evidence.Artifacts))
+	artifacts := make(map[ArtifactKind][]DeliveryArtifact, len(evidence.Artifacts))
 	for _, artifact := range evidence.Artifacts {
-		if !artifact.Kind.Valid() || strings.TrimSpace(artifact.URL) == "" {
+		if !validDeliveryArtifact(artifact) {
 			return DeliveryVerification{Status: VerificationFailed, Rationale: "delivery evidence artifact is invalid"}
 		}
-		artifacts[artifact.Kind] = true
+		artifacts[artifact.Kind] = append(artifacts[artifact.Kind], artifact)
 	}
 	missing := make([]DeliveryCriterion, 0)
 	for _, criterion := range expected.CompletionCriteria {
@@ -192,9 +209,40 @@ func VerifyDelivery(expected ExpectedDelivery, evidence DeliveryEvidence) Delive
 		case DeliveryFactFinalMessage:
 			satisfied = strings.TrimSpace(evidence.FinalMessage) != ""
 		case DeliveryFactCanvasRevision:
-			satisfied = evidence.CanvasRevision > 0 && evidence.CanvasID == expected.TargetCanvasID
+			satisfied = evidence.CanvasRevision > 0 && evidence.CanvasID == expected.TargetCanvasID && evidence.CanvasCurrent
 		case DeliveryFactArtifact:
-			satisfied = artifacts[criterion.Artifact]
+			satisfied = deliveryArtifactMatches(artifacts[criterion.Artifact], func(artifact DeliveryArtifact) bool {
+				if criterion.Artifact == ArtifactText {
+					return artifact.ArtifactID != "" && artifact.RevisionID != "" && artifact.Approved && artifact.CurrentRevision
+				}
+				return artifact.URL != ""
+			})
+		case DeliveryFactArtifactRevision:
+			satisfied = deliveryArtifactMatches(artifacts[criterion.Artifact], func(artifact DeliveryArtifact) bool {
+				return artifact.ArtifactID != "" && artifact.RevisionID != "" && artifact.Approved
+			})
+		case DeliveryFactResource:
+			satisfied = deliveryArtifactMatches(artifacts[criterion.Artifact], func(artifact DeliveryArtifact) bool {
+				return artifact.ArtifactID != "" && artifact.RevisionID != "" && artifact.Approved &&
+					artifact.ResourceID != "" && artifact.ResourceReady && artifact.URL != ""
+			})
+		case DeliveryFactPublication:
+			satisfied = deliveryArtifactMatches(artifacts[criterion.Artifact], func(artifact DeliveryArtifact) bool {
+				return artifact.Approved && artifact.ResourceID != "" && artifact.ResourceReady &&
+					artifact.URL != "" && artifact.PublicationID != ""
+			})
+		case DeliveryFactTaskBackedResource:
+			satisfied = deliveryArtifactMatches(artifacts[criterion.Artifact], func(artifact DeliveryArtifact) bool {
+				revisionCurrent := artifact.ArtifactID == "" || artifact.CurrentRevision
+				return revisionCurrent && artifact.ResourceID != "" && artifact.ResourceReady && artifact.URL != "" &&
+					artifact.SourceTaskID != "" && artifact.SourceTaskSucceeded
+			})
+		case DeliveryFactCanvasBoundResource:
+			satisfied = deliveryArtifactMatches(artifacts[criterion.Artifact], func(artifact DeliveryArtifact) bool {
+				return artifact.ResourceID != "" && artifact.ResourceReady && artifact.URL != "" &&
+					artifact.SourceTaskID != "" && artifact.SourceTaskSucceeded &&
+					artifact.TargetCanvasNodeID != "" && artifact.CanvasBound
+			})
 		}
 		if !satisfied {
 			missing = append(missing, criterion)
@@ -204,4 +252,45 @@ func VerifyDelivery(expected ExpectedDelivery, evidence DeliveryEvidence) Delive
 		return DeliveryVerification{Status: VerificationRepairable, Rationale: "delivery evidence is incomplete", MissingCriteria: missing}
 	}
 	return DeliveryVerification{Status: VerificationSatisfied, Rationale: "delivery evidence satisfies every criterion"}
+}
+
+func validDeliveryArtifact(artifact DeliveryArtifact) bool {
+	if !artifact.Kind.Valid() || !validOptionalDeliveryIdentity(artifact.ArtifactID) ||
+		!validOptionalDeliveryIdentity(artifact.RevisionID) || !validOptionalDeliveryIdentity(artifact.ResourceID) ||
+		!validOptionalDeliveryIdentity(artifact.PublicationID) || !validOptionalDeliveryIdentity(artifact.SourceTaskID) ||
+		!validOptionalDeliveryIdentity(artifact.TargetCanvasNodeID) || strings.TrimSpace(artifact.URL) != artifact.URL ||
+		len(artifact.URL) > 4*1024 || (artifact.ArtifactID == "") != (artifact.RevisionID == "") {
+		return false
+	}
+	if artifact.CanvasBound && (artifact.TargetCanvasNodeID == "" || artifact.ResourceID == "" || artifact.URL == "" ||
+		!artifact.ResourceReady || artifact.SourceTaskID == "" || !artifact.SourceTaskSucceeded) {
+		return false
+	}
+	hasExactRevision := artifact.ArtifactID != "" && artifact.RevisionID != ""
+	if artifact.URL == "" && !hasExactRevision {
+		return false
+	}
+	if artifact.Approved && !hasExactRevision && artifact.PublicationID == "" {
+		return false
+	}
+	if artifact.ResourceReady && (artifact.ResourceID == "" || artifact.URL == "") {
+		return false
+	}
+	if artifact.CurrentRevision && !hasExactRevision {
+		return false
+	}
+	return artifact.PublicationID == "" || (artifact.Approved && artifact.ResourceReady)
+}
+
+func validOptionalDeliveryIdentity(value string) bool {
+	return strings.TrimSpace(value) == value && len(value) <= 120
+}
+
+func deliveryArtifactMatches(artifacts []DeliveryArtifact, predicate func(DeliveryArtifact) bool) bool {
+	for _, artifact := range artifacts {
+		if predicate(artifact) {
+			return true
+		}
+	}
+	return false
 }

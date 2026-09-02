@@ -141,14 +141,21 @@ func (s *Service) QuoteTaskBilling(userID string, request TaskBillingQuoteReques
 func billingUsageFromQuoteInput(capability string, modelKey string, input TaskBillingQuoteInput) (BillingUsage, error) {
 	config := input.Config
 	switch capability {
+	case "audio", "vision":
+		return BillingUsage{Quantity: 1}, nil
 	case "image":
 		if input.ReferenceImageCount < 0 {
 			return BillingUsage{}, BadAuthRequest("参考图片数量无效")
 		}
+		pricingVariant, valid := imagePricingVariantForModel(modelKey, config.Quality)
+		if !valid {
+			return BillingUsage{}, BadAuthRequest("图片画质无效，无法匹配积分价格")
+		}
 		return BillingUsage{
 			Quantity: 1, InputImageCount: input.ReferenceImageCount,
+			InputVariant: pricingVariant,
 			Resolution: imagePricingResolutionFromConfig(map[string]any{
-				"size": config.Size, "quality": config.Quality,
+				"size": config.Size,
 			}),
 		}, nil
 	case "video":
@@ -222,7 +229,7 @@ func taskBillingQuoteFromOrder(order *model.BillingOrder, taskCount int64) (*Tas
 }
 
 func validateTaskBillingQuoteConfirmation(request CreateTaskRequest, order *model.BillingOrder) error {
-	if order == nil || (order.Capability != "image" && order.Capability != "video") {
+	if order == nil || (order.Capability != "audio" && order.Capability != "image" && order.Capability != "video" && order.Capability != "vision") {
 		return nil
 	}
 	current, err := taskBillingQuoteFromOrder(order, 1)
