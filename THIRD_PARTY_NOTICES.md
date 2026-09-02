@@ -2,6 +2,19 @@
 
 HMaigc includes adaptations of third-party ideas and materials as described below. HMaigc's own source remains governed by the repository `LICENSE`; the upstream material retains its original license and attribution.
 
+## ddcat-ai/open-ai-canvas Canvas Agent
+
+- Project: Open AI Canvas
+- Repository: https://github.com/ddcat-ai/open-ai-canvas
+- Pinned source revision: `e8c6b5a2d977c96a539923df6e68f37c509b0392`
+- Upstream license: GNU Affero General Public License v3.0
+- Upstream copyright notice: `Open AI Canvas Copyright (C) 2026 ddcat`
+- HMaigc adaptation date: 2026-09-01
+
+HMaigc's `canvas-agent` package adapts the upstream package structure and Codex thread lifecycle behavior from `canvas-agent/src/agents.ts` and `canvas-agent/src/codex-thread.ts`. The adapted implementation replaces upstream browser-side canvas mutations and legacy project tools with HMaigc's six canonical capability adapters, a loopback-only HTTP/SSE boundary, exact Origin and token checks, bounded attachments, shared backend approvals, dynamic model pricing, authoritative canvas revision/CAS, billing and audit.
+
+The upstream Claude route, browser direct-write path, legacy brand/config directory and parallel execution contracts are not included. The adapted package is distributed under `AGPL-3.0-only`; the complete license text is provided in the repository `LICENSE`.
+
 ## HKUDS/ViMax
 
 - Project: ViMax

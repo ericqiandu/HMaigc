@@ -20,3 +20,15 @@
 - 数据目录、PostgreSQL/SQLite、备份和 `.settings-key` 必须限制为服务账号可读。
 - 系统模型渠道和 OSS 使用最小权限密钥，并设置供应商侧预算与告警。
 - 不要将 `.env`、数据库、日志、备份或真实密钥提交到 Git。
+
+## 本机 Canvas Agent 安全边界
+
+- 本机服务只能绑定 `http://127.0.0.1:<port>`，不得监听 `0.0.0.0`、局域网地址或公网地址。
+- 浏览器请求必须同时通过至少 256 bit 的高熵 header token 和精确 Origin allowlist；禁止 query token、`*`、`null` Origin 与隐式来源匹配。
+- Private Network Access 预检只对已授权 Origin 返回，活动事件流只允许一个连接；非法 token、来源冲突、重放冲突和断流都必须显式失败。
+- 浏览器只在当前标签会话的 `sessionStorage` 保存 token；不得写入 URL、长期 `localStorage`、服务端日志或 HMaigc 数据库。
+- 本机服务的 Codex 子进程只接收本机模型、工作区、回环地址和本机 token。HMaigc Cookie、Authorization、渠道密钥、OSS 密钥和云端 secret 不得进入其环境或提示词。
+- 画布工作区只能来自受权限保护的本机配置，不能由网页传入任意路径。配置文件在非 Windows 系统必须为普通文件且权限精确为 `0600`。
+- 附件只允许从显式配置的公网 HTTPS Origin 下载；限制数量、单文件/总大小、重定向次数和 MIME，并在 turn 结束后删除隔离临时目录。
+- 轮换 token 时必须先停止本机服务、替换配置、重启并在浏览器重新连接。连接失败不得自动切换到网站模式。
+- 本机推理只产生工具提案。权限、审批、动态模型可见性、计费、资产归属、画布 CAS、幂等执行和审计仍由 HMaigc 后端重新核验并权威提交。
