@@ -48,6 +48,27 @@ export type AgentDefaultModelSetting = AgentDefaultModelReference & {
     displayName: string;
 };
 
+export type AgentVisionModelSetting = AgentDefaultModelReference & {
+    configured: boolean;
+    displayName: string;
+};
+
+export function parseAgentVisionModelSetting(value: unknown): AgentVisionModelSetting {
+    if (!isRecord(value) || typeof value.configured !== "boolean" || typeof value.channelModelId !== "string" || typeof value.channelId !== "string" || typeof value.modelKey !== "string" || typeof value.displayName !== "string") {
+        throw new Error("视觉理解模型配置接口返回格式错误");
+    }
+    if (value.configured && (!value.channelModelId.trim() || !value.channelId.trim() || !value.modelKey.trim())) {
+        throw new Error("视觉理解模型配置接口缺少已配置模型身份");
+    }
+    return {
+        configured: value.configured,
+        channelModelId: value.channelModelId,
+        channelId: value.channelId,
+        modelKey: value.modelKey,
+        displayName: value.displayName,
+    };
+}
+
 export type RuntimeLimits = {
     activeTaskLimit: number;
     resourceUploadMB: number;
@@ -61,7 +82,7 @@ export type ApiCallLog = {
     channelName: string;
     taskId?: string;
     source: string;
-    capability: "text" | "image" | "video" | "audio" | "";
+    capability: "text" | "image" | "video" | "audio" | "vision" | "";
     operation?: string;
     requestKind: "create" | "poll" | "download" | "repair" | "";
     billable: boolean;
@@ -149,7 +170,7 @@ export type AnalyticsFilters = {
 
 export type AdminReferenceData = {
     users: Array<{ id: string; username: string; displayName: string }>;
-    channels: Array<{ id: string; name: string; models: string[] }>;
+    channels: Array<{ id: string; name: string; interfaceType: ModelChannel["interfaceType"]; models: string[] }>;
 };
 
 export type AdminAnalytics = {
@@ -206,7 +227,7 @@ export type ModelPricing = {
     id: string;
     channelId?: string;
     model: string;
-    capability: "text" | "image" | "video" | "audio";
+    capability: "text" | "image" | "video" | "audio" | "vision";
     currency: string;
     inputPerMillionMicros: number;
     outputPerMillionMicros: number;
@@ -374,6 +395,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isChannelInterfaceType(value: unknown): value is NonNullable<ModelChannel["interfaceType"]> {
+    return (
+        value === "chat-completion" ||
+        value === "openai-response" ||
+        value === "openai-image" ||
+        value === "apimart-image" ||
+        value === "newapi" ||
+        value === "xai-video" ||
+        value === "ai-open-platform-video-volcengine" ||
+        value === "minimax-speech" ||
+        value === "minimax-video" ||
+        value === "kling-video"
+    );
+}
+
 function parseAdminReferenceData(value: unknown): AdminReferenceData {
     if (!isRecord(value) || !Array.isArray(value.users) || !Array.isArray(value.channels)) {
         throw new Error("后台基础数据接口返回格式错误：users 和 channels 必须为数组");
@@ -386,10 +422,10 @@ function parseAdminReferenceData(value: unknown): AdminReferenceData {
         return { id: item.id, username: item.username, displayName: item.displayName };
     });
     const channels = value.channels.map((item, index) => {
-        if (!isRecord(item) || typeof item.id !== "string" || typeof item.name !== "string" || !Array.isArray(item.models) || !item.models.every((model) => typeof model === "string")) {
+        if (!isRecord(item) || typeof item.id !== "string" || typeof item.name !== "string" || !isChannelInterfaceType(item.interfaceType) || !Array.isArray(item.models) || !item.models.every((model) => typeof model === "string")) {
             throw new Error(`后台基础数据接口返回格式错误：channels[${index}] 字段不完整`);
         }
-        return { id: item.id, name: item.name, models: item.models };
+        return { id: item.id, name: item.name, interfaceType: item.interfaceType, models: item.models };
     });
 
     return { users, channels };
@@ -572,6 +608,18 @@ export function getAdminAgentDefaultModelSetting() {
 
 export function updateAdminAgentDefaultModelSetting(channelModelId: string) {
     return request<{ setting: AgentDefaultModelSetting }>(api.put("/admin/settings/agent-model", { channelModelId }));
+}
+
+export async function getAdminAgentVisionModelSetting() {
+    const result = await request<unknown>(api.get("/admin/settings/agent-vision-model"));
+    if (!isRecord(result) || !("setting" in result)) throw new Error("视觉理解模型配置接口返回格式错误");
+    return { setting: parseAgentVisionModelSetting(result.setting) };
+}
+
+export async function updateAdminAgentVisionModelSetting(channelModelId: string) {
+    const result = await request<unknown>(api.put("/admin/settings/agent-vision-model", { channelModelId }));
+    if (!isRecord(result) || !("setting" in result)) throw new Error("视觉理解模型配置接口返回格式错误");
+    return { setting: parseAgentVisionModelSetting(result.setting) };
 }
 
 export function deleteAdminModelPricing(id: string) {

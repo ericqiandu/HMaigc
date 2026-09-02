@@ -770,7 +770,7 @@ test("余额不足时向用户显示可理解文案而不是内部错误码", as
 
     await mount(client);
 
-    expect(document.querySelector(".canvas-agent-runtime-failure")?.textContent).toBe("余额不足");
+    expect(document.querySelector(".canvas-agent-runtime-failure")?.textContent).toBe("余额不足，请充值后重试。");
     expect(document.body.textContent).not.toContain("insufficient_credits");
 });
 

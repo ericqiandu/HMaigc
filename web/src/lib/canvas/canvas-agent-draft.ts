@@ -5,6 +5,7 @@ export type CanvasAgentDraftAttachment = {
     name: string;
     url: string;
     resourceId?: string;
+    mimeType?: string;
 };
 
 export type CanvasAgentDraft = {

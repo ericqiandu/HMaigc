@@ -57,6 +57,28 @@ test("刷新后从持久游标续传且不会重复应用旧事件", async () =>
     assert.deepEqual(received, [newEvent]);
 });
 
+test("新建网站 Agent 运行使用足够完成媒体链路与一次冲突重试的决策预算", async () => {
+    let submittedMaxSteps = 0;
+    const storage: AgentRuntimeHandleStorage = {
+        load: async () => null,
+        save: async () => undefined,
+        clear: async () => undefined,
+    };
+    const client = runtimeClient({
+        startRun: async (_threadId, input) => {
+            submittedMaxSteps = input.maxSteps;
+            return runtimeView("running", 1);
+        },
+    });
+    await mount(client, storage, () => undefined);
+
+    await act(async () => {
+        await runtime?.submit("生成短片", { generationModels: {}, skillDirs: [], attachments: [], executionMode: "guided" });
+    });
+
+    assert.equal(submittedMaxSteps, 24);
+});
+
 async function mount(client: AgentRuntimeClient, storage: AgentRuntimeHandleStorage, onRuntimeEvent: (event: AgentRuntimeEvent) => void) {
     const host = document.createElement("div");
     document.body.append(host);
@@ -94,6 +116,7 @@ function runtimeView(status: AgentRuntimeView["state"]["status"], sequence: numb
         run: {
             id: "run-1",
             threadId: "thread-1",
+            reasoningHost: "managed",
             actorUserId: "user-1",
             clientRequestId: "request-1",
             status,
@@ -103,7 +126,7 @@ function runtimeView(status: AgentRuntimeView["state"]["status"], sequence: numb
             maxSteps: 8,
             modelRecordId: "model-1",
             modelKey: "agent",
-            toolSchemaVersion: 6,
+            toolSchemaVersion: 8,
             runtimeVersion: 5,
             policyVersion: 5,
             createdAt: "2026-09-01T00:00:00Z",

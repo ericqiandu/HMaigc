@@ -155,7 +155,7 @@ export type AiConfig = {
 };
 
 export const CONFIG_STORE_KEY = "open_ai_canvas:ai_config_store";
-export type ModelCapability = "image" | "video" | "text" | "audio";
+export type ModelCapability = "image" | "video" | "text" | "audio" | "vision";
 const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
@@ -253,7 +253,8 @@ export function modelMatchesCapability(model: string, capability?: ModelCapabili
     if (capability === "image") return isImageModelName(model);
     if (capability === "video") return isVideoModelName(model);
     if (capability === "audio") return isAudioModelName(model);
-    return isTextModelName(model);
+    if (capability === "text") return isTextModelName(model);
+    return false;
 }
 
 export function filterModelsByCapability(models: string[], capability?: ModelCapability, channels?: ModelChannel[]) {

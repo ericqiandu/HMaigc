@@ -190,7 +190,6 @@ describe("canvas agent launch", () => {
             text: "影视 Agent 正在处理：生成分镜图 42%（已完成 1/2 个任务）",
         });
     });
-
 });
 
 function requestToDraft(request: ReturnType<typeof createCanvasAgentLaunchRequest>) {

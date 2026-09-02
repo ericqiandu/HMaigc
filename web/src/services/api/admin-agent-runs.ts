@@ -1,22 +1,10 @@
 import axios from "axios";
 
-export type AdminAgentRunStatus =
-    | "queued"
-    | "running"
-    | "waiting_input"
-    | "waiting_approval"
-    | "waiting_tool"
-    | "succeeded"
-    | "failed"
-    | "cancelled";
+export type AdminAgentRunStatus = "queued" | "running" | "waiting_input" | "waiting_approval" | "waiting_tool" | "succeeded" | "failed" | "cancelled";
 
 export type AdminAgentRunActivity = "active" | "awaiting_user" | "possibly_stalled";
 
-export type AdminAgentRunControlDisposition =
-    | "interruptible_now"
-    | "cancel_request_required"
-    | "blocked_by_unresolved_billing"
-    | "already_terminal";
+export type AdminAgentRunControlDisposition = "interruptible_now" | "cancel_request_required" | "blocked_by_unresolved_billing" | "already_terminal";
 
 export type AdminAgentRun = {
     runId: string;
@@ -38,6 +26,7 @@ export type AdminAgentRun = {
     inactiveSeconds: number;
     activityClassification: AdminAgentRunActivity;
     linkedModelTaskStatus: string;
+    linkedVisionTaskStatus: string;
     linkedMediaTaskStatus: string;
     billingState: string;
     providerRequestState: string;

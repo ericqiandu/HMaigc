@@ -3,14 +3,7 @@ import { describe, test } from "node:test";
 
 import type { AdminAgentRun, AdminAgentRunPage } from "@/services/api/admin-agent-runs";
 
-import {
-    applyAgentRunConflict,
-    failAgentRunPageLoad,
-    startAgentRunPageLoad,
-    succeedAgentRunPageLoad,
-    type AgentRunInterruptDraft,
-    type AgentRunPageState,
-} from "./agent-run-page-state";
+import { applyAgentRunConflict, failAgentRunPageLoad, startAgentRunPageLoad, succeedAgentRunPageLoad, type AgentRunInterruptDraft, type AgentRunPageState } from "./agent-run-page-state";
 
 const run: AdminAgentRun = {
     runId: "run-123456789",
@@ -32,6 +25,7 @@ const run: AdminAgentRun = {
     inactiveSeconds: 721,
     activityClassification: "possibly_stalled",
     linkedModelTaskStatus: "running",
+    linkedVisionTaskStatus: "none",
     linkedMediaTaskStatus: "none",
     billingState: "running",
     providerRequestState: "submitted",

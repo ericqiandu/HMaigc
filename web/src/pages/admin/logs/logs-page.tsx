@@ -250,7 +250,7 @@ function formatTime(value?: string) {
     return value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "--";
 }
 function capabilityText(value: string) {
-    return ({ text: "文本", image: "图片", video: "视频", audio: "音频" } as Record<string, string>)[value] || "未知";
+    return ({ text: "文本", vision: "视觉理解", image: "图片", video: "视频", audio: "音频" } as Record<string, string>)[value] || "未知";
 }
 function requestKindText(value: string) {
     return ({ create: "创建", poll: "轮询", download: "下载", repair: "修复" } as Record<string, string>)[value] || "请求";

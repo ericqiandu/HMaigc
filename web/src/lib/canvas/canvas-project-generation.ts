@@ -393,6 +393,11 @@ export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
     });
 }
 
+export function isGenerationTaskRecoveryCandidate(node: CanvasNodeData) {
+    if (node.metadata?.agentRunId) return false;
+    return node.metadata?.status === "loading" || node.metadata?.errorDetails === "页面刷新后生成已中断，请重新生成。" || Boolean(node.metadata?.taskId && node.metadata.status !== "success");
+}
+
 export function isGenerationCanceled(error: unknown) {
     return error instanceof Error && (error.message === "请求已取消" || error.message === "任务已取消" || error.name === "AbortError");
 }

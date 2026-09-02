@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 const REQUIRED_CSP_DIRECTIVES = new Map([
     ["default-src", ["'self'"]],
     ["base-uri", ["'self'"]],
-    ["connect-src", ["'self'", "https:", "wss:", "blob:", "data:"]],
+    ["connect-src", ["'self'", "https:", "wss:", "blob:", "data:", "http://127.0.0.1:*"]],
     ["form-action", ["'self'"]],
     ["frame-ancestors", ["'self'"]],
     ["object-src", ["'none'"]],
@@ -52,10 +52,7 @@ export function assertCheckoutSecurityHeaders(headers, label) {
         const sources = directives.get(directive) ?? [];
         assert.ok(sources.includes("'self'"), `${label}: ${directive} 必须允许同源程序资源`);
         assert.ok(sources.includes(PROGRAM_ASSET_ORIGIN), `${label}: ${directive} 必须允许固定程序资源 CDN`);
-        assert.ok(
-            !sources.some((source) => (source.startsWith("http://") || source.startsWith("https://")) && source !== PROGRAM_ASSET_ORIGIN),
-            `${label}: ${directive} 禁止未授权外部程序资源 Origin`,
-        );
+        assert.ok(!sources.some((source) => (source.startsWith("http://") || source.startsWith("https://")) && source !== PROGRAM_ASSET_ORIGIN), `${label}: ${directive} 禁止未授权外部程序资源 Origin`);
     }
 }
 

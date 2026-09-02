@@ -1,11 +1,13 @@
 import { array, boundedText, exactObject, flag, integer, object, text } from "./strict-contract";
 
-export type AgentToolName = "canvas.read" | "canvas.apply_ops" | "assets.read" | "assets.publish" | "media.generate" | "skills.load";
+export type AgentToolName = "canvas.read" | "canvas.apply_ops" | "assets.read" | "assets.publish" | "media.generate" | "vision.analyze" | "skills.load";
 
 export type AgentCanvasPoint = { x: number; y: number };
 export type AgentCanvasViewport = AgentCanvasPoint & { zoom: number };
+export type AgentCanvasNodeType = "image" | "text" | "script" | "skill" | "config" | "video" | "audio" | "frame";
+export type AgentCanvasNodeStatus = "idle" | "success" | "loading" | "error";
 export type AgentCanvasOperation =
-    | { operationId: string; type: "add_node"; node: { id: string; type: string; title: string; position: AgentCanvasPoint; width: number; height: number; metadata?: Record<string, unknown> } }
+    | { operationId: string; type: "add_node"; node: { id: string; type: AgentCanvasNodeType; title: string; position: AgentCanvasPoint; width: number; height: number; metadata?: Record<string, unknown> } }
     | { operationId: string; type: "update_node"; nodeId: string; patch: Record<string, unknown> }
     | { operationId: string; type: "delete_node"; nodeId: string }
     | { operationId: string; type: "connect_nodes"; connection: { id: string; fromNodeId: string; toNodeId: string; fromHandleId?: string; toHandleId?: string } }
@@ -19,9 +21,22 @@ export type AgentCapabilityArguments =
     | { domainProjectId: string; resourceIds: string[]; limit: number }
     | { resourceId: string; domainProjectId: string; displayName: string; clientMutationId: string }
     | { mediaKind: "image" | "video" | "audio"; modelRecordId: string; modelKey: string; parameters: Record<string, unknown>; sourceResourceIds: string[]; targetCanvasNodeId: string; clientRequestId: string }
+    | { modelRecordId: string; modelKey: string; sourceResourceIds: string[]; prompt: string; detail: "low" | "original"; clientRequestId: string }
     | { skillDir: string; version: number; checksum: string };
 
-const toolNames = new Set<AgentToolName>(["canvas.read", "canvas.apply_ops", "assets.read", "assets.publish", "media.generate", "skills.load"]);
+export type AgentVisionAnalyzeResult = {
+    taskId: string;
+    billingOrderId: string;
+    modelRecordId: string;
+    modelKey: string;
+    clientRequestId: string;
+    sourceResourceIds: string[];
+    detail: "low" | "original";
+    analysis: string;
+    usage: { inputTokens: number; cachedTokens: number; outputTokens: number };
+};
+
+const toolNames = new Set<AgentToolName>(["canvas.read", "canvas.apply_ops", "assets.read", "assets.publish", "media.generate", "vision.analyze", "skills.load"]);
 
 export function isAgentToolName(value: unknown): value is AgentToolName {
     return typeof value === "string" && toolNames.has(value as AgentToolName);
@@ -85,6 +100,18 @@ export function parseAgentCapabilityArguments(toolName: string, value: unknown):
             clientRequestId: capabilityIdentifier(source.clientRequestId, "clientRequestId"),
         };
     }
+    if (toolName === "vision.analyze") {
+        const source = exactObject(value, "vision.analyze arguments", ["modelRecordId", "modelKey", "sourceResourceIds", "prompt", "detail", "clientRequestId"]);
+        if (source.detail !== "low" && source.detail !== "original") throw new Error(`不受支持的视觉细节等级: ${String(source.detail)}`);
+        return {
+            modelRecordId: capabilityIdentifier(source.modelRecordId, "modelRecordId"),
+            modelKey: boundedText(source.modelKey, "modelKey", 120),
+            sourceResourceIds: capabilityResourceIdentifierList(source.sourceResourceIds, "sourceResourceIds", 12, false),
+            prompt: boundedText(source.prompt, "prompt", 64 * 1024),
+            detail: source.detail,
+            clientRequestId: capabilityIdentifier(source.clientRequestId, "clientRequestId"),
+        };
+    }
     const source = exactObject(value, "skills.load arguments", ["skillDir", "version", "checksum"]);
     const checksum = text(source.checksum, "checksum");
     if (!validCapabilityChecksum(checksum)) throw new Error("checksum 必须是 64 位小写 SHA-256");
@@ -92,6 +119,32 @@ export function parseAgentCapabilityArguments(toolName: string, value: unknown):
         skillDir: boundedText(source.skillDir, "skillDir", 240),
         version: integer(source.version, "version"),
         checksum,
+    };
+}
+
+export function parseAgentCapabilityResult(toolName: "vision.analyze", value: unknown): AgentVisionAnalyzeResult;
+export function parseAgentCapabilityResult(toolName: AgentToolName, value: unknown): Record<string, unknown>;
+export function parseAgentCapabilityResult(toolName: string, value: unknown): Record<string, unknown> {
+    if (!isAgentToolName(toolName)) throw new Error(`不受支持的 Agent 工具: ${toolName}`);
+    if (toolName !== "vision.analyze") return { ...object(value, `${toolName} result`) };
+
+    const source = exactObject(value, "vision.analyze result", ["taskId", "billingOrderId", "modelRecordId", "modelKey", "clientRequestId", "sourceResourceIds", "detail", "analysis", "usage"]);
+    if (source.detail !== "low" && source.detail !== "original") throw new Error(`不受支持的视觉细节等级: ${String(source.detail)}`);
+    const usageSource = exactObject(source.usage, "vision.analyze result.usage", ["inputTokens", "cachedTokens", "outputTokens"]);
+    const inputTokens = integer(usageSource.inputTokens, "vision.analyze result.usage.inputTokens", true);
+    const cachedTokens = integer(usageSource.cachedTokens, "vision.analyze result.usage.cachedTokens", true);
+    const outputTokens = integer(usageSource.outputTokens, "vision.analyze result.usage.outputTokens", true);
+    if (cachedTokens > inputTokens) throw new Error("vision.analyze result.usage.cachedTokens 不能超过 inputTokens");
+    return {
+        taskId: capabilityIdentifier(source.taskId, "taskId"),
+        billingOrderId: capabilityIdentifier(source.billingOrderId, "billingOrderId"),
+        modelRecordId: capabilityIdentifier(source.modelRecordId, "modelRecordId"),
+        modelKey: boundedText(source.modelKey, "modelKey", 120),
+        clientRequestId: capabilityIdentifier(source.clientRequestId, "clientRequestId"),
+        sourceResourceIds: capabilityResourceIdentifierList(source.sourceResourceIds, "sourceResourceIds", 12, false),
+        detail: source.detail,
+        analysis: boundedText(source.analysis, "analysis", 64 * 1024),
+        usage: { inputTokens, cachedTokens, outputTokens },
     };
 }
 
@@ -106,20 +159,22 @@ function parseCanvasOperation(value: unknown, index: number): AgentCanvasOperati
             type,
             node: {
                 id: capabilityIdentifier(node.id, `operations[${index}].node.id`),
-                type: boundedText(node.type, `operations[${index}].node.type`, 64),
+                type: capabilityCanvasNodeType(node.type, `operations[${index}].node.type`),
                 title: boundedText(node.title, `operations[${index}].node.title`, 240),
                 position: capabilityPoint(node.position, `operations[${index}].node.position`),
                 width: capabilityDimension(node.width, `operations[${index}].node.width`),
                 height: capabilityDimension(node.height, `operations[${index}].node.height`),
             },
         };
-        if (node.metadata !== undefined) result.node.metadata = { ...object(node.metadata, `operations[${index}].node.metadata`) };
+        if (node.metadata !== undefined) result.node.metadata = capabilityCanvasNodeMetadata(node.metadata, `operations[${index}].node.metadata`);
         return result;
     }
     if (type === "update_node") {
         const source = exactObject(value, `operations[${index}]`, ["operationId", "type", "nodeId", "patch"]);
         const patch = object(source.patch, `operations[${index}].patch`);
         if (Object.keys(patch).length === 0) throw new Error(`operations[${index}].patch 不能为空`);
+        if (patch.type !== undefined) capabilityCanvasNodeType(patch.type, `operations[${index}].patch.type`);
+        if (patch.metadata !== undefined) capabilityCanvasNodeMetadata(patch.metadata, `operations[${index}].patch.metadata`);
         return { operationId: capabilityIdentifier(source.operationId, `operations[${index}].operationId`), type, nodeId: capabilityIdentifier(source.nodeId, `operations[${index}].nodeId`), patch: { ...patch } };
     }
     if (type === "delete_node") {
@@ -154,6 +209,42 @@ function parseCanvasOperation(value: unknown, index: number): AgentCanvasOperati
         return { operationId: capabilityIdentifier(source.operationId, `operations[${index}].operationId`), type, nodeIds: capabilityIdentifierList(source.nodeIds, `operations[${index}].nodeIds`, 100, true) };
     }
     throw new Error(`不受支持的画布操作: ${String(type)}`);
+}
+
+function capabilityCanvasNodeType(value: unknown, label: string): AgentCanvasNodeType {
+    const result = boundedText(value, label, 64);
+    switch (result) {
+        case "image":
+        case "text":
+        case "script":
+        case "skill":
+        case "config":
+        case "video":
+        case "audio":
+        case "frame":
+            return result;
+        default:
+            throw new Error(`${label} 不受支持`);
+    }
+}
+
+function capabilityCanvasNodeStatus(value: unknown, label: string): AgentCanvasNodeStatus {
+    const result = boundedText(value, label, 32);
+    switch (result) {
+        case "idle":
+        case "success":
+        case "loading":
+        case "error":
+            return result;
+        default:
+            throw new Error(`${label} 不受支持`);
+    }
+}
+
+function capabilityCanvasNodeMetadata(value: unknown, label: string): Record<string, unknown> {
+    const metadata = object(value, label);
+    if (metadata.status !== undefined) capabilityCanvasNodeStatus(metadata.status, `${label}.status`);
+    return { ...metadata };
 }
 
 function capabilityIdentifier(value: unknown, label: string): string {

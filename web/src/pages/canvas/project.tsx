@@ -10,7 +10,8 @@ import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resour
 import copyToClipboard from "copy-to-clipboard";
 import { nanoid } from "nanoid";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
-import { agentCanvasCommittedReceipt } from "@/lib/canvas/canvas-agent-runtime-event";
+import { agentCanvasCommittedReceipt, agentCanvasCommittedReceiptFromToolResult, type AgentCanvasApplyOpsReceipt } from "@/lib/canvas/canvas-agent-runtime-event";
+import type { LocalAgentAuthoritativeToolResult } from "@/services/local-agent/local-agent-bridge";
 import { prepareAgentCanvasRun } from "@/lib/canvas/canvas-collaboration-preflight";
 import { normalizeRestoredCanvasViewport } from "@/lib/canvas/canvas-viewport";
 import { resizeViewportAroundCenter } from "@/lib/canvas/canvas-agent-dock";
@@ -463,11 +464,10 @@ function InfiniteCanvasPage() {
     const prepareAgentRun = useCallback(async () => {
         await prepareAgentCanvasRun(() => ensureRemoteCanvasProjectReady(projectId), collaboration.flushPendingChanges);
     }, [collaboration.flushPendingChanges, projectId]);
-    const handleAgentToolResult = useCallback(
-        (event: AgentRuntimeEvent) => {
-            const receipt = agentCanvasCommittedReceipt(event, projectId);
-            if (!receipt) return;
-            void collaboration.refreshRemoteState(receipt.committedRevision)
+    const applyAgentCanvasReceipt = useCallback(
+        (receipt: AgentCanvasApplyOpsReceipt) => {
+            void collaboration
+                .refreshRemoteState(receipt.committedRevision)
                 .then((state) => {
                     const existingNodeIds = new Set((state.project.nodes || []).map((node) => node.id));
                     const requestedSelection = receipt.evidence.selectedNodeIds.length ? receipt.evidence.selectedNodeIds : receipt.evidence.addedNodeIds;
@@ -484,6 +484,20 @@ function InfiniteCanvasPage() {
                 });
         },
         [collaboration.refreshRemoteState, fitCanvasSelection, message, projectId],
+    );
+    const handleAgentToolResult = useCallback(
+        (event: AgentRuntimeEvent) => {
+            const receipt = agentCanvasCommittedReceipt(event, projectId);
+            if (receipt) applyAgentCanvasReceipt(receipt);
+        },
+        [applyAgentCanvasReceipt, projectId],
+    );
+    const handleLocalAgentToolResult = useCallback(
+        (result: LocalAgentAuthoritativeToolResult) => {
+            const receipt = agentCanvasCommittedReceiptFromToolResult(result, projectId);
+            if (receipt) applyAgentCanvasReceipt(receipt);
+        },
+        [applyAgentCanvasReceipt, projectId],
     );
     const handleCollaborationPointerMove = useCallback(
         (event: React.PointerEvent<HTMLElement>) => {
@@ -1201,7 +1215,20 @@ function InfiniteCanvasPage() {
                 />
             );
         },
-        [canConnectExistingNodes, canvasResourceReferences, configInputsById, connectExistingNodes, handleConfigNodeChange, handleGenerateNode, handleNodePromptChange, mentionReferencesByNodeId, runningNodeId, skillMentionReferences, stopNodeGeneration, workspaceMode],
+        [
+            canConnectExistingNodes,
+            canvasResourceReferences,
+            configInputsById,
+            connectExistingNodes,
+            handleConfigNodeChange,
+            handleGenerateNode,
+            handleNodePromptChange,
+            mentionReferencesByNodeId,
+            runningNodeId,
+            skillMentionReferences,
+            stopNodeGeneration,
+            workspaceMode,
+        ],
     );
 
     const renderCanvasNodeContent = useCallback(
@@ -1982,6 +2009,7 @@ function InfiniteCanvasPage() {
                         onAgentLaunchHandled={handleAgentLaunchHandled}
                         onBeforeRun={prepareAgentRun}
                         onRuntimeEvent={handleAgentToolResult}
+                        onLocalToolResult={handleLocalAgentToolResult}
                     />
                 </Suspense>
             ) : null}

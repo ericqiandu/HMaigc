@@ -51,6 +51,36 @@ const seedanceFast = videoModel({
     priceTiers: [],
 });
 
+const deepSeekVision: ChannelModel = {
+    id: "deepseek-vision",
+    channelId,
+    modelKey: "deepseek-vl2",
+    displayName: "DeepSeek Vision",
+    marketingCopy: "",
+    promotionBadge: "",
+    estimatedDurationSeconds: 5,
+    brandKey: "deepseek",
+    accessPolicy: "authenticated",
+    capability: "vision",
+    billingMode: "token_usage",
+    priceStrategy: "token",
+    unitPriceMicrocredits: 0,
+    priceTiers: [],
+    priceConfigured: true,
+    enabled: true,
+    priceVersion: 1,
+    providerCapabilities: {
+        resolutions: [],
+        qualities: [],
+        inputVariants: [],
+        referenceVideoResolutions: [],
+        generatedAudioResolutions: [],
+        supportsTokenUsageBilling: true,
+    },
+    createdAt: "2026-08-25T00:00:00Z",
+    updatedAt: "2026-08-25T00:00:00Z",
+};
+
 const seedance25Pricing = pricingFixture(seedance25, [
     ["480p::standard", 670_000],
     ["480p::standard_audio", 670_000],
@@ -60,19 +90,41 @@ const seedance25Pricing = pricingFixture(seedance25, [
     ["1080p::standard_audio", 3_740_000],
 ]);
 
+const deepSeekVisionPricing: ModelPricing = {
+    id: "pricing-deepseek-vision",
+    channelId,
+    model: deepSeekVision.modelKey,
+    capability: "vision",
+    currency: "CNY",
+    inputPerMillionMicros: 1_000_000,
+    outputPerMillionMicros: 2_000_000,
+    cachedPerMillionMicros: 100_000,
+    expectedInputTokens: 2_000,
+    expectedOutputTokens: 500,
+    expectedCachedTokens: 0,
+    maxOutputTokens: 8_192,
+    perRequestMicros: 0,
+    perMediaMicros: 0,
+    perVideoSecondMicros: 0,
+    tiers: [],
+    createdAt: "2026-08-25T00:00:00Z",
+    updatedAt: "2026-08-25T00:00:00Z",
+};
+
 const authModule = await import("../src/services/api/auth");
 mock.module("@/services/api/auth", () => ({
     ...authModule,
-    getAdminReferences: async () => ({ users: [], channels: [{ id: channelId, name: "筷子科技", models: [seedance25.modelKey, seedanceFast.modelKey] }] }),
-    listAdminModelPricings: async () => ({ pricings: [seedance25Pricing] }),
+    getAdminReferences: async () => ({ users: [], channels: [{ id: channelId, name: "筷子科技", interfaceType: "ai-open-platform-video-volcengine", models: [seedance25.modelKey, seedanceFast.modelKey, deepSeekVision.modelKey] }] }),
+    listAdminModelPricings: async () => ({ pricings: [seedance25Pricing, deepSeekVisionPricing] }),
     getAdminModelPricingOperationsSetting: async () => ({ setting: operationsSetting }),
     getAdminAgentDefaultModelSetting: async () => ({ setting: agentSetting }),
+    getAdminAgentVisionModelSetting: async () => ({ setting: agentSetting }),
 }));
 
 const walletModule = await import("../src/services/api/wallet");
 mock.module("@/services/api/wallet", () => ({
     ...walletModule,
-    listAdminChannelModels: async () => ({ models: [seedance25, seedanceFast] }),
+    listAdminChannelModels: async () => ({ models: [seedance25, seedanceFast, deepSeekVision] }),
 }));
 
 const [{ default: ModelPricingPage }, { AdminProvider }] = await Promise.all([import("../src/pages/admin/model-pricing/model-pricing-page"), import("../src/pages/admin/admin-context")]);
@@ -99,6 +151,18 @@ describe("admin model pricing form state", () => {
         const drawer = activeDrawer();
         expect(drawer.textContent).not.toContain("1080p");
         expect(Array.from(drawer.querySelectorAll<HTMLInputElement>(".model-pricing-resolution-row input"), (input) => input.value)).toEqual(Array<string>(12).fill(""));
+    });
+
+    test("vision pricing uses token fields instead of per-image pricing", async () => {
+        await renderPricingPage();
+
+        await clickButton("配置 DeepSeek Vision");
+
+        const drawerText = activeDrawer().textContent ?? "";
+        expect(drawerText).toContain("输入成本 / 百万 Token");
+        expect(drawerText).toContain("输出成本 / 百万 Token");
+        expect(drawerText).toContain("最大输出 Token");
+        expect(drawerText).not.toContain("供应商成本 / 张");
     });
 });
 
@@ -148,15 +212,7 @@ async function flushUpdates() {
     });
 }
 
-function videoModel(input: {
-    id: string;
-    modelKey: string;
-    displayName: string;
-    priceStrategy: ChannelModel["priceStrategy"];
-    billingMode: ChannelModel["billingMode"];
-    resolutions: string[];
-    priceTiers: ChannelModel["priceTiers"];
-}): ChannelModel {
+function videoModel(input: { id: string; modelKey: string; displayName: string; priceStrategy: ChannelModel["priceStrategy"]; billingMode: ChannelModel["billingMode"]; resolutions: string[]; priceTiers: ChannelModel["priceTiers"] }): ChannelModel {
     return {
         id: input.id,
         channelId,

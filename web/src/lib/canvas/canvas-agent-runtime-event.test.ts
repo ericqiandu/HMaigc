@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import type { AgentRuntimeEvent } from "@/services/api/agent-runtime";
-import { agentCanvasCommittedReceipt } from "./canvas-agent-runtime-event";
+import { agentCanvasCommittedReceipt, agentCanvasCommittedReceiptFromToolResult, agentVisionAnalyzeResultFromToolResult } from "./canvas-agent-runtime-event";
 
 const proposalHash = "a".repeat(64);
 
@@ -51,5 +51,31 @@ describe("agentCanvasCommittedReceipt", () => {
         assert.equal(agentCanvasCommittedReceipt(completedEvent("canvas.apply_ops", { ...validOutput(), proposalHash: "invalid" }), "canvas-1"), undefined);
         assert.equal(agentCanvasCommittedReceipt(completedEvent("canvas.apply_ops", { ...validOutput(), committedRevision: 9 }), "canvas-1"), undefined);
         assert.equal(agentCanvasCommittedReceipt(completedEvent("canvas.apply_ops", { ...validOutput(), evidence: { addedNodeIds: [] } }), "canvas-1"), undefined);
+    });
+
+    test("accepts the authoritative result returned directly by local approval", () => {
+        assert.deepEqual(agentCanvasCommittedReceiptFromToolResult({ toolName: "canvas.apply_ops", succeeded: true, output: validOutput() }, "canvas-1"), validOutput());
+        assert.equal(agentCanvasCommittedReceiptFromToolResult({ toolName: "canvas.apply_ops", succeeded: false, output: validOutput() }, "canvas-1"), undefined);
+    });
+});
+
+describe("agentVisionAnalyzeResultFromToolResult", () => {
+    const output = {
+        taskId: "task-1",
+        billingOrderId: "billing-1",
+        modelRecordId: "vision-record-1",
+        modelKey: "deepseek-v4-flash-vision-exp",
+        clientRequestId: "vision-request-1",
+        sourceResourceIds: ["resource-1"],
+        detail: "low",
+        analysis: "角色位于雨夜街道。",
+        usage: { inputTokens: 128, cachedTokens: 0, outputTokens: 16 },
+    } as const;
+
+    test("accepts only a complete successful vision receipt", () => {
+        assert.deepEqual(agentVisionAnalyzeResultFromToolResult({ toolName: "vision.analyze", succeeded: true, output }), output);
+        assert.equal(agentVisionAnalyzeResultFromToolResult({ toolName: "vision.analyze", succeeded: false, output }), undefined);
+        assert.equal(agentVisionAnalyzeResultFromToolResult({ toolName: "media.generate", succeeded: true, output }), undefined);
+        assert.equal(agentVisionAnalyzeResultFromToolResult({ toolName: "vision.analyze", succeeded: true, output: { ...output, providerRequestId: "private" } }), undefined);
     });
 });

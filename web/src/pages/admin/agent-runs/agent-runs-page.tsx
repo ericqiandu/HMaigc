@@ -9,31 +9,11 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { AdminContentSection, AdminDataLayout } from "@/pages/admin/components/admin-data-layout";
 import { AdminPageFrame } from "@/pages/admin/components/admin-shell";
 import { AdminContentError, AdminTableEmpty, AdminTableSkeleton } from "@/pages/admin/components/admin-ui";
-import {
-    AdminAgentRunApiError,
-    getAdminAgentRun,
-    getAdminAgentRuns,
-    interruptAdminAgentRun,
-    type AdminAgentRun,
-    type AdminAgentRunActivity,
-    type AdminAgentRunStatus,
-} from "@/services/api/admin-agent-runs";
+import { AdminAgentRunApiError, getAdminAgentRun, getAdminAgentRuns, interruptAdminAgentRun, type AdminAgentRun, type AdminAgentRunActivity, type AdminAgentRunStatus } from "@/services/api/admin-agent-runs";
 
 import { AgentRunInterruptModal } from "./agent-run-interrupt-modal";
-import {
-    formatAgentRunInactiveDuration,
-    formatAgentRunTimestamp,
-    getAgentRunActivityLabel,
-    getAgentRunStatusLabel,
-} from "./agent-run-presenters";
-import {
-    applyAgentRunConflict,
-    failAgentRunPageLoad,
-    startAgentRunPageLoad,
-    succeedAgentRunPageLoad,
-    type AgentRunInterruptDraft,
-    type AgentRunPageState,
-} from "./agent-run-page-state";
+import { formatAgentRunInactiveDuration, formatAgentRunTimestamp, getAgentRunActivityLabel, getAgentRunStatusLabel } from "./agent-run-presenters";
+import { applyAgentRunConflict, failAgentRunPageLoad, startAgentRunPageLoad, succeedAgentRunPageLoad, type AgentRunInterruptDraft, type AgentRunPageState } from "./agent-run-page-state";
 
 const initialPageState: AgentRunPageState = { data: null, loading: true, refreshing: false, error: "" };
 
@@ -58,10 +38,7 @@ export default function AgentRunsPage() {
         (patch: Record<string, string | number>, replace = false) => {
             const next = new URLSearchParams(searchParams);
             for (const [key, value] of Object.entries(patch)) {
-                const isDefault =
-                    value === "" ||
-                    (key === "page" && value === 1) ||
-                    (key === "pageSize" && value === 20);
+                const isDefault = value === "" || (key === "page" && value === 1) || (key === "pageSize" && value === 20);
                 if (isDefault) next.delete(key);
                 else next.set(key, String(value));
             }
@@ -95,17 +72,20 @@ export default function AgentRunsPage() {
         void reload();
     }, [reload]);
 
-    const openInterrupt = useCallback(async (record: AdminAgentRun) => {
-        setOpeningRunId(record.runId);
-        try {
-            const run = await getAdminAgentRun(record.runId);
-            setInterruptDraft({ run, reason: "", confirmation: "", submitting: false, error: "" });
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "读取 Agent 运行详情失败");
-        } finally {
-            setOpeningRunId("");
-        }
-    }, [message]);
+    const openInterrupt = useCallback(
+        async (record: AdminAgentRun) => {
+            setOpeningRunId(record.runId);
+            try {
+                const run = await getAdminAgentRun(record.runId);
+                setInterruptDraft({ run, reason: "", confirmation: "", submitting: false, error: "" });
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "读取 Agent 运行详情失败");
+            } finally {
+                setOpeningRunId("");
+            }
+        },
+        [message],
+    );
 
     const submitInterrupt = useCallback(async () => {
         if (!interruptDraft || interruptDraft.submitting) return;
@@ -149,7 +129,9 @@ export default function AgentRunsPage() {
                         <Tag className="agent-runs-status-tag" color={runStatusColor(record.status)} variant="filled">
                             {getAgentRunStatusLabel(record.status)}
                         </Tag>
-                        <span className="agent-runs-step-value">第 {record.stepNumber} / {record.maxSteps} 步</span>
+                        <span className="agent-runs-step-value">
+                            第 {record.stepNumber} / {record.maxSteps} 步
+                        </span>
                     </div>
                 ),
             },
@@ -168,8 +150,12 @@ export default function AgentRunsPage() {
                 width: 190,
                 render: (_, record) => (
                     <div className="agent-runs-fact-cell">
-                        <span className="agent-runs-task-value">模型 {record.linkedModelTaskStatus} · 媒体 {record.linkedMediaTaskStatus}</span>
-                        <span className="agent-runs-billing-value">账务 {record.billingState} · 请求 {record.providerRequestState}</span>
+                        <span className="agent-runs-task-value">
+                            模型 {record.linkedModelTaskStatus} · 识图 {record.linkedVisionTaskStatus} · 媒体 {record.linkedMediaTaskStatus}
+                        </span>
+                        <span className="agent-runs-billing-value">
+                            账务 {record.billingState} · 请求 {record.providerRequestState}
+                        </span>
                     </div>
                 ),
             },
@@ -214,12 +200,7 @@ export default function AgentRunsPage() {
             title="Agent 任务"
             description="跨用户查看真实 Agent 运行事实，并审计化终止卡住的运行"
             actions={
-                <Button
-                    className="agent-runs-refresh-button"
-                    icon={<RefreshCw className="agent-runs-refresh-icon size-4" />}
-                    loading={pageState.refreshing}
-                    onClick={() => void reload()}
-                >
+                <Button className="agent-runs-refresh-button" icon={<RefreshCw className="agent-runs-refresh-icon size-4" />} loading={pageState.refreshing} onClick={() => void reload()}>
                     刷新
                 </Button>
             }
@@ -231,11 +212,7 @@ export default function AgentRunsPage() {
                     description="列表仅包含未结束运行；活动分类、任务、账务和供应商状态均来自服务端事实。"
                     actions={<span className="agent-runs-result-count">共 {pageState.data?.total ?? 0} 条</span>}
                 >
-                    <ListToolbar
-                        className="agent-runs-toolbar"
-                        active={hasFilters}
-                        onReset={() => updateUrl({ user: "", scope: "", status: "", activity: "", page: 1 })}
-                    >
+                    <ListToolbar className="agent-runs-toolbar" active={hasFilters} onReset={() => updateUrl({ user: "", scope: "", status: "", activity: "", page: 1 })}>
                         <Input
                             className="agent-runs-user-filter"
                             allowClear
@@ -244,13 +221,7 @@ export default function AgentRunsPage() {
                             placeholder="用户 ID、邮箱或名称"
                             onChange={(event) => updateUrl({ user: event.target.value, page: 1 }, true)}
                         />
-                        <Input
-                            className="agent-runs-scope-filter"
-                            allowClear
-                            value={scope}
-                            placeholder="运行、项目或画布 ID"
-                            onChange={(event) => updateUrl({ scope: event.target.value, page: 1 }, true)}
-                        />
+                        <Input className="agent-runs-scope-filter" allowClear value={scope} placeholder="运行、项目或画布 ID" onChange={(event) => updateUrl({ scope: event.target.value, page: 1 }, true)} />
                         <Select
                             className="agent-runs-status-filter"
                             value={status || undefined}
@@ -300,12 +271,7 @@ export default function AgentRunsPage() {
                                         ),
                                     }}
                                 />
-                                <PaginationBar
-                                    current={page}
-                                    pageSize={pageSize}
-                                    total={pageState.data?.total ?? 0}
-                                    onChange={(nextPage, nextSize) => updateUrl({ page: nextSize !== pageSize ? 1 : nextPage, pageSize: nextSize })}
-                                />
+                                <PaginationBar current={page} pageSize={pageSize} total={pageState.data?.total ?? 0} onChange={(nextPage, nextSize) => updateUrl({ page: nextSize !== pageSize ? 1 : nextPage, pageSize: nextSize })} />
                             </div>
                         )}
                     </TableSurface>

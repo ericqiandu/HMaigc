@@ -4,12 +4,7 @@ import type { AgentPendingApproval } from "@/services/api/agent-runtime";
 export function AgentApprovalSummary({ approval }: { approval: AgentPendingApproval }) {
     if (!approval.quote) return null;
     return (
-        <section
-            className="canvas-agent-runtime-approval-summary"
-            aria-label="冻结生成费用"
-            data-price-version={approval.quote.priceVersion}
-            data-model-record-id={approval.quote.modelRecordId}
-        >
+        <section className="canvas-agent-runtime-approval-summary" aria-label="冻结生成费用" data-price-version={approval.quote.priceVersion} data-model-record-id={approval.quote.modelRecordId}>
             <div className="canvas-agent-runtime-approval-cost">
                 <span className="canvas-agent-runtime-approval-cost-label">预计扣除</span>
                 <strong className="canvas-agent-runtime-approval-cost-value">{formatCredits(approval.quote.amountMicrocredits)} 积分</strong>

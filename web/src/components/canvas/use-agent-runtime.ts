@@ -17,6 +17,7 @@ import {
     type AgentThreadHistoryTurn,
 } from "@/services/api/agent-runtime";
 import { initialAgentConversationState, reduceAgentConversation, type AgentConversationState } from "./agent-conversation-reducer";
+import { AGENT_RUNTIME_DECISION_BUDGET } from "./canvas-agent-runtime-configuration";
 
 const terminalStatuses = new Set(["succeeded", "failed", "cancelled"]);
 const liveSubscriptionStatuses = new Set<AgentRuntimeView["state"]["status"]>(["queued", "running", "waiting_tool"]);
@@ -257,7 +258,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
                     setThreadId(handle.threadId);
                     setPendingUserMessage(handle.pendingRun.userMessage);
                     setPendingConfiguration(handle.pendingRun.configuration);
-                    const resumed = await client.startRun(handle.threadId, { ...handle.pendingRun, maxSteps: 8 });
+                    const resumed = await client.startRun(handle.threadId, { ...handle.pendingRun, maxSteps: AGENT_RUNTIME_DECISION_BUDGET });
                     if (cancelled || historyRequestRef.current !== historyRequestID) return;
                     pendingRunRef.current = undefined;
                     setPendingUserMessage("");
@@ -367,7 +368,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
                 setPendingUserMessage(request.userMessage);
                 setPendingConfiguration(request.configuration);
                 await persist(null, activeThreadId);
-                const started = await client.startRun(activeThreadId, { ...request, maxSteps: 8 });
+                const started = await client.startRun(activeThreadId, { ...request, maxSteps: AGENT_RUNTIME_DECISION_BUDGET });
                 pendingRunRef.current = undefined;
                 setPendingUserMessage("");
                 setPendingConfiguration(null);
@@ -437,11 +438,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
                 setError("审批提案与当前工具调用不一致，请刷新后重试");
                 return;
             }
-            if (
-                submission.toolCallId !== call.toolCallId ||
-                submission.actionVersion !== call.actionVersion ||
-                submission.proposalHash !== approval.proposalHash
-            ) {
+            if (submission.toolCallId !== call.toolCallId || submission.actionVersion !== call.actionVersion || submission.proposalHash !== approval.proposalHash) {
                 setError("审批提交身份已变化，请刷新后由 Agent 创建新提案");
                 return;
             }
@@ -457,12 +454,14 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             setBusy(true);
             setError("");
             try {
-                adoptView(await client.submitApproval(view.run.id, {
-                    toolCallId: call.toolCallId,
-                    actionVersion: call.actionVersion,
-                    decision: submission.decision,
-                    proposalHash: approval.proposalHash,
-                }));
+                adoptView(
+                    await client.submitApproval(view.run.id, {
+                        toolCallId: call.toolCallId,
+                        actionVersion: call.actionVersion,
+                        decision: submission.decision,
+                        proposalHash: approval.proposalHash,
+                    }),
+                );
             } catch (cause) {
                 if (rejectedRunID && stoppingRunIDRef.current === rejectedRunID) stoppingRunIDRef.current = "";
                 setError(errorMessage(cause, "审批提交失败"));

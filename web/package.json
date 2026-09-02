@@ -8,6 +8,7 @@
         "build": "tsc --noEmit && vite build && bun run check:bundle",
         "check:bundle": "node ./scripts/check-bundle-budget.mjs",
         "verify:membership-checkout-browser": "node ./scripts/verify-membership-checkout-browser.mjs",
+        "verify:agent-dual-mode-browser": "node ./scripts/verify-agent-dual-mode-browser.mjs",
         "lighthouse": "node ./scripts/run-lighthouse-gate.mjs",
         "benchmark:canvas": "node ./scripts/run-canvas-performance-benchmark.mjs",
         "test": "bun test",

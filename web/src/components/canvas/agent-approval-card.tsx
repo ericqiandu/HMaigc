@@ -24,6 +24,7 @@ const approvalEffectByTool = {
     "canvas.apply_ops": "canvas_mutation",
     "assets.publish": "asset_publish",
     "media.generate": "media_generation",
+    "vision.analyze": "vision_analysis",
 } as const;
 
 export function AgentApprovalCard({ call, approval, busy, muted, now = new Date(), onDecision }: AgentApprovalCardProps) {
@@ -131,6 +132,27 @@ function AgentApprovalFacts({ call, approval, muted }: { call: AgentToolCall; ap
             </section>
         );
     }
+    if (call.toolName === "vision.analyze" && "detail" in argumentsValue) {
+        return (
+            <section className="canvas-agent-runtime-approval-details" aria-label="冻结视觉理解参数">
+                <dl className="canvas-agent-runtime-approval-parameter-list">
+                    <div className="canvas-agent-runtime-approval-parameter">
+                        <dt className="canvas-agent-runtime-approval-parameter-label" style={{ color: muted }}>
+                            图片
+                        </dt>
+                        <dd className="canvas-agent-runtime-approval-parameter-value">{argumentsValue.sourceResourceIds.length} 张</dd>
+                    </div>
+                    <div className="canvas-agent-runtime-approval-parameter">
+                        <dt className="canvas-agent-runtime-approval-parameter-label" style={{ color: muted }}>
+                            理解细节
+                        </dt>
+                        <dd className="canvas-agent-runtime-approval-parameter-value">{argumentsValue.detail === "low" ? "低细节" : "原始细节"}</dd>
+                    </div>
+                </dl>
+                <ApprovalExpiry expiresAt={approval.expiresAt} muted={muted} />
+            </section>
+        );
+    }
     if (call.toolName === "assets.publish" && "displayName" in argumentsValue) {
         return (
             <section className="canvas-agent-runtime-approval-details" aria-label="冻结资产发布参数">
@@ -180,8 +202,13 @@ function validateApproval(call: AgentToolCall, approval: AgentPendingApproval, n
         if (approval.quote.modelRecordId !== call.arguments.modelRecordId || approval.quote.modelKey !== call.arguments.modelKey) {
             return { valid: false, reason: "冻结费用与生成模型不一致" };
         }
+    } else if (call.toolName === "vision.analyze") {
+        if (!("detail" in call.arguments) || !approval.quote) return { valid: false, reason: "视觉理解费用未冻结" };
+        if (approval.quote.modelRecordId !== call.arguments.modelRecordId || approval.quote.modelKey !== call.arguments.modelKey) {
+            return { valid: false, reason: "冻结费用与视觉模型不一致" };
+        }
     } else if (approval.quote) {
-        return { valid: false, reason: "非媒体操作不应包含生成费用" };
+        return { valid: false, reason: "非付费操作不应包含费用" };
     }
     return { valid: true };
 }

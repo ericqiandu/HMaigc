@@ -224,7 +224,7 @@ run_case edge success "$repo_root/deploy/nginx/hmaigc.conf.example" 80
 run_case edge failure "$repo_root/deploy/nginx/hmaigc.conf.example" 80
 
 failed=0
-checkout_csp="default-src 'self'; base-uri 'self'; connect-src 'self' https: wss: blob: data:; font-src 'self' https://static.hm.kunagent.com data:; form-action 'self'; frame-ancestors 'self'; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; object-src 'none'; script-src 'self' https://static.hm.kunagent.com 'sha256-I6LPtG0ZaWWZjaqo01/h/CYOOBc9+Ljxd5XeZLu6aEI=' 'sha256-zf//CZlNtBsdfnnVuMsQm4ACjMfCcJk7E/v9zZbYc+A=' 'wasm-unsafe-eval'; style-src 'self' https://static.hm.kunagent.com 'unsafe-inline'; worker-src 'self' https://static.hm.kunagent.com blob:"
+checkout_csp="default-src 'self'; base-uri 'self'; connect-src 'self' https: wss: blob: data: http://127.0.0.1:*; font-src 'self' https://static.hm.kunagent.com data:; form-action 'self'; frame-ancestors 'self'; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; object-src 'none'; script-src 'self' https://static.hm.kunagent.com 'sha256-I6LPtG0ZaWWZjaqo01/h/CYOOBc9+Ljxd5XeZLu6aEI=' 'sha256-zf//CZlNtBsdfnnVuMsQm4ACjMfCcJk7E/v9zZbYc+A=' 'wasm-unsafe-eval'; style-src 'self' https://static.hm.kunagent.com 'unsafe-inline'; worker-src 'self' https://static.hm.kunagent.com blob:"
 assert_single_header() {
   local headers="$1"
   local header_name="$2"

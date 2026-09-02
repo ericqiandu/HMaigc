@@ -72,7 +72,7 @@ export type ChannelModel = {
     estimatedDurationSeconds: number;
     brandKey: ModelBrandKey;
     accessPolicy: "authenticated" | "member";
-    capability: "text" | "image" | "video" | "audio";
+    capability: "text" | "image" | "video" | "audio" | "vision";
     billingMode: "fixed_request" | "per_second" | "token_usage";
     priceStrategy: "flat" | "image_resolution" | "video_resolution" | "token";
     unitPriceMicrocredits: number;

@@ -5,15 +5,7 @@ import { act, createElement } from "react";
 import type { Root } from "react-dom/client";
 
 import { useAgentRuntime } from "../src/components/canvas/use-agent-runtime";
-import {
-    AgentRuntimeRequestError,
-    type AgentRuntimeClient,
-    type AgentRuntimeEvent,
-    type AgentRuntimeHandleStorage,
-    type AgentRuntimeStartConfiguration,
-    type AgentRuntimeView,
-    type AgentThreadHistoryItem,
-} from "../src/services/api/agent-runtime";
+import { AgentRuntimeRequestError, type AgentRuntimeClient, type AgentRuntimeEvent, type AgentRuntimeHandleStorage, type AgentRuntimeStartConfiguration, type AgentRuntimeView, type AgentThreadHistoryItem } from "../src/services/api/agent-runtime";
 
 let createRoot: (container: Element | DocumentFragment) => Root;
 let root: Root | null = null;
@@ -240,9 +232,7 @@ test("中断后重读历史保留迟到 Artifact，且不会把 Run 改回运行
             items: [
                 historyItem(
                     interrupted,
-                    includeArtifact
-                        ? [...baseItems, timelineItem("item-artifact-1", "artifact", { artifactId: "artifact-1", kind: "video", planKey: "plan-1", planVersion: 1, resourceId: "resource-video-1", status: "succeeded" }, 2, 5)]
-                        : baseItems,
+                    includeArtifact ? [...baseItems, timelineItem("item-artifact-1", "artifact", { artifactId: "artifact-1", kind: "video", planKey: "plan-1", planVersion: 1, resourceId: "resource-video-1", status: "succeeded" }, 2, 5)] : baseItems,
                 ),
             ],
         }),
@@ -367,7 +357,22 @@ function runtimeClient(patch: Partial<AgentRuntimeClient>): AgentRuntimeClient {
 function runtimeView(status: AgentRuntimeView["state"]["status"], stateVersion: number, sequence: number, runId = "run-1", threadId = "thread-1"): AgentRuntimeView {
     const succeeded = status === "succeeded" ? { expectedDelivery: { kind: "answer" as const, completionCriteria: [{ fact: "final_message" as const }] }, verification: { status: "satisfied" as const, rationale: "ok" }, finalMessage: "完成" } : {};
     return {
-        run: { id: runId, threadId, actorUserId: "user-1", clientRequestId: `request-${runId}`, status, lastEventSequence: sequence, stateVersion, stepNumber: 1, maxSteps: 8, modelRecordId: "model-1", modelKey: "agent", toolSchemaVersion: 1, createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:01Z" },
+        run: {
+            id: runId,
+            threadId,
+            actorUserId: "user-1",
+            clientRequestId: `request-${runId}`,
+            status,
+            lastEventSequence: sequence,
+            stateVersion,
+            stepNumber: 1,
+            maxSteps: 8,
+            modelRecordId: "model-1",
+            modelKey: "agent",
+            toolSchemaVersion: 1,
+            createdAt: "2026-08-18T00:00:00Z",
+            updatedAt: "2026-08-18T00:00:01Z",
+        },
         state: { stateVersion, stepNumber: 1, maxSteps: 8, status, clarificationHistory: [], userMessage: "生成短片", configuration: { generationModels: {}, skills: [], attachments: [], executionMode: "guided" }, ...succeeded },
     };
 }
@@ -378,7 +383,22 @@ function historyItem(view: AgentRuntimeView, items = [timelineItem(`${view.run.i
         activityAt: view.run.updatedAt,
         turns: [
             {
-                run: { id: view.run.id, threadId: view.run.threadId, status: view.run.status, lastEventSequence: view.run.lastEventSequence, stateVersion: view.run.stateVersion, stepNumber: view.run.stepNumber, maxSteps: view.run.maxSteps, modelKey: view.run.modelKey, toolSchemaVersion: view.run.toolSchemaVersion, runtimeVersion: 1, policyVersion: 1, createdAt: view.run.createdAt, updatedAt: view.run.updatedAt, completedAt: view.run.completedAt },
+                run: {
+                    id: view.run.id,
+                    threadId: view.run.threadId,
+                    status: view.run.status,
+                    lastEventSequence: view.run.lastEventSequence,
+                    stateVersion: view.run.stateVersion,
+                    stepNumber: view.run.stepNumber,
+                    maxSteps: view.run.maxSteps,
+                    modelKey: view.run.modelKey,
+                    toolSchemaVersion: view.run.toolSchemaVersion,
+                    runtimeVersion: 1,
+                    policyVersion: 1,
+                    createdAt: view.run.createdAt,
+                    updatedAt: view.run.updatedAt,
+                    completedAt: view.run.completedAt,
+                },
                 items,
             },
         ],
@@ -386,7 +406,19 @@ function historyItem(view: AgentRuntimeView, items = [timelineItem(`${view.run.i
 }
 
 function timelineItem(id: string, kind: "user_message" | "artifact", content: Record<string, unknown>, ordinal: number, sequence: number) {
-    return { id, runId: "run-1", kind, status: "completed" as const, ordinal, sourceEventSequence: sequence, content, startedAt: "2026-08-18T00:00:00Z", completedAt: "2026-08-18T00:00:01Z", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:01Z" };
+    return {
+        id,
+        runId: "run-1",
+        kind,
+        status: "completed" as const,
+        ordinal,
+        sourceEventSequence: sequence,
+        content,
+        startedAt: "2026-08-18T00:00:00Z",
+        completedAt: "2026-08-18T00:00:01Z",
+        createdAt: "2026-08-18T00:00:00Z",
+        updatedAt: "2026-08-18T00:00:01Z",
+    };
 }
 
 function uiItemEvent(sequence: number, kind: "item.delta", payload: Record<string, unknown>): AgentRuntimeEvent {

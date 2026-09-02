@@ -219,6 +219,7 @@ export type CanvasNodeMetadata = {
     };
     actionBoardRows?: number;
     actionBoardColumns?: number;
+    agentRunId?: string;
     taskId?: string;
     taskStatus?: "queued" | "running" | "succeeded" | "failed" | "cancelled" | string;
     taskProgress?: number;

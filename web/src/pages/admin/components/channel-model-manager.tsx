@@ -372,6 +372,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                     options={[
                         { label: "全部能力", value: "all" },
                         { label: "文本", value: "text" },
+                        { label: "视觉理解", value: "vision" },
                         { label: "图片", value: "image" },
                         { label: "视频", value: "video" },
                         { label: "音频", value: "audio" },
@@ -494,6 +495,7 @@ export function ChannelModelManager({ channel, onClose, onChanged }: { channel: 
                         <Select
                             options={[
                                 { label: "文本", value: "text" },
+                                { label: "视觉理解", value: "vision" },
                                 { label: "图片", value: "image" },
                                 { label: "视频", value: "video" },
                                 { label: "音频", value: "audio" },
@@ -520,7 +522,7 @@ function capabilityFromInterface(value?: ModelChannel["interfaceType"]): Channel
 }
 
 function capabilityLabel(value: ChannelModel["capability"]) {
-    return { text: "文本", image: "图片", video: "视频", audio: "音频" }[value];
+    return { text: "文本", vision: "视觉理解", image: "图片", video: "视频", audio: "音频" }[value];
 }
 
 function formatCredits(value: number) {

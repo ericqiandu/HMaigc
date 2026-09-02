@@ -3,12 +3,21 @@ import { useQueryClient } from "@tanstack/react-query";
 import { App } from "antd";
 
 import { applyGenerationTaskResultToNodes, generationTaskNodeId } from "@/lib/canvas/canvas-generation-task-sync";
-import { convergeGenerationTaskCancellation, freezeGenerationRequests, generationStopPlan, hasUsableGenerationTaskResult, isTerminalGenerationTask, mergeGenerationTaskSnapshot, settleGenerationStopTasks, type GenerationStopRequest } from "@/lib/canvas/canvas-generation-task-state";
+import {
+    convergeGenerationTaskCancellation,
+    freezeGenerationRequests,
+    generationStopPlan,
+    hasUsableGenerationTaskResult,
+    isTerminalGenerationTask,
+    mergeGenerationTaskSnapshot,
+    settleGenerationStopTasks,
+    type GenerationStopRequest,
+} from "@/lib/canvas/canvas-generation-task-state";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { cancelGenerationTask, listGenerationTasks, listTaskLogs, queryGenerationTask, waitForGenerationTask, type GenerationTask, type TaskLog } from "@/services/api/task-center";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { cinematicStoryboardColumns, storyboardRowsFromTask } from "@/lib/canvas/canvas-project-domain";
-import { generationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
+import { generationTaskMetadata, isGenerationTaskRecoveryCandidate } from "@/lib/canvas/canvas-project-generation";
 import { generationFailureMetadata } from "@/lib/generation-error";
 
 type CanvasGenerationRequest = GenerationStopRequest & {
@@ -48,17 +57,20 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
         return controller;
     }, []);
 
-    const finishGenerationRequest = useCallback((targetNodeId: string, controller: AbortController) => {
-        const request = generationRequestsRef.current.get(targetNodeId);
-        if (request?.controller !== controller) return;
-        generationRequestsRef.current.delete(targetNodeId);
-        if (request.stopping && !request.taskId) {
-            const affectedNodeIds = new Set([request.targetNodeId, request.originNodeId]);
-            setNodes((current) => current.map((node) => (affectedNodeIds.has(node.id) && node.metadata?.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node)));
-        }
-        const hasRunningRequest = Array.from(generationRequestsRef.current.values()).some((candidate) => candidate.runningNodeId === request.runningNodeId);
-        if (!hasRunningRequest) setRunningNodeId((current) => (current === request.runningNodeId ? null : current));
-    }, [setNodes]);
+    const finishGenerationRequest = useCallback(
+        (targetNodeId: string, controller: AbortController) => {
+            const request = generationRequestsRef.current.get(targetNodeId);
+            if (request?.controller !== controller) return;
+            generationRequestsRef.current.delete(targetNodeId);
+            if (request.stopping && !request.taskId) {
+                const affectedNodeIds = new Set([request.targetNodeId, request.originNodeId]);
+                setNodes((current) => current.map((node) => (affectedNodeIds.has(node.id) && node.metadata?.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node)));
+            }
+            const hasRunningRequest = Array.from(generationRequestsRef.current.values()).some((candidate) => candidate.runningNodeId === request.runningNodeId);
+            if (!hasRunningRequest) setRunningNodeId((current) => (current === request.runningNodeId ? null : current));
+        },
+        [setNodes],
+    );
 
     const freezeGenerationByRunningId = useCallback((runningId: string) => {
         return freezeGenerationRequests(generationRequestsRef.current, runningId);
@@ -137,9 +149,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                     const boundTaskById = new Map([...initialPlan.boundTasks, ...currentPlan.boundTasks].map((binding) => [binding.taskId, binding]));
                     const boundTasks = Array.from(boundTaskById.values());
                     freezeGenerationByRunningId(nodeId);
-                    const results = await settleGenerationStopTasks(boundTasks, (taskId) =>
-                        convergeGenerationTaskCancellation(taskId, { cancel: cancelGenerationTask, query: queryGenerationTask }),
-                    );
+                    const results = await settleGenerationStopTasks(boundTasks, (taskId) => convergeGenerationTaskCancellation(taskId, { cancel: cancelGenerationTask, query: queryGenerationTask }));
                     for (const result of results) {
                         if (result.status === "rejected") continue;
                         if (result.value.task.status === "succeeded" || hasUsableGenerationTaskResult(result.value.task)) await applyGenerationTaskResult(result.value.targetNodeId, result.value.task);
@@ -229,9 +239,7 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
     );
 
     const recoverInterruptedGenerationTasks = useCallback(async () => {
-        const recoveryNodes = nodesRef.current.filter(
-            (node) => node.metadata?.status === NODE_STATUS_LOADING || node.metadata?.errorDetails === "页面刷新后生成已中断，请重新生成。" || Boolean(node.metadata?.taskId && node.metadata.status !== NODE_STATUS_SUCCESS),
-        );
+        const recoveryNodes = nodesRef.current.filter(isGenerationTaskRecoveryCandidate);
         if (!recoveryNodes.length) return;
         const taskIds = Array.from(new Set(recoveryNodes.map((node) => node.metadata?.taskId).filter((id): id is string => Boolean(id))));
         const tasks = (await Promise.all(taskIds.map((id) => queryGenerationTask(id).catch(() => undefined)))).filter((task): task is GenerationTask => Boolean(task));

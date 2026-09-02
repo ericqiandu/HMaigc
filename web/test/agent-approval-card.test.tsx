@@ -67,6 +67,17 @@ test("媒体审批卡展示模型参数、冻结积分与到期时间", async ()
     expect(card?.textContent).toContain("2099/09/01 16:30");
 });
 
+test("视觉理解审批展示资源数量、细节等级和冻结费用，但不展示内部提示词", async () => {
+    await mount(visionCall(), visionApproval(), async () => undefined);
+
+    const card = document.querySelector<HTMLElement>('[aria-label="Agent 执行审批"]');
+    expect(card?.textContent).toContain("理解 2 张图片");
+    expect(card?.textContent).toContain("低细节");
+    expect(card?.textContent).toContain("0.001 积分");
+    expect(card?.textContent).not.toContain("不应展示的内部视觉提示词");
+    expect(buttons("批准执行")).toHaveLength(1);
+});
+
 test("提交中的审批只锁定当前 proposal，不会复用到下一份 proposal", async () => {
     let resolveFirst: (() => void) | undefined;
     const firstDecision = new Promise<void>((resolve) => {
@@ -117,17 +128,7 @@ async function mountMany(cards: Array<{ call: AgentToolCall; approval: AgentPend
     document.body.append(container);
     root = createRoot(container);
     await act(async () => {
-        root?.render(
-            createElement(
-                App,
-                null,
-                createElement(
-                    "div",
-                    { className: "agent-approval-card-test-list" },
-                    ...cards.map((card) => createElement(AgentApprovalCard, { key: card.approval.proposalHash, ...card, busy: false, muted: "#777", now })),
-                ),
-            ),
-        );
+        root?.render(createElement(App, null, createElement("div", { className: "agent-approval-card-test-list" }, ...cards.map((card) => createElement(AgentApprovalCard, { key: card.approval.proposalHash, ...card, busy: false, muted: "#777", now })))));
     });
 }
 
@@ -171,6 +172,23 @@ function mediaCall(overrides: Partial<Pick<AgentToolCall, "toolCallId" | "action
     };
 }
 
+function visionCall(): AgentToolCall {
+    return {
+        toolCallId: "vision-1",
+        toolName: "vision.analyze",
+        actionVersion: 1,
+        arguments: {
+            modelRecordId: "vision-record-1",
+            modelKey: "deepseek-v4-flash-vision-exp",
+            sourceResourceIds: ["resource-image-1", "resource-image-2"],
+            prompt: "不应展示的内部视觉提示词",
+            detail: "low",
+            clientRequestId: "vision-request-1",
+        },
+        expectedDelivery: { kind: "answer", completionCriteria: [{ fact: "final_message" }] },
+    };
+}
+
 function approval(overrides: Partial<AgentPendingApproval>): AgentPendingApproval {
     return {
         toolCallId: "canvas-change-1",
@@ -193,6 +211,17 @@ function mediaApproval(overrides: Partial<AgentPendingApproval> = {}): AgentPend
         effect: { kind: "media_generation", summary: "生成 15 秒视频", targetIds: ["video-node-1"] },
         quote: { modelRecordId: "video-record-1", modelKey: "video-model-pro", priceVersion: 9, amountMicrocredits: 2_265_000 },
         ...overrides,
+    });
+}
+
+function visionApproval(): AgentPendingApproval {
+    return approval({
+        toolCallId: "vision-1",
+        toolName: "vision.analyze",
+        actionVersion: 1,
+        proposalHash: "d".repeat(64),
+        effect: { kind: "vision_analysis", summary: "理解 2 张图片", targetIds: ["resource-image-1", "resource-image-2"] },
+        quote: { modelRecordId: "vision-record-1", modelKey: "deepseek-v4-flash-vision-exp", priceVersion: 4, amountMicrocredits: 1_000 },
     });
 }
 
