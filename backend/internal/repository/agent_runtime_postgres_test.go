@@ -88,6 +88,98 @@ func TestPostgresConcurrentMediaAttemptCallbacksAppendOneRevision(t *testing.T) 
 	}
 }
 
+func TestPostgresCommitExternalAgentDecisionSerializesConcurrentReplay(t *testing.T) {
+	db := testsupport.OpenPaymentIntegrationPostgres(t)
+	if err := database.MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatal(err)
+	}
+	repo := New(db)
+	seedScope := repositoryAgentScope()
+	now := time.Now().UTC().Truncate(time.Second)
+	initialized, err := repo.CreateInitializedExternalAgentRun(CreateInitializedExternalAgentRunInput{
+		Create: CreateLocalAgentRunInput{
+			Scope: seedScope, ExternalThreadID: "codex-postgres-concurrent", ClientRequestID: "codex-postgres-run", Now: now,
+		},
+		Initialize: InitializeAgentRunInput{
+			Scope: seedScope, MaxSteps: 8,
+			ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+			RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+			PolicyVersion:     agentruntime.CurrentPolicyVersion,
+			UserMessage:       "需要补充创作风格",
+			Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+			Now:               now,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := seedScope
+	scope.ThreadID = initialized.Run.ThreadID
+	scope.RunID = initialized.Run.ID
+	queued, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := agentruntime.BeginModelRequest(queued)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, queued, started, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	transition, err := agentruntime.AdvanceExternalDecision(started.State, agentruntime.ExternalDecisionInput{
+		ExpectedStateVersion: started.State.StateVersion,
+		Decision: agentruntime.ModelDecision{
+			Kind: agentruntime.DecisionClarificationRequest,
+			Clarification: &agentruntime.ClarificationDecision{
+				RequestID: "clarify-postgres-concurrent",
+				Questions: []agentruntime.ClarificationQuestion{{
+					ID: "style", Prompt: "请选择创作风格", Type: agentruntime.ClarificationFreeText,
+				}},
+				ExpectedDelivery: repositoryTestAnswerDelivery(),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := CommitExternalAgentDecisionInput{
+		Scope: scope, ClientRequestID: "postgres-external-decision", RequestHash: strings.Repeat("b", 64),
+		ExpectedStateVersion: started.State.StateVersion, Previous: started.State, Transition: transition, Now: now.Add(2 * time.Second),
+	}
+	type result struct {
+		replayed bool
+		err      error
+	}
+	results := make(chan result, 2)
+	var group sync.WaitGroup
+	for range 2 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			replayed, commitErr := repo.CommitExternalAgentDecision(input)
+			results <- result{replayed: replayed, err: commitErr}
+		}()
+	}
+	group.Wait()
+	close(results)
+	replayCount := 0
+	for item := range results {
+		if item.err != nil {
+			t.Fatalf("concurrent PostgreSQL external decision error = %v", item.err)
+		}
+		if item.replayed {
+			replayCount++
+		}
+	}
+	if replayCount != 1 {
+		t.Fatalf("concurrent PostgreSQL replay count = %d, want 1", replayCount)
+	}
+}
+
 func TestPostgresAgentRuntimeUpgradeRetiresPausedRunWithTerminalHistory(t *testing.T) {
 	db := testsupport.OpenPaymentIntegrationPostgres(t)
 	if err := database.MigrateBaseSchema(db); err != nil {
@@ -397,11 +489,13 @@ func TestPostgresAgentRuntimeIntegrityAndScopeIsolation(t *testing.T) {
 		table   string
 		columns string
 	}{
-		"idx_agent_runs_thread_client_request": {unique: true, table: "agent_runs", columns: "thread_id,client_request_id"},
-		"idx_agent_run_events_run_sequence":    {unique: true, table: "agent_run_events", columns: "run_id,sequence"},
-		"idx_agent_checkpoints_run_sequence":   {unique: true, table: "agent_checkpoints", columns: "run_id,sequence"},
-		"idx_agent_tool_calls_action":          {unique: true, table: "agent_tool_calls", columns: "run_id,tool_call_id,action_version"},
-		"idx_agent_threads_scope":              {unique: false, table: "agent_threads", columns: "tenant_kind,tenant_id,canvas_id,updated_at"},
+		"idx_agent_runs_thread_client_request":        {unique: true, table: "agent_runs", columns: "thread_id,client_request_id"},
+		"idx_agent_run_events_run_sequence":           {unique: true, table: "agent_run_events", columns: "run_id,sequence"},
+		"idx_agent_checkpoints_run_sequence":          {unique: true, table: "agent_checkpoints", columns: "run_id,sequence"},
+		"idx_agent_tool_calls_action":                 {unique: true, table: "agent_tool_calls", columns: "run_id,tool_call_id,action_version"},
+		"idx_agent_tool_calls_capability_idempotency": {unique: false, table: "agent_tool_calls", columns: "tool_name,capability_idempotency_key,status,updated_at"},
+		"idx_agent_tool_calls_capability_owner":       {unique: true, table: "agent_tool_calls", columns: "capability_idempotency_key"},
+		"idx_agent_threads_scope":                     {unique: false, table: "agent_threads", columns: "tenant_kind,tenant_id,canvas_id,updated_at"},
 	}
 	for name, want := range expected {
 		var actual struct {
@@ -690,8 +784,8 @@ func TestPostgresAgentRuntimeToolCompletionCASAcrossConnections(t *testing.T) {
 	}
 	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
 		Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "call-read-state", ToolName: agentruntime.ToolCanvasProject,
-			ActionVersion: 1, Arguments: []byte(`{"expectedRevision":7}`), ExpectedDelivery: repositoryTestAnswerDelivery(),
+			ToolCallID: "call-read-state", ToolName: agentruntime.ToolCanvasRead,
+			ActionVersion: 1, Arguments: []byte(`{"canvasId":"agent-canvas-1","selectedNodeIds":[],"includeViewport":true}`), ExpectedDelivery: repositoryTestAnswerDelivery(),
 		},
 	}})
 	if err != nil {
@@ -702,7 +796,7 @@ func TestPostgresAgentRuntimeToolCompletionCASAcrossConnections(t *testing.T) {
 	}
 	resolved, err := agentruntime.ResolveTool(requested.State, agentruntime.ToolResolution{
 		ToolCallID: "call-read-state", ActionVersion: 1, Succeeded: true,
-		Output: []byte(`{"canvasId":"canvas-1","revision":7}`),
+		Output: []byte(`{"canvasId":"agent-canvas-1","domainProjectId":"agent-project-1","revision":7,"nodes":[],"edges":[],"selectedNodeIds":[],"viewport":{"x":0,"y":0,"zoom":1},"callableModels":[]}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -741,7 +835,7 @@ func TestPostgresAgentRuntimeToolCompletionCASAcrossConnections(t *testing.T) {
 	if err := db.First(&call, "run_id = ? AND tool_call_id = ?", scope.RunID, "call-read-state").Error; err != nil {
 		t.Fatal(err)
 	}
-	if call.Status != agentruntime.ToolCallSucceeded || call.OutputJSON != `{"canvasId":"canvas-1","revision":7}` {
+	if call.Status != agentruntime.ToolCallSucceeded || call.OutputJSON != `{"canvasId":"agent-canvas-1","domainProjectId":"agent-project-1","revision":7,"nodes":[],"edges":[],"selectedNodeIds":[],"viewport":{"x":0,"y":0,"zoom":1},"callableModels":[]}` {
 		t.Fatalf("tool completion call = %#v", call)
 	}
 }
@@ -775,8 +869,8 @@ func TestPostgresAgentCanvasMutationRecoveryAcrossConnections(t *testing.T) {
 	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
 		Kind: agentruntime.DecisionToolCall,
 		ToolCall: &agentruntime.ToolCallDecision{
-			ToolCallID: "call-pg-apply", ToolName: agentruntime.ToolCanvasProject, ActionVersion: 1,
-			Arguments:        []byte(`{"baseRevision":7,"patch":{"upsertNodes":[{"id":"node-pg"}]}}`),
+			ToolCallID: "call-pg-apply", ToolName: agentruntime.ToolCanvasApplyOps, ActionVersion: 1,
+			Arguments:        []byte(`{"canvasId":"agent-canvas-1","baseRevision":7,"clientMutationId":"agent-pg-recovery","operations":[{"operationId":"add-node-pg","type":"add_node","node":{"id":"node-pg","type":"text","title":"PostgreSQL recovery node","position":{"x":0,"y":0},"width":320,"height":180,"metadata":{"status":"idle"}}}]}`),
 			ExpectedDelivery: repositoryTestCanvasDelivery(),
 		},
 	}})
@@ -786,13 +880,27 @@ func TestPostgresAgentCanvasMutationRecoveryAcrossConnections(t *testing.T) {
 	if err := firstRepo.CommitAgentRuntimeTransition(scope, current, requested, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	started, err := agentruntime.BeginToolExecution(requested.State, agentruntime.ToolExecution{
+	record, err := firstRepo.AgentToolCallForScope(scope, "call-pg-apply", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved, err := agentruntime.ReviewToolApproval(requested.State, agentruntime.ToolApproval{
+		ToolCallID: "call-pg-apply", ActionVersion: 1, Decision: agentruntime.ToolApprovalApproved,
+		ProposalHash: record.ApprovalProposalHash,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firstRepo.CommitAgentRuntimeTransition(scope, requested.State, approved, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	started, err := agentruntime.BeginToolExecution(approved.State, agentruntime.ToolExecution{
 		ToolCallID: "call-pg-apply", ActionVersion: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := firstRepo.CommitAgentRuntimeTransition(scope, requested.State, started, time.Now().UTC()); err != nil {
+	if err := firstRepo.CommitAgentRuntimeTransition(scope, approved.State, started, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
@@ -829,9 +937,21 @@ func TestPostgresAgentCanvasMutationRecoveryAcrossConnections(t *testing.T) {
 	if replayed.Change.ID != firstCommit.Change.ID || replayed.Change.Revision != 8 {
 		t.Fatalf("replayed canvas commit = %#v", replayed)
 	}
+	resultPayload, err := json.Marshal(agentruntime.CanvasApplyOpsResult{
+		CanvasID: scope.CanvasID, BaseRevision: 7, CommittedRevision: 8,
+		ClientMutationID: clientMutationID, ProposalHash: record.ApprovalProposalHash,
+		AppliedOperationIDs: []string{"add-node-pg"},
+		Evidence: agentruntime.CanvasApplyOpsEvidence{
+			AddedNodeIDs: []string{"node-pg"}, UpdatedNodeIDs: []string{}, DeletedNodeIDs: []string{},
+			UpsertedConnectionIDs: []string{}, DeletedConnectionIDs: []string{}, SelectedNodeIDs: []string{},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	resolved, err := agentruntime.ResolveTool(started.State, agentruntime.ToolResolution{
 		ToolCallID: "call-pg-apply", ActionVersion: 1, Succeeded: true,
-		Output: []byte(`{"canvasId":"agent-canvas-1","baseRevision":7,"committedRevision":8,"clientMutationId":"agent-pg-recovery"}`),
+		Output: resultPayload,
 	})
 	if err != nil {
 		t.Fatal(err)

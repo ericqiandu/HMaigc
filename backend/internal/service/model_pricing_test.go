@@ -86,6 +86,28 @@ func TestSaveModelPricingPersistsTokenMaximumSeparatelyFromExpectedUsage(t *test
 	}
 }
 
+func TestSaveModelPricingPersistsVisionTokenPricingScope(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.ModelPricing{}, &model.ModelPricingTier{}); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(repository.New(db), t.TempDir())
+	pricing, err := svc.SaveModelPricing(&model.User{ID: "admin", Role: model.UserRoleAdmin}, "", ModelPricingRequest{
+		ChannelID: "vision-channel", Model: "deepseek-v4-flash-vision-exp", Capability: "VISION", Currency: "cny",
+		InputPerMillionMicros: 1_000_000, CachedPerMillionMicros: 20_000,
+		OutputPerMillionMicros: 2_000_000, MaxOutputTokens: 8_192,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pricing.Capability != "vision" || pricing.Currency != "CNY" || pricing.MaxOutputTokens != 8_192 {
+		t.Fatalf("vision pricing = %#v", pricing)
+	}
+}
+
 func TestSaveModelPricingPersistsInputImageUsageCost(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

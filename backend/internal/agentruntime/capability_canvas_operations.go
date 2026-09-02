@@ -8,6 +8,10 @@ import (
 
 type CanvasOperationType string
 
+type CanvasNodeType string
+
+type CanvasNodeStatus string
+
 const (
 	CanvasOperationAddNode           CanvasOperationType = "add_node"
 	CanvasOperationUpdateNode        CanvasOperationType = "update_node"
@@ -16,6 +20,24 @@ const (
 	CanvasOperationDeleteConnections CanvasOperationType = "delete_connections"
 	CanvasOperationSetViewport       CanvasOperationType = "set_viewport"
 	CanvasOperationSelectNodes       CanvasOperationType = "select_nodes"
+)
+
+const (
+	CanvasNodeImage  CanvasNodeType = "image"
+	CanvasNodeText   CanvasNodeType = "text"
+	CanvasNodeScript CanvasNodeType = "script"
+	CanvasNodeSkill  CanvasNodeType = "skill"
+	CanvasNodeConfig CanvasNodeType = "config"
+	CanvasNodeVideo  CanvasNodeType = "video"
+	CanvasNodeAudio  CanvasNodeType = "audio"
+	CanvasNodeFrame  CanvasNodeType = "frame"
+)
+
+const (
+	CanvasNodeIdle    CanvasNodeStatus = "idle"
+	CanvasNodeSuccess CanvasNodeStatus = "success"
+	CanvasNodeLoading CanvasNodeStatus = "loading"
+	CanvasNodeError   CanvasNodeStatus = "error"
 )
 
 type CanvasPoint struct {
@@ -31,7 +53,7 @@ type CanvasViewport struct {
 
 type CanvasNodeInput struct {
 	ID       string          `json:"id"`
-	Type     string          `json:"type"`
+	Type     CanvasNodeType  `json:"type"`
 	Title    string          `json:"title"`
 	Position CanvasPoint     `json:"position"`
 	Width    float64         `json:"width"`
@@ -153,15 +175,18 @@ func decodeCanvasAddNodeOperation(payload json.RawMessage) (CanvasOperation, err
 			Metadata json.RawMessage `json:"metadata,omitempty"`
 		} `json:"node"`
 	}
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || wire.Type != CanvasOperationAddNode || wire.Node == nil || wire.Node.Position == nil || wire.Node.Position.X == nil || wire.Node.Position.Y == nil || wire.Node.Width == nil || wire.Node.Height == nil {
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil || wire.Type != CanvasOperationAddNode || wire.Node == nil || wire.Node.Position == nil || wire.Node.Position.X == nil || wire.Node.Position.Y == nil || wire.Node.Width == nil || wire.Node.Height == nil {
 		return CanvasOperation{}, errCapabilityArgumentsInvalid
 	}
 	operationID, nodeID, err := normalizeOperationAndNodeID(wire.OperationID, wire.Node.ID)
 	if err != nil {
 		return CanvasOperation{}, errCapabilityArgumentsInvalid
 	}
-	nodeType, err := normalizeText(wire.Node.Type, 64)
-	if err != nil {
+	nodeTypeText, err := normalizeText(wire.Node.Type, 64)
+	nodeType := CanvasNodeType(nodeTypeText)
+	if err != nil || !validCanvasNodeType(nodeType) {
 		return CanvasOperation{}, errCapabilityArgumentsInvalid
 	}
 	title, err := normalizeText(wire.Node.Title, capabilityDisplayNameLimit)
@@ -169,7 +194,7 @@ func decodeCanvasAddNodeOperation(payload json.RawMessage) (CanvasOperation, err
 		return CanvasOperation{}, errCapabilityArgumentsInvalid
 	}
 	metadata, err := normalizeJSONObject(wire.Node.Metadata, capabilityParametersLimit, true)
-	if err != nil {
+	if err != nil || !validCanvasNodeMetadata(metadata) {
 		return CanvasOperation{}, errCapabilityArgumentsInvalid
 	}
 	node := &CanvasNodeInput{ID: nodeID, Type: nodeType, Title: title, Position: CanvasPoint{X: *wire.Node.Position.X, Y: *wire.Node.Position.Y}, Width: *wire.Node.Width, Height: *wire.Node.Height, Metadata: metadata}
@@ -183,7 +208,9 @@ func decodeCanvasUpdateNodeOperation(payload json.RawMessage) (CanvasOperation, 
 		NodeID      string              `json:"nodeId"`
 		Patch       json.RawMessage     `json:"patch"`
 	}
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || wire.Type != CanvasOperationUpdateNode {
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil || wire.Type != CanvasOperationUpdateNode {
 		return CanvasOperation{}, errCapabilityArgumentsInvalid
 	}
 	operationID, nodeID, err := normalizeOperationAndNodeID(wire.OperationID, wire.NodeID)
@@ -191,7 +218,7 @@ func decodeCanvasUpdateNodeOperation(payload json.RawMessage) (CanvasOperation, 
 		return CanvasOperation{}, errCapabilityArgumentsInvalid
 	}
 	patch, err := normalizeJSONObject(wire.Patch, capabilityParametersLimit, false)
-	if err != nil || bytes.Equal(patch, []byte("{}")) {
+	if err != nil || bytes.Equal(patch, []byte("{}")) || !validCanvasNodePatch(patch) {
 		return CanvasOperation{}, errCapabilityArgumentsInvalid
 	}
 	return CanvasOperation{OperationID: operationID, Type: wire.Type, NodeID: nodeID, Patch: patch}, nil
@@ -203,7 +230,9 @@ func decodeCanvasDeleteNodeOperation(payload json.RawMessage) (CanvasOperation, 
 		Type        CanvasOperationType `json:"type"`
 		NodeID      string              `json:"nodeId"`
 	}
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || wire.Type != CanvasOperationDeleteNode {
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil || wire.Type != CanvasOperationDeleteNode {
 		return CanvasOperation{}, errCapabilityArgumentsInvalid
 	}
 	operationID, nodeID, err := normalizeOperationAndNodeID(wire.OperationID, wire.NodeID)
@@ -219,7 +248,9 @@ func decodeCanvasConnectNodesOperation(payload json.RawMessage) (CanvasOperation
 		Type        CanvasOperationType    `json:"type"`
 		Connection  *CanvasConnectionInput `json:"connection"`
 	}
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || wire.Type != CanvasOperationConnectNodes || wire.Connection == nil {
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil || wire.Type != CanvasOperationConnectNodes || wire.Connection == nil {
 		return CanvasOperation{}, errCapabilityArgumentsInvalid
 	}
 	operationID, err := normalizeIdentifier(wire.OperationID, capabilityIdentifierLimit)
@@ -256,7 +287,9 @@ func decodeCanvasDeleteConnectionsOperation(payload json.RawMessage) (CanvasOper
 		Type          CanvasOperationType `json:"type"`
 		ConnectionIDs []string            `json:"connectionIds"`
 	}
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || wire.Type != CanvasOperationDeleteConnections || wire.ConnectionIDs == nil {
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil || wire.Type != CanvasOperationDeleteConnections || wire.ConnectionIDs == nil {
 		return CanvasOperation{}, errCapabilityArgumentsInvalid
 	}
 	operationID, err := normalizeIdentifier(wire.OperationID, capabilityIdentifierLimit)
@@ -280,7 +313,9 @@ func decodeCanvasSetViewportOperation(payload json.RawMessage) (CanvasOperation,
 			Zoom *float64 `json:"zoom"`
 		} `json:"viewport"`
 	}
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || wire.Type != CanvasOperationSetViewport || wire.Viewport == nil || wire.Viewport.X == nil || wire.Viewport.Y == nil || wire.Viewport.Zoom == nil {
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil || wire.Type != CanvasOperationSetViewport || wire.Viewport == nil || wire.Viewport.X == nil || wire.Viewport.Y == nil || wire.Viewport.Zoom == nil {
 		return CanvasOperation{}, errCapabilityArgumentsInvalid
 	}
 	operationID, err := normalizeIdentifier(wire.OperationID, capabilityIdentifierLimit)
@@ -297,7 +332,9 @@ func decodeCanvasSelectNodesOperation(payload json.RawMessage) (CanvasOperation,
 		Type        CanvasOperationType `json:"type"`
 		NodeIDs     []string            `json:"nodeIds"`
 	}
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || wire.Type != CanvasOperationSelectNodes || wire.NodeIDs == nil {
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil || wire.Type != CanvasOperationSelectNodes || wire.NodeIDs == nil {
 		return CanvasOperation{}, errCapabilityArgumentsInvalid
 	}
 	operationID, err := normalizeIdentifier(wire.OperationID, capabilityIdentifierLimit)
@@ -325,4 +362,52 @@ func validZoom(value float64) bool {
 
 func validViewport(viewport CanvasViewport) bool {
 	return validCoordinate(viewport.X) && validCoordinate(viewport.Y) && validZoom(viewport.Zoom)
+}
+
+func validCanvasNodeType(nodeType CanvasNodeType) bool {
+	switch nodeType {
+	case CanvasNodeImage, CanvasNodeText, CanvasNodeScript, CanvasNodeSkill, CanvasNodeConfig, CanvasNodeVideo, CanvasNodeAudio, CanvasNodeFrame:
+		return true
+	default:
+		return false
+	}
+}
+
+func validCanvasNodeStatus(status CanvasNodeStatus) bool {
+	switch status {
+	case CanvasNodeIdle, CanvasNodeSuccess, CanvasNodeLoading, CanvasNodeError:
+		return true
+	default:
+		return false
+	}
+}
+
+func validCanvasNodeMetadata(metadata json.RawMessage) bool {
+	var values map[string]json.RawMessage
+	if json.Unmarshal(metadata, &values) != nil {
+		return false
+	}
+	raw, found := values["status"]
+	if !found {
+		return true
+	}
+	var status CanvasNodeStatus
+	return json.Unmarshal(raw, &status) == nil && validCanvasNodeStatus(status)
+}
+
+func validCanvasNodePatch(patch json.RawMessage) bool {
+	var values map[string]json.RawMessage
+	if json.Unmarshal(patch, &values) != nil {
+		return false
+	}
+	if raw, found := values["type"]; found {
+		var nodeType CanvasNodeType
+		if json.Unmarshal(raw, &nodeType) != nil || !validCanvasNodeType(nodeType) {
+			return false
+		}
+	}
+	if raw, found := values["metadata"]; found && !validCanvasNodeMetadata(raw) {
+		return false
+	}
+	return true
 }

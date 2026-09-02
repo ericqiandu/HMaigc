@@ -17,13 +17,15 @@ type CompletedTaskBillingAction string
 
 var ErrTaskCompletionStateConflict = errors.New("task completion state conflict")
 var ErrTaskOutboxConflict = errors.New("task outbox conflict")
+var ErrTaskProviderDispatchConflict = errors.New("task provider dispatch conflict")
 
 const (
 	FailedTaskBillingRefund    FailedTaskBillingAction = "refund"
 	FailedTaskBillingUncertain FailedTaskBillingAction = "uncertain"
 
-	CompletedTaskBillingSettle    CompletedTaskBillingAction = "settle"
-	CompletedTaskBillingUncertain CompletedTaskBillingAction = "uncertain"
+	CompletedTaskBillingSettle          CompletedTaskBillingAction = "settle"
+	CompletedTaskBillingSettleFromUsage CompletedTaskBillingAction = "settle_from_usage"
+	CompletedTaskBillingUncertain       CompletedTaskBillingAction = "uncertain"
 )
 
 type TaskOutboxDraft struct {
@@ -34,13 +36,78 @@ type TaskOutboxDraft struct {
 }
 
 type SucceededTaskFinalization struct {
-	Task          *model.Task
-	Session       *model.Session
-	Message       *model.Message
-	Results       []model.Result
-	BillingAction CompletedTaskBillingAction
-	BillingError  string
-	Outbox        *TaskOutboxDraft
+	Task                    *model.Task
+	Session                 *model.Session
+	Message                 *model.Message
+	Results                 []model.Result
+	BillingAction           CompletedTaskBillingAction
+	BillingError            string
+	ReportedTokenUsage      *TokenUsageFact
+	ResponseUsageSettlement *ResponseUsageSettlementFact
+	Outbox                  *TaskOutboxDraft
+}
+
+// BeginClaimedTokenProviderDispatch is the durable no-resend boundary for a
+// synchronous provider call. The task marker and token reservation become
+// running in one transaction immediately before network I/O.
+func (r *Repository) BeginClaimedTokenProviderDispatch(task *model.Task, pollStage string, now time.Time) error {
+	if task == nil || strings.TrimSpace(task.ID) == "" || strings.TrimSpace(task.UserID) == "" ||
+		strings.TrimSpace(task.BillingOrderID) == "" || strings.TrimSpace(pollStage) == "" || now.IsZero() ||
+		!validTaskLease(task.LeaseOwner, task.LeaseGeneration, task.LeaseToken) {
+		return ErrTaskProviderDispatchConflict
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var stored model.Task
+		query := tx.Where(
+			"id = ? AND user_id = ? AND status = ? AND lease_owner = ? AND lease_generation = ? AND lease_token = ?",
+			task.ID, task.UserID, model.TaskStatusRunning, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken,
+		)
+		if r.Dialect() == "postgres" {
+			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		if err := query.Take(&stored).Error; err != nil {
+			return ErrTaskProviderDispatchConflict
+		}
+		if stored.BillingOrderID != task.BillingOrderID || stored.PollStage != "" || stored.ProviderRequestID != "" {
+			return ErrTaskProviderDispatchConflict
+		}
+		var order model.BillingOrder
+		orderQuery := tx.Where("id = ?", stored.BillingOrderID)
+		if r.Dialect() == "postgres" {
+			orderQuery = orderQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		if err := orderQuery.Take(&order).Error; err != nil {
+			return err
+		}
+		if order.TaskID != stored.ID || order.UserID != stored.UserID || order.BillingMode != "token_usage" ||
+			order.Status != model.BillingStatusReserved || order.ProviderRequestID != "" {
+			return ErrTaskProviderDispatchConflict
+		}
+		updatedOrder := tx.Model(&model.BillingOrder{}).
+			Where("id = ? AND status = ? AND provider_request_id = ?", order.ID, model.BillingStatusReserved, "").
+			Select("status", "started_at", "updated_at").
+			Updates(model.BillingOrder{Status: model.BillingStatusRunning, StartedAt: &now, UpdatedAt: now})
+		if updatedOrder.Error != nil {
+			return updatedOrder.Error
+		}
+		if updatedOrder.RowsAffected != 1 {
+			return ErrTaskProviderDispatchConflict
+		}
+		updatedTask := tx.Model(&model.Task{}).
+			Where(
+				"id = ? AND status = ? AND lease_owner = ? AND lease_generation = ? AND lease_token = ? AND poll_stage = ? AND provider_request_id = ?",
+				stored.ID, model.TaskStatusRunning, stored.LeaseOwner, stored.LeaseGeneration, stored.LeaseToken, "", "",
+			).
+			Select("poll_stage", "updated_at").
+			Updates(model.Task{PollStage: pollStage, UpdatedAt: now})
+		if updatedTask.Error != nil {
+			return updatedTask.Error
+		}
+		if updatedTask.RowsAffected != 1 {
+			return ErrTaskProviderDispatchConflict
+		}
+		return nil
+	})
 }
 
 // FinalizeSucceededTaskAndBilling commits the durable facts that prove a
@@ -53,17 +120,18 @@ func (r *Repository) FinalizeSucceededTaskAndBilling(input SucceededTaskFinaliza
 		return ErrTaskCompletionStateConflict
 	}
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := r.finalizeSucceededBillingTx(tx, task, input.BillingAction, input.BillingError); err != nil {
+		if err := r.finalizeSucceededBillingTx(tx, task, input); err != nil {
 			return err
 		}
 		now := time.Now().UTC()
 		updated := tx.Model(&model.Task{}).
 			Where("id = ? AND user_id = ? AND status = ? AND lease_owner = ? AND lease_generation = ? AND lease_token = ?", task.ID, task.UserID, model.TaskStatusRunning, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken).
-			Select("status", "stage", "progress", "result_json", "input_json", "error", "completed_at", "lease_owner", "lease_expires_at", "lease_token", "updated_at").
+			Select("status", "stage", "progress", "result_json", "input_json", "error", "provider_request_id", "poll_stage", "completed_at", "lease_owner", "lease_expires_at", "lease_token", "updated_at").
 			Updates(model.Task{
 				Status: task.Status, Stage: task.Stage, Progress: task.Progress, ResultJSON: task.ResultJSON,
-				InputJSON: task.InputJSON, Error: "", CompletedAt: task.CompletedAt,
-				LeaseOwner: "", LeaseExpiresAt: nil, LeaseToken: "", UpdatedAt: now,
+				InputJSON: task.InputJSON, Error: "", ProviderRequestID: task.ProviderRequestID, PollStage: task.PollStage,
+				CompletedAt: task.CompletedAt,
+				LeaseOwner:  "", LeaseExpiresAt: nil, LeaseToken: "", UpdatedAt: now,
 			})
 		if updated.Error != nil {
 			return updated.Error
@@ -93,7 +161,7 @@ func (r *Repository) FinalizeSucceededTaskAndBilling(input SucceededTaskFinaliza
 	})
 }
 
-func (r *Repository) finalizeSucceededBillingTx(tx *gorm.DB, task *model.Task, action CompletedTaskBillingAction, errorText string) error {
+func (r *Repository) finalizeSucceededBillingTx(tx *gorm.DB, task *model.Task, input SucceededTaskFinalization) error {
 	if strings.TrimSpace(task.BillingOrderID) == "" {
 		return nil
 	}
@@ -108,15 +176,25 @@ func (r *Repository) finalizeSucceededBillingTx(tx *gorm.DB, task *model.Task, a
 	if order.TaskID != "" && order.TaskID != task.ID {
 		return ErrBillingStateConflict
 	}
-	switch action {
+	switch input.BillingAction {
 	case CompletedTaskBillingSettle:
 		if order.BillingMode == "token_usage" {
 			return errors.New("token usage billing must be reconciled explicitly")
 		}
 		return New(tx).SettleBillingOrder(order.ID, task.ProviderRequestID)
+	case CompletedTaskBillingSettleFromUsage:
+		if input.ResponseUsageSettlement == nil || strings.TrimSpace(task.ProviderRequestID) == "" || strings.TrimSpace(task.ProviderRequestID) != strings.TrimSpace(input.ResponseUsageSettlement.ProviderRequestID) {
+			return errors.New("response usage completion billing requires exact provider request facts")
+		}
+		return settleTokenBillingFromResponseUsageTx(tx, order.ID, *input.ResponseUsageSettlement)
 	case CompletedTaskBillingUncertain:
-		if strings.TrimSpace(errorText) == "" {
+		if strings.TrimSpace(input.BillingError) == "" {
 			return errors.New("uncertain completion billing requires an audit reason")
+		}
+		if input.ReportedTokenUsage != nil &&
+			(input.ReportedTokenUsage.InputTokens <= 0 || input.ReportedTokenUsage.CachedTokens < 0 ||
+				input.ReportedTokenUsage.CachedTokens > input.ReportedTokenUsage.InputTokens || input.ReportedTokenUsage.OutputTokens <= 0) {
+			return errors.New("reported completion token usage is invalid")
 		}
 		if order.Status == model.BillingStatusUncertain {
 			fields := []string{"error", "updated_at"}
@@ -124,7 +202,14 @@ func (r *Repository) finalizeSucceededBillingTx(tx *gorm.DB, task *model.Task, a
 				order.ProviderRequestID = task.ProviderRequestID
 				fields = append(fields, "provider_request_id")
 			}
-			order.Error = errorText
+			if input.ReportedTokenUsage != nil {
+				order.InputTokens = input.ReportedTokenUsage.InputTokens
+				order.CachedTokens = input.ReportedTokenUsage.CachedTokens
+				order.OutputTokens = input.ReportedTokenUsage.OutputTokens
+				order.TokenUsageStatus = "reported"
+				fields = append(fields, "input_tokens", "cached_tokens", "output_tokens", "token_usage_status")
+			}
+			order.Error = input.BillingError
 			order.UpdatedAt = time.Now().UTC()
 			return tx.Model(&model.BillingOrder{}).
 				Where("id = ? AND status = ?", order.ID, model.BillingStatusUncertain).
@@ -135,9 +220,15 @@ func (r *Repository) finalizeSucceededBillingTx(tx *gorm.DB, task *model.Task, a
 			return ErrBillingStateConflict
 		}
 		now := time.Now().UTC()
-		updates := uncertainBillingUpdates(order, errorText, now)
+		updates := uncertainBillingUpdates(order, input.BillingError, now)
 		if strings.TrimSpace(task.ProviderRequestID) != "" {
 			updates["provider_request_id"] = task.ProviderRequestID
+		}
+		if input.ReportedTokenUsage != nil {
+			updates["input_tokens"] = input.ReportedTokenUsage.InputTokens
+			updates["cached_tokens"] = input.ReportedTokenUsage.CachedTokens
+			updates["output_tokens"] = input.ReportedTokenUsage.OutputTokens
+			updates["token_usage_status"] = "reported"
 		}
 		result := tx.Model(&model.BillingOrder{}).
 			Where("id = ? AND status IN ?", order.ID, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning}).
@@ -150,7 +241,7 @@ func (r *Repository) finalizeSucceededBillingTx(tx *gorm.DB, task *model.Task, a
 		}
 		return nil
 	default:
-		return fmt.Errorf("unsupported completed task billing action: %s", action)
+		return fmt.Errorf("unsupported completed task billing action: %s", input.BillingAction)
 	}
 }
 
@@ -164,7 +255,7 @@ func (r *Repository) FinalizeFailedTaskAndBillingWithOutbox(task *model.Task, ac
 		return ErrTaskCompletionStateConflict
 	}
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := r.finalizeFailedBillingTx(tx, task.BillingOrderID, task.ID, action, errorText); err != nil {
+		if err := r.finalizeFailedBillingTx(tx, task.BillingOrderID, task.ID, task.ProviderRequestID, action, errorText); err != nil {
 			return err
 		}
 		now := time.Now()
@@ -172,7 +263,8 @@ func (r *Repository) FinalizeFailedTaskAndBillingWithOutbox(task *model.Task, ac
 			Where("id = ? AND status = ? AND lease_owner = ? AND lease_generation = ? AND lease_token = ?", task.ID, model.TaskStatusRunning, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken).
 			Updates(map[string]any{
 				"status": model.TaskStatusFailed, "stage": task.Stage, "progress": task.Progress,
-				"error": task.Error, "completed_at": &now, "lease_owner": "", "lease_expires_at": nil, "lease_token": "",
+				"error": task.Error, "provider_request_id": task.ProviderRequestID, "poll_stage": task.PollStage,
+				"completed_at": &now, "lease_owner": "", "lease_expires_at": nil, "lease_token": "",
 				"updated_at": now,
 			})
 		if updatedTask.Error != nil {
@@ -317,7 +409,7 @@ func (r *Repository) RescheduleTaskOutbox(id string, owner string, token string,
 	return nil
 }
 
-func (r *Repository) finalizeFailedBillingTx(tx *gorm.DB, orderID string, taskID string, action FailedTaskBillingAction, errorText string) error {
+func (r *Repository) finalizeFailedBillingTx(tx *gorm.DB, orderID string, taskID string, providerRequestID string, action FailedTaskBillingAction, errorText string) error {
 	if strings.TrimSpace(orderID) == "" {
 		return nil
 	}
@@ -341,9 +433,13 @@ func (r *Repository) finalizeFailedBillingTx(tx *gorm.DB, orderID string, taskID
 	case FailedTaskBillingUncertain:
 		if order.Status != model.BillingStatusUncertain {
 			now := time.Now()
+			updates := uncertainBillingUpdates(order, errorText, now)
+			if strings.TrimSpace(providerRequestID) != "" {
+				updates["provider_request_id"] = strings.TrimSpace(providerRequestID)
+			}
 			updated := tx.Model(&model.BillingOrder{}).
 				Where("id = ? AND status IN ?", order.ID, []model.BillingStatus{model.BillingStatusReserved, model.BillingStatusRunning}).
-				Updates(uncertainBillingUpdates(order, errorText, now))
+				Updates(updates)
 			if updated.Error != nil {
 				return updated.Error
 			}
@@ -353,6 +449,9 @@ func (r *Repository) finalizeFailedBillingTx(tx *gorm.DB, orderID string, taskID
 			return nil
 		}
 		updates := uncertainBillingUpdates(order, order.Error, time.Now())
+		if strings.TrimSpace(providerRequestID) != "" {
+			updates["provider_request_id"] = strings.TrimSpace(providerRequestID)
+		}
 		if strings.TrimSpace(order.Error) == "" {
 			updates["error"] = errorText
 		}

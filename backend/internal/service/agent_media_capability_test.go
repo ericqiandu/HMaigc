@@ -68,6 +68,43 @@ func TestAgentRuntimeFreezesMediaQuoteBeforeApproval(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeRejectsInvalidMediaQuoteAndSchedulesRepair(t *testing.T) {
+	decision := agentRuntimeToolDecisionWithDelivery(t,
+		`{"kind":"tool_call","toolCall":{"toolCallId":"media-runtime-invalid-quote","toolName":"media.generate","actionVersion":1,"arguments":{"mediaKind":"image","modelRecordId":"runtime-image-model","modelKey":"kz_gpt_image2","parameters":{"prompt":"鲜橙产品特写","aspectRatio":"1:1","resolution":"1K","quality":"standard","count":1,"transparentBackground":false},"sourceResourceIds":[],"targetCanvasNodeId":"image-node-1","clientRequestId":"runtime-image-invalid-quote"}}}`,
+		agentRuntimeTestImageDelivery(),
+	)
+	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestImageDelivery())
+	defer server.Close()
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, server.URL)
+	createAgentRuntimeImageModel(t, db, fixture)
+	scope := agentRuntimeServiceScope()
+	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: scope, ClientRequestID: "runtime-media-invalid-quote", UserMessage: "生成一张鲜橙产品图", MaxSteps: 4,
+		Configuration: guidedAgentRuntimeConfigurationInput(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatalf("invalid media decision must become repair feedback instead of a poison outbox: %v", err)
+	}
+	progress, err := svc.ResumeAgentRuntime(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.State.Status != agentruntime.RunRunning || progress.State.StepNumber != 1 || progress.State.DecisionFeedback == nil ||
+		progress.State.DecisionFeedback.Code != "model_decision_invalid" || progress.ModelTask == nil || progress.ModelTask.ID == started.ModelTask.ID {
+		t.Fatalf("invalid media decision repair state = %#v; task=%#v", progress.State, progress.ModelTask)
+	}
+	var toolCallCount int64
+	if err := db.Model(&model.AgentToolCall{}).Where("run_id = ?", scope.RunID).Count(&toolCallCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if toolCallCount != 0 {
+		t.Fatalf("invalid media decision persisted %d approval tool calls", toolCallCount)
+	}
+}
+
 func TestAgentMediaCapabilityTerminalOutboxResumesWaitingRuntimeOnce(t *testing.T) {
 	decision := agentRuntimeToolDecisionWithDelivery(t,
 		`{"kind":"tool_call","toolCall":{"toolCallId":"media-runtime-outbox","toolName":"media.generate","actionVersion":1,"arguments":{"mediaKind":"image","modelRecordId":"runtime-image-model","modelKey":"kz_gpt_image2","parameters":{"prompt":"鲜橙产品特写","aspectRatio":"1:1","resolution":"1K","quality":"medium","count":1},"sourceResourceIds":[],"targetCanvasNodeId":"image-node-1","clientRequestId":"runtime-image-outbox"}}}`,
@@ -528,6 +565,62 @@ func TestAgentMediaCapabilityRejectsForeignSourceBeforeApprovalOrBilling(t *test
 	}
 }
 
+func TestAgentMediaCapabilityUsesReadyResourceBoundToStandaloneCanvas(t *testing.T) {
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
+	createAgentRuntimeVideoModel(t, db, fixture)
+	seedAgentCapabilityResource(t, db, "standalone-source", "runtime-user", "")
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", "runtime-canvas").
+		Select("project_id", "payload_json").
+		Updates(model.CanvasProject{
+			ProjectID:   "",
+			PayloadJSON: `{"nodes":[{"id":"source-image","type":"image","title":"参考图","position":{"x":0,"y":0},"width":480,"height":270,"metadata":{"status":"success","content":"/api/resources/standalone-source/file","storageKey":"resource:standalone-source"}},{"id":"video-node-1","type":"video","title":"成片","position":{"x":520,"y":0},"width":480,"height":270,"metadata":{"status":"loading"}}],"connections":[]}`,
+		}).Error; err != nil {
+		t.Fatal(err)
+	}
+	scope := agentRuntimeServiceScope()
+	scope.DomainProjectID = ""
+	call := agentMediaCapabilityCallFor(
+		"media-standalone-source", "request-standalone-source", agentruntime.MediaKindVideo,
+		"runtime-video-model", "doubao-seedance-2-5-260628",
+		json.RawMessage(`{"prompt":"纸船被风轻轻吹动","aspectRatio":"16:9","resolution":"720p","durationSeconds":5,"generateAudio":false}`),
+		[]string{"standalone-source"},
+	)
+
+	quote, err := svc.freezeAgentMediaCapabilityQuote(scope, call, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quote.ModelRecordID != "runtime-video-model" || quote.ModelKey != "doubao-seedance-2-5-260628" || quote.AmountMicrocredits < 1 {
+		t.Fatalf("standalone canvas media quote = %#v", quote)
+	}
+}
+
+func TestAgentMediaCapabilityRejectsOwnedResourceNotBoundToStandaloneCanvas(t *testing.T) {
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
+	createAgentRuntimeVideoModel(t, db, fixture)
+	seedAgentCapabilityResource(t, db, "unbound-standalone-source", "runtime-user", "")
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", "runtime-canvas").
+		Select("project_id", "payload_json").
+		Updates(model.CanvasProject{
+			ProjectID:   "",
+			PayloadJSON: `{"nodes":[{"id":"video-node-1","type":"video","title":"成片","position":{"x":0,"y":0},"width":480,"height":270,"metadata":{"status":"loading"}}],"connections":[]}`,
+		}).Error; err != nil {
+		t.Fatal(err)
+	}
+	scope := agentRuntimeServiceScope()
+	scope.DomainProjectID = ""
+	call := agentMediaCapabilityCallFor(
+		"media-unbound-standalone-source", "request-unbound-standalone-source", agentruntime.MediaKindVideo,
+		"runtime-video-model", "doubao-seedance-2-5-260628",
+		json.RawMessage(`{"prompt":"纸船被风轻轻吹动","aspectRatio":"16:9","resolution":"720p","durationSeconds":5,"generateAudio":false}`),
+		[]string{"unbound-standalone-source"},
+	)
+
+	if _, err := svc.freezeAgentMediaCapabilityQuote(scope, call, time.Now().UTC()); !errors.Is(err, errAgentMediaInputChanged) {
+		t.Fatalf("unbound standalone source quote error = %v", err)
+	}
+}
+
 func TestAgentMediaCapabilityApprovalCannotAuthorizeDifferentMediaArguments(t *testing.T) {
 	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
 	createAgentRuntimeImageModel(t, db, fixture)
@@ -807,11 +900,11 @@ func createAgentRuntimeAudioModel(t *testing.T, db *gorm.DB, fixture agentRuntim
 	}
 }
 
-func seedApprovedAgentCapabilityProposal(t *testing.T, svc *Service, db *gorm.DB, call agentruntime.ToolCallDecision) string {
+func seedApprovedAgentCapabilityProposal(t *testing.T, svc *Service, _ *gorm.DB, call agentruntime.ToolCallDecision) string {
 	t.Helper()
 	scope := agentRuntimeServiceScope()
 	now := time.Now().UTC()
-	configuration, err := svc.resolveAgentRuntimeConfiguration(context.Background(), scope.ActorUserID, guidedAgentRuntimeConfigurationInput())
+	configuration, err := svc.resolveAgentRuntimeConfiguration(context.Background(), scope, guidedAgentRuntimeConfigurationInput())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -825,42 +918,92 @@ func seedApprovedAgentCapabilityProposal(t *testing.T, svc *Service, db *gorm.DB
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&model.AgentRun{}).Where("id = ?", scope.RunID).Update("status", agentruntime.RunWaitingTool).Error; err != nil {
+	if err := call.ExpectedDelivery.Validate(); err != nil {
+		call.ExpectedDelivery = agentRuntimeTestAnswerDelivery()
+	}
+	queued, err := svc.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
 		t.Fatal(err)
 	}
-	var quote *agentruntime.ApprovalCostQuote
-	if call.ToolName == agentruntime.ToolMediaGenerate {
-		quote, err = svc.freezeAgentMediaCapabilityQuote(scope, call, now)
-		if err != nil {
-			t.Fatal(err)
+	if queued.Status == agentruntime.RunWaitingTool && queued.PendingToolCall != nil {
+		prior, loadErr := svc.repo.AgentToolCallForScope(
+			scope,
+			queued.PendingToolCall.ToolCallID,
+			queued.PendingToolCall.ActionVersion,
+		)
+		if loadErr != nil {
+			t.Fatal(loadErr)
 		}
+		if prior.Status != agentruntime.ToolCallSucceeded {
+			t.Fatalf("previous capability is not resolved: status=%q", prior.Status)
+		}
+		resolved, resolveErr := agentruntime.ResolveTool(queued, agentruntime.ToolResolution{
+			ToolCallID: prior.ToolCallID, ActionVersion: prior.ActionVersion,
+			Succeeded: true, Output: json.RawMessage(prior.OutputJSON),
+		})
+		if resolveErr != nil {
+			t.Fatal(resolveErr)
+		}
+		if _, commitErr := svc.commitAgentRuntimeState(scope, queued, resolved); commitErr != nil {
+			t.Fatal(commitErr)
+		}
+		queued = resolved.State
 	}
-	proposal, err := agentruntime.NewApprovalProposalForTool(scope, call, quote, scope.RunID+":"+call.ToolCallID+":1", now.Add(time.Hour))
+	waitingApproval, err := agentruntime.AdvanceForToolSchema(
+		queued,
+		agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &call}},
+		agentruntime.CurrentToolSchemaVersion,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := json.Marshal(proposal)
+	waitingApproval, err = svc.prepareAgentRuntimeApproval(scope, queued, waitingApproval, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	proposalHash, err := proposal.Hash()
+	if _, err := svc.commitAgentRuntimeState(scope, queued, waitingApproval); err != nil {
+		t.Fatal(err)
+	}
+	record, err := svc.repo.AgentToolCallForScope(scope, call.ToolCallID, call.ActionVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, found := agentruntime.ToolPolicyForSchema(call.ToolName, agentruntime.CurrentToolSchemaVersion)
-	if !found {
-		t.Fatal("agent capability policy is missing")
-	}
-	record := model.AgentToolCall{
-		ID: newID(), RunID: scope.RunID, ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
-		ToolName: string(call.ToolName), Status: agentruntime.ToolCallPending, RiskLevel: policy.RiskLevel,
-		RequiredAccess: policy.RequiredAccess, ApprovalRequired: true,
-		ApprovalDecision: agentruntime.ToolApprovalApproved, ApprovalByUserID: scope.ActorUserID, ApprovalDecidedAt: &now,
-		ApprovalProposalJSON: string(payload), ApprovalProposalHash: proposalHash, ApprovalExpiresAt: &proposal.ExpiresAt,
-		IdempotencyKey: proposal.IdempotencyKey, InputJSON: string(call.Arguments), OutputJSON: `{}`, CreatedAt: now, UpdatedAt: now,
-	}
-	if err := db.Create(&record).Error; err != nil {
+	approved, err := agentruntime.ReviewToolApproval(waitingApproval.State, agentruntime.ToolApproval{
+		ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
+		Decision: agentruntime.ToolApprovalApproved, ProposalHash: record.ApprovalProposalHash,
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	return proposalHash
+	if _, err := svc.commitAgentRuntimeState(scope, waitingApproval.State, approved); err != nil {
+		t.Fatal(err)
+	}
+	return record.ApprovalProposalHash
+}
+
+func resolveSuccessfulAgentCapabilityForTest(
+	t *testing.T,
+	svc *Service,
+	call agentruntime.ToolCallDecision,
+	result agentruntime.ToolExecutionResult,
+) {
+	t.Helper()
+	if result.Pending {
+		t.Fatal("cannot resolve a pending capability as successful")
+	}
+	scope := agentRuntimeServiceScope()
+	current, err := svc.repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := agentruntime.ResolveTool(current, agentruntime.ToolResolution{
+		ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
+		Succeeded: true, Output: result.Output,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.commitAgentRuntimeState(scope, current, resolved); err != nil {
+		t.Fatal(err)
+	}
 }

@@ -7,7 +7,7 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 )
 
-func TestCurrentToolSchemaV6ExposesOnlyAtomicCapabilities(t *testing.T) {
+func TestCurrentToolSchemaV8ExposesOnlyAtomicCapabilities(t *testing.T) {
 	t.Parallel()
 
 	policies, ok := agentruntime.ToolPoliciesForSchema(agentruntime.CurrentToolSchemaVersion)
@@ -25,6 +25,7 @@ func TestCurrentToolSchemaV6ExposesOnlyAtomicCapabilities(t *testing.T) {
 		"assets.read",
 		"assets.publish",
 		"media.generate",
+		"vision.analyze",
 		"skills.load",
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -34,7 +35,6 @@ func TestCurrentToolSchemaV6ExposesOnlyAtomicCapabilities(t *testing.T) {
 	retired := []agentruntime.ToolName{
 		"skill.load",
 		"specialist.delegate",
-		"vision.analyze",
 		"canvas.project",
 		"media.assemble",
 		"production.plan",
@@ -59,6 +59,7 @@ func TestCurrentWriteAndCostCapabilitiesAlwaysRequireApproval(t *testing.T) {
 		{name: "canvas write", tool: "canvas.apply_ops", risk: agentruntime.ToolRiskWrite},
 		{name: "asset publish", tool: "assets.publish", risk: agentruntime.ToolRiskWrite},
 		{name: "paid media", tool: "media.generate", risk: agentruntime.ToolRiskCost},
+		{name: "paid vision", tool: "vision.analyze", risk: agentruntime.ToolRiskCost},
 	}
 	modes := []agentruntime.ExecutionMode{agentruntime.ExecutionGuided, agentruntime.ExecutionAutomatic}
 
@@ -115,6 +116,29 @@ func TestToolPolicyForSchemaFreezesProductionRiskAndAccess(t *testing.T) {
 
 func TestToolPoliciesForSchemaExposeExactFrozenVocabulary(t *testing.T) {
 	t.Parallel()
+
+	retiredCloud, ok := agentruntime.ToolPoliciesForSchema(agentruntime.RetiredCloudToolSchemaVersion)
+	if !ok {
+		t.Fatal("retired cloud v7 tool schema is unavailable for audit")
+	}
+	retiredCloudNames := make([]agentruntime.ToolName, 0, len(retiredCloud))
+	for _, policy := range retiredCloud {
+		retiredCloudNames = append(retiredCloudNames, policy.Name)
+	}
+	wantRetiredCloud := []agentruntime.ToolName{
+		agentruntime.ToolCanvasRead,
+		agentruntime.ToolCanvasApplyOps,
+		agentruntime.ToolAssetsRead,
+		agentruntime.ToolAssetsPublish,
+		agentruntime.ToolMediaGenerate,
+		agentruntime.ToolSkillsLoad,
+	}
+	if !reflect.DeepEqual(retiredCloudNames, wantRetiredCloud) {
+		t.Fatalf("retired cloud v7 tools = %#v, want %#v", retiredCloudNames, wantRetiredCloud)
+	}
+	if _, exposed := agentruntime.ToolPolicyForSchema(agentruntime.ToolVisionAnalyze, agentruntime.RetiredCloudToolSchemaVersion); exposed {
+		t.Fatal("retired cloud v7 schema exposed vision.analyze")
+	}
 
 	production, ok := agentruntime.ToolPoliciesForSchema(agentruntime.ProductionToolSchemaVersion)
 	if !ok {

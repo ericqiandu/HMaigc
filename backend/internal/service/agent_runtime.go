@@ -109,7 +109,7 @@ func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntime
 	if err == nil {
 		run = *existing
 	} else if errors.Is(err, gorm.ErrRecordNotFound) {
-		configuration, resolveErr := s.resolveAgentRuntimeConfiguration(input.Context, input.Scope.ActorUserID, input.Configuration)
+		configuration, resolveErr := s.resolveAgentRuntimeConfiguration(input.Context, input.Scope, input.Configuration)
 		if resolveErr != nil {
 			return nil, resolveErr
 		}
@@ -211,7 +211,7 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 	if err != nil {
 		var rejected *agentRuntimeModelDecisionRejectedError
 		if errors.As(err, &rejected) {
-			if run.ToolSchemaVersion == agentruntime.CurrentToolSchemaVersion {
+			if state.DecisionFeedback != nil && state.DecisionFeedback.Code == rejected.feedback.Code {
 				transition, failErr := agentruntime.Fail(state, "model_decision_invalid")
 				if failErr != nil {
 					return nil, errors.Join(err, failErr)
@@ -240,6 +240,10 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 			return nil, errors.Join(err, transitionErr)
 		}
 		return s.commitAgentRuntimeState(scope, state, transition)
+	}
+	decision, err = stampAgentCanvasPlaceholderProvenance(scope, decision)
+	if err != nil {
+		return nil, err
 	}
 	if decision.ToolCall != nil {
 		_, lookupErr := s.repo.AgentToolCallForScope(scope, decision.ToolCall.ToolCallID, decision.ToolCall.ActionVersion)
@@ -285,14 +289,11 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 	if err != nil {
 		return nil, err
 	}
-	if run.ToolSchemaVersion == agentruntime.CurrentToolSchemaVersion &&
-		transition.State.Status == agentruntime.RunWaitingApproval && transition.State.PendingToolCall != nil &&
-		transition.State.PendingToolCall.ToolName == agentruntime.ToolMediaGenerate {
-		quote, quoteErr := s.freezeAgentMediaCapabilityQuote(scope, *transition.State.PendingToolCall, time.Now().UTC())
-		if quoteErr != nil {
-			return nil, errors.Join(errors.New("media.generate approval quote could not be frozen"), quoteErr)
+	if run.ToolSchemaVersion == agentruntime.CurrentToolSchemaVersion {
+		transition, err = s.prepareAgentRuntimeApproval(scope, state, transition, time.Now().UTC())
+		if err != nil {
+			return nil, err
 		}
-		transition.ApprovalCostQuote = quote
 	}
 	progress, err := s.commitAgentRuntimeState(scope, state, transition)
 	if err != nil {
@@ -342,11 +343,35 @@ func (s *Service) agentRuntimeDefaultModel() (*model.ChannelModel, error) {
 	if err != nil {
 		return nil, err
 	}
-	_, spec, managed := kuaiziProviderFamilyForModel(item.ModelKey)
-	if !managed || spec.Capability != "text" || item.ProviderCredentialID == "" || item.ModelKey != selected.ModelKey || item.ChannelID != selected.ChannelID {
-		return nil, ServiceUnavailable("当前 Agent 模型没有版本化筷子账号凭据")
+	if normalizeCapability(item.Capability) != "text" || item.ModelKey != selected.ModelKey || item.ChannelID != selected.ChannelID {
+		return nil, ServiceUnavailable("当前 Agent 模型事实不一致")
+	}
+	channel, err := s.repo.SystemChannel(item.ChannelID)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateAgentRuntimeProviderRecord(*item); err != nil {
+		return nil, err
+	}
+	runtime, err := s.ResolveSystemProxyRuntime(channel, item.ModelKey)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(runtime.BaseURL) == "" || strings.TrimSpace(runtime.APIKey) == "" {
+		return nil, ServiceUnavailable("当前 Agent 模型渠道缺少可执行凭据")
 	}
 	return item, nil
+}
+
+func validateAgentRuntimeProviderRecord(item model.ChannelModel) error {
+	if item.ProviderCredentialID != "" {
+		family, spec, managed := kuaiziProviderFamilyForModel(item.ModelKey)
+		if !managed || spec.Capability != "text" || item.ChannelID != deterministicKuaiziChatChannelID(family) {
+			return ServiceUnavailable("筷子 Agent 渠道与版本化账号凭据不匹配")
+		}
+		return nil
+	}
+	return nil
 }
 
 func (s *Service) ensureAgentRuntimeModelTask(scope agentruntime.Scope, run model.AgentRun, state agentruntime.RuntimeState) (*model.Task, error) {
@@ -360,9 +385,22 @@ func (s *Service) ensureAgentRuntimeModelTask(scope agentruntime.Scope, run mode
 	if err != nil {
 		return nil, err
 	}
-	_, spec, managed := kuaiziProviderFamilyForModel(item.ModelKey)
-	if !managed || spec.Capability != "text" || item.ProviderCredentialID == "" || item.ModelKey != run.ModelKey {
+	if normalizeCapability(item.Capability) != "text" || item.ModelKey != run.ModelKey {
 		return nil, ServiceUnavailable("Agent 冻结模型事实不可执行")
+	}
+	if err := validateAgentRuntimeProviderRecord(*item); err != nil {
+		return nil, err
+	}
+	channel, err := s.repo.SystemChannel(item.ChannelID)
+	if err != nil {
+		return nil, err
+	}
+	runtime, err := s.ResolveSystemProxyRuntime(channel, item.ModelKey)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(runtime.BaseURL) == "" || strings.TrimSpace(runtime.APIKey) == "" {
+		return nil, ServiceUnavailable("Agent 冻结模型渠道缺少可执行凭据")
 	}
 	prompt, err := s.agentRuntimeModelPrompt(scope, state)
 	if err != nil {
@@ -379,13 +417,8 @@ func (s *Service) ensureAgentRuntimeModelTask(scope agentruntime.Scope, run mode
 	}
 	var tokenReservation TokenBillingReservation
 	if tokenBilled {
-		channel, channelErr := s.repo.SystemChannel(item.ChannelID)
-		if channelErr != nil {
-			return nil, channelErr
-		}
-		runtime, runtimeErr := s.ResolveSystemProxyRuntime(channel, item.ModelKey)
-		if runtimeErr != nil {
-			return nil, runtimeErr
+		if item.ProviderCredentialID == "" {
+			return nil, ServiceUnavailable("直连 Agent 渠道暂不支持供应商 Token 账单核对")
 		}
 		config.MaxOutputTokens = tokenPricing.MaxOutputTokens
 		_, estimatedInputTokens, requestErr := kuaiziChatCompletionsRequestBody(canvasGenerationInput{Mode: "text", Prompt: prompt, Config: config})
@@ -461,8 +494,7 @@ func (s *Service) ensureAgentRuntimeModelTask(scope agentruntime.Scope, run mode
 func (s *Service) validateAgentRuntimeModelTask(scope agentruntime.Scope, task *model.Task, run model.AgentRun, state agentruntime.RuntimeState) (*model.Task, error) {
 	if task == nil || task.ID != agentRuntimeModelTaskID(run.ID, state.StepNumber) || task.UserID != run.ActorUserID ||
 		task.ProjectID != scope.CanvasID || task.Type != agentRuntimeModelTaskType || strings.TrimSpace(task.Capability) == "" ||
-		task.Model != run.ModelKey || task.Operation != agentRuntimeModelOperation(scope.RunID) || task.Provider != "system" ||
-		task.ProviderAccountID == "" || task.ProviderEndpointVersionID == "" || task.ProviderCredentialVersionID == "" {
+		task.Model != run.ModelKey || task.Operation != agentRuntimeModelOperation(scope.RunID) || task.Provider != "system" {
 		return nil, errors.New("agent runtime model task facts conflict")
 	}
 	if err := s.verifyTaskExecutionEnvelope(task, time.Now().UTC()); err != nil {
@@ -485,6 +517,19 @@ func (s *Service) validateAgentRuntimeModelTask(scope agentruntime.Scope, task *
 		order.ChannelModelID != run.ModelRecordID || order.Model != run.ModelKey || order.Capability != "text" ||
 		order.Scene != "agent_runtime_model" || order.Quantity != 1 || order.AmountMicrocredits <= 0 {
 		return nil, errors.New("agent runtime billing facts conflict")
+	}
+	item, err := s.repo.ChannelModelByRecordID(run.ModelRecordID)
+	if err != nil {
+		return nil, err
+	}
+	if item.ChannelID != order.ChannelID || item.ModelKey != run.ModelKey || normalizeCapability(item.Capability) != "text" {
+		return nil, errors.New("agent runtime provider model facts conflict")
+	}
+	managedRuntime := item.ProviderCredentialID != ""
+	hasProviderRuntime := task.ProviderAccountID != "" && task.ProviderEndpointVersionID != "" && task.ProviderCredentialVersionID != ""
+	hasPartialProviderRuntime := task.ProviderAccountID != "" || task.ProviderEndpointVersionID != "" || task.ProviderCredentialVersionID != ""
+	if err := validateAgentRuntimeProviderRecord(*item); err != nil || (managedRuntime && !hasProviderRuntime) || (!managedRuntime && hasPartialProviderRuntime) {
+		return nil, errors.New("agent runtime provider credential facts conflict")
 	}
 	prompt := task.Prompt
 	if err := validateFrozenAgentRuntimeModelPrompt(scope, state, prompt); err != nil {
@@ -566,12 +611,13 @@ const agentRuntimeCloudSystemPrompt = `你是弘梦云端创作 Agent。你必�
 每次只能返回一个 JSON 对象，禁止 Markdown、额外文本和 reasoning_content：
 1. 直接交付：{"kind":"final","final":{"message":"...","expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}
 2. 结构化追问：{"kind":"clarification_request","clarification":{"requestId":"...","questions":[{"id":"...","prompt":"...","type":"single_choice|multi_choice|free_text","options":[{"id":"...","label":"..."}],"allowCustomAnswer":false}],"expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}
-3. 原子能力调用：{"kind":"tool_call","toolCall":{"toolCallId":"...","toolName":"canvas.read|canvas.apply_ops|assets.read|assets.publish|media.generate|skills.load","actionVersion":1,"arguments":{},"expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}
-首次决策必须声明 expectedDelivery；Runtime 随即冻结该合同，后续工具与 final 必须逐字段复用。只有 deliveryVerification 已满足全部 completionCriteria 时才能 final；否则继续修正或显式失败。每个新工具调用必须使用新的 toolCallId，重试也不得复用。
+3. 原子能力调用示例（读取是最终媒体落画布流程的第一步）：{"kind":"tool_call","toolCall":{"toolCallId":"...","toolName":"canvas.read","actionVersion":1,"arguments":{"canvasId":"<scope.canvasId>","selectedNodeIds":[],"includeViewport":true},"expectedDelivery":{"kind":"mixed","requiredArtifacts":["image","canvas_revision"],"targetCanvasId":"<scope.canvasId>","completionCriteria":[{"fact":"canvas_bound_resource","artifact":"image"},{"fact":"canvas_revision"}]}}}
+首次决策必须声明 expectedDelivery；expectedDelivery 描述整轮最终交付，不描述当前原子调用。Runtime 随即冻结该合同，后续工具与 final 必须逐字段复用。纯答复使用 {"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}；只生成资产使用 {"kind":"generated_asset","requiredArtifacts":["image"],"completionCriteria":[{"fact":"task_backed_resource","artifact":"image"}]}；只修改画布使用 canvas_change/canvas_revision；生成媒体并落到画布必须使用 mixed，并同时要求对应媒体的 canvas_bound_resource 与 canvas_revision。只有 deliveryVerification 已满足全部 completionCriteria 时才能 final；否则继续修正或显式失败。每个新工具调用必须使用新的 toolCallId，重试也不得复用。
 仅当完成用户目标所需事实确实缺失时才允许追问；能够通过只读能力取得的事实必须先读取。每次收口必须同时核对 deliveryEvidence 与 deliveryVerification；已经满足的 criterion 禁止重复执行，missingCriteria 只剩 final_message 时必须直接返回 final。
-canvas.read、assets.read、skills.load 是只读能力并立即执行。canvas.apply_ops、assets.publish 是写能力，media.generate 是付费能力；每次写入或付费动作都会形成独立、不可变、带哈希的审批提案，只有用户批准该精确提案后才执行。审批拒绝、提案过期或哈希不匹配都是本轮事实，必须据此继续规划，禁止降低交付目标或把拒绝伪装成成功。
-canvas.read arguments 精确结构为 {"canvasId":"...","selectedNodeIds":[],"includeViewport":true}。canvas.apply_ops arguments 精确结构为 {"canvasId":"...","baseRevision":0,"clientMutationId":"...","operations":[...]}，operations 只能使用工具契约允许的结构化画布操作。
+canvas.read、assets.read、skills.load 是只读能力并立即执行。canvas.apply_ops、assets.publish 是写能力，media.generate、vision.analyze 是付费能力；每次写入或付费动作都会形成独立、不可变、带哈希的审批提案，只有用户批准该精确提案后才执行。审批拒绝、提案过期或哈希不匹配都是本轮事实，必须据此继续规划，禁止降低交付目标或把拒绝伪装成成功。
+canvas.read arguments 精确结构为 {"canvasId":"...","selectedNodeIds":[],"includeViewport":true}。canvas.apply_ops arguments 精确结构为 {"canvasId":"...","baseRevision":0,"clientMutationId":"...","operations":[...]}，operations 只能使用工具契约允许的结构化画布操作。add_node 的 node.type 只能是 image、text、script、skill、config、video、audio、frame；媒体占位节点的 type 必须与目标 mediaKind 完全一致，metadata.status 必须使用 loading，metadata.agentRunId 必须使用本轮 scope.runId，禁止使用笼统 media 类型或 pending 状态。服务端会在形成冻结审批提案前校准该运行归属，浏览器任务中心不得接管 Agent 占位节点。
 assets.read arguments 精确结构为 {"domainProjectId":"...","resourceIds":[],"limit":100}。assets.publish arguments 精确结构为 {"resourceId":"...","domainProjectId":"...","displayName":"...","clientMutationId":"..."}。
-media.generate arguments 精确结构为 {"mediaKind":"image|video|audio","modelRecordId":"...","modelKey":"...","parameters":{},"sourceResourceIds":[],"targetCanvasNodeId":"...","clientRequestId":"..."}。modelRecordId、modelKey、媒体类型和参数必须来自本轮 callableModels 的真实能力事实；禁止猜测能力、参数或价格。生成只返回任务事实，最终交付仍必须由真实任务结果、资源和画布证据验证。
+media.generate arguments 顶层精确结构为 {"mediaKind":"image|video|audio","modelRecordId":"...","modelKey":"...","parameters":{},"sourceResourceIds":[],"targetCanvasNodeId":"...","clientRequestId":"..."}。targetCanvasNodeId 必须是画布中已存在的非空媒体节点 ID；若不存在，先通过 canvas.apply_ops 创建目标媒体占位节点，再调用 media.generate。图片 parameters 必须使用 prompt、aspectRatio、resolution、count、transparentBackground；只有所选模型 providerCapabilities.qualities 非空时才可添加 quality，并且值必须从该数组逐字选择，空数组时必须省略 quality。视频精确使用 prompt、aspectRatio、resolution、durationSeconds、generateAudio；音频精确使用 prompt、voice 及工具 schema 声明的可选音频字段。modelRecordId、modelKey、媒体类型及每个参数值必须来自本轮 callableModels 的真实身份与 providerCapabilities；禁止猜测字段、能力、参数值或价格。生成只返回任务与资源事实，不会自动修改画布；成功后必须再通过 canvas.apply_ops 把返回的资源事实写入同一目标节点：metadata.content 使用返回的 url，metadata.storageKey 使用 "resource:<resourceId>"，metadata.status 使用 "success"。完成态必须由真实任务资源、当前画布修订和该节点的精确资源绑定共同验证。
+vision.analyze arguments 顶层精确结构为 {"modelRecordId":"...","modelKey":"...","sourceResourceIds":["..."],"prompt":"...","detail":"low|original","clientRequestId":"..."}。模型身份必须逐字使用本轮 configuration.generationModels.vision 已冻结的 modelRecordId 与 model；sourceResourceIds 必须是 1 至 12 个本轮作用域内可读取的真实图片资源 ID，禁止传 URL、占位节点或文本内容。返回的 analysis 与 usage 是唯一可依赖的视觉理解结果和计费事实；任务、账单及供应商内部标识不得向用户展示。相同 clientRequestId 只能对应完全相同的参数，状态不确定时禁止自动重发。
 skills.load arguments 精确结构为 {"skillDir":"...","version":1,"checksum":"小写 SHA-256"}。只能加载本轮配置中已授权的精确 Skill 版本；加载后才能使用其方法论。
 当事实不足时必须追问或调用读取能力；禁止根据文本、节点连线、占位状态或旧记录猜测资产已经存在。实际产物类型、执行动作、结果落点必须与用户目标一致。`

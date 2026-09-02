@@ -41,6 +41,29 @@ func TestVerifyDeliveryUsesOnlyStructuredFacts(t *testing.T) {
 			expected: agentruntime.ExpectedDelivery{Kind: agentruntime.DeliveryMixed, RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactVideo}, TargetCanvasID: "canvas-1", CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactCanvasRevision}, {Fact: agentruntime.DeliveryFactArtifact, Artifact: agentruntime.ArtifactVideo}}},
 			evidence: agentruntime.DeliveryEvidence{CanvasID: "canvas-1", CanvasRevision: 5, CanvasCurrent: true}, want: agentruntime.VerificationRepairable,
 		},
+		{
+			name:     "mixed accepts an approved current canvas text node without a media url",
+			expected: agentruntime.ExpectedDelivery{Kind: agentruntime.DeliveryMixed, RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactText}, TargetCanvasID: "canvas-1", CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactArtifact, Artifact: agentruntime.ArtifactText}, {Fact: agentruntime.DeliveryFactCanvasRevision}}},
+			evidence: agentruntime.DeliveryEvidence{CanvasID: "canvas-1", CanvasRevision: 6, CanvasCurrent: true, Artifacts: []agentruntime.DeliveryArtifact{{
+				Kind: agentruntime.ArtifactText, ArtifactID: "script-node-1", RevisionID: "canvas-revision-6", Approved: true, CurrentRevision: true,
+			}}}, want: agentruntime.VerificationSatisfied,
+		},
+		{
+			name:     "canvas bound image rejects unrelated placeholder revision",
+			expected: agentruntime.ExpectedDelivery{Kind: agentruntime.DeliveryMixed, RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactImage, agentruntime.ArtifactCanvasRevision}, TargetCanvasID: "canvas-1", CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactCanvasBoundResource, Artifact: agentruntime.ArtifactImage}, {Fact: agentruntime.DeliveryFactCanvasRevision}}},
+			evidence: agentruntime.DeliveryEvidence{CanvasID: "canvas-1", CanvasRevision: 5, CanvasCurrent: true, Artifacts: []agentruntime.DeliveryArtifact{{
+				Kind: agentruntime.ArtifactImage, ResourceID: "resource-1", URL: "/api/resources/resource-1/file", ResourceReady: true,
+				SourceTaskID: "task-1", SourceTaskSucceeded: true, TargetCanvasNodeID: "image-node-1",
+			}}}, want: agentruntime.VerificationRepairable,
+		},
+		{
+			name:     "canvas bound image accepts exact current node binding",
+			expected: agentruntime.ExpectedDelivery{Kind: agentruntime.DeliveryMixed, RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactImage, agentruntime.ArtifactCanvasRevision}, TargetCanvasID: "canvas-1", CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactCanvasBoundResource, Artifact: agentruntime.ArtifactImage}, {Fact: agentruntime.DeliveryFactCanvasRevision}}},
+			evidence: agentruntime.DeliveryEvidence{CanvasID: "canvas-1", CanvasRevision: 6, CanvasCurrent: true, Artifacts: []agentruntime.DeliveryArtifact{{
+				Kind: agentruntime.ArtifactImage, ResourceID: "resource-1", URL: "/api/resources/resource-1/file", ResourceReady: true,
+				SourceTaskID: "task-1", SourceTaskSucceeded: true, TargetCanvasNodeID: "image-node-1", CanvasBound: true,
+			}}}, want: agentruntime.VerificationSatisfied,
+		},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {

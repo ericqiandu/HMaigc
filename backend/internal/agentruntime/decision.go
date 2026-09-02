@@ -45,6 +45,7 @@ func (name ToolName) Valid() bool {
 
 func (name ToolName) Known() bool {
 	return name.ValidForToolSchema(CurrentToolSchemaVersion) ||
+		name.ValidForToolSchema(RetiredCloudToolSchemaVersion) ||
 		name.ValidForToolSchema(ProductionToolSchemaVersion) ||
 		name.ValidForToolSchema(LegacyToolSchemaVersion)
 }
@@ -65,9 +66,16 @@ func (name ToolName) ValidForToolSchema(toolSchemaVersion int) bool {
 		default:
 			return false
 		}
-	case CurrentToolSchemaVersion:
+	case RetiredCloudToolSchemaVersion:
 		switch name {
 		case ToolCanvasRead, ToolCanvasApplyOps, ToolAssetsRead, ToolAssetsPublish, ToolMediaGenerate, ToolSkillsLoad:
+			return true
+		default:
+			return false
+		}
+	case CurrentToolSchemaVersion:
+		switch name {
+		case ToolCanvasRead, ToolCanvasApplyOps, ToolAssetsRead, ToolAssetsPublish, ToolMediaGenerate, ToolVisionAnalyze, ToolSkillsLoad:
 			return true
 		default:
 			return false

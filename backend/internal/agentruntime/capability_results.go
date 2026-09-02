@@ -3,6 +3,7 @@ package agentruntime
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 )
 
 type ToolExecutionResult struct {
@@ -25,15 +26,41 @@ func NewToolExecutionResult(name ToolName, result CapabilityResult) (ToolExecuti
 }
 
 type CanvasReadResult struct {
-	CanvasID        string            `json:"canvasId"`
-	Revision        int64             `json:"revision"`
-	Nodes           []json.RawMessage `json:"nodes"`
-	Edges           []json.RawMessage `json:"edges"`
-	SelectedNodeIDs []string          `json:"selectedNodeIds"`
-	Viewport        CanvasViewport    `json:"viewport"`
+	CanvasID        string                    `json:"canvasId"`
+	DomainProjectID string                    `json:"domainProjectId"`
+	Revision        int64                     `json:"revision"`
+	Nodes           []json.RawMessage         `json:"nodes"`
+	Edges           []json.RawMessage         `json:"edges"`
+	SelectedNodeIDs []string                  `json:"selectedNodeIds"`
+	Viewport        CanvasViewport            `json:"viewport"`
+	CallableModels  []CanvasCallableModelFact `json:"callableModels"`
 }
 
 func (CanvasReadResult) capabilityResult() {}
+
+// CanvasCallableModelFact is the public, execution-safe model catalog snapshot
+// returned with canvas.read. It contains only facts required to form a valid
+// media.generate request; provider credentials never enter this contract.
+type CanvasCallableModelFact struct {
+	ChannelID             string                         `json:"channelId"`
+	ModelRecordID         string                         `json:"modelRecordId"`
+	ModelKey              string                         `json:"modelKey"`
+	DisplayName           string                         `json:"displayName"`
+	Capability            string                         `json:"capability"`
+	BillingMode           string                         `json:"billingMode"`
+	PriceStrategy         string                         `json:"priceStrategy"`
+	UnitPriceMicrocredits int64                          `json:"unitPriceMicrocredits"`
+	PriceTiers            []CanvasCallableModelPriceTier `json:"priceTiers"`
+	ProviderCapabilities  json.RawMessage                `json:"providerCapabilities,omitempty"`
+}
+
+type CanvasCallableModelPriceTier struct {
+	Resolution            string `json:"resolution"`
+	InputVariant          string `json:"inputVariant"`
+	UsageMetric           string `json:"usageMetric"`
+	IncludedQuantity      int64  `json:"includedQuantity"`
+	UnitPriceMicrocredits int64  `json:"unitPriceMicrocredits"`
+}
 
 type CanvasApplyOpsResult struct {
 	CanvasID            string                 `json:"canvasId"`
@@ -99,6 +126,26 @@ type MediaGeneratedResourceResult struct {
 	URL        string    `json:"url"`
 }
 
+type VisionTokenUsage struct {
+	InputTokens  int64 `json:"inputTokens"`
+	CachedTokens int64 `json:"cachedTokens"`
+	OutputTokens int64 `json:"outputTokens"`
+}
+
+type VisionAnalyzeResult struct {
+	TaskID            string           `json:"taskId"`
+	BillingOrderID    string           `json:"billingOrderId"`
+	ModelRecordID     string           `json:"modelRecordId"`
+	ModelKey          string           `json:"modelKey"`
+	ClientRequestID   string           `json:"clientRequestId"`
+	SourceResourceIDs []string         `json:"sourceResourceIds"`
+	Detail            VisionDetail     `json:"detail"`
+	Analysis          string           `json:"analysis"`
+	Usage             VisionTokenUsage `json:"usage"`
+}
+
+func (VisionAnalyzeResult) capabilityResult() {}
+
 type SkillsLoadResult struct {
 	SkillDir     string `json:"skillDir"`
 	Version      int    `json:"version"`
@@ -123,6 +170,8 @@ func DecodeCapabilityResult(name ToolName, payload json.RawMessage) (CapabilityR
 		return decodeAssetsPublishResult(payload)
 	case ToolMediaGenerate:
 		return decodeMediaGenerateResult(payload)
+	case ToolVisionAnalyze:
+		return decodeVisionAnalyzeResult(payload)
 	case ToolSkillsLoad:
 		return decodeSkillsLoadResult(payload)
 	default:
@@ -132,25 +181,133 @@ func DecodeCapabilityResult(name ToolName, payload json.RawMessage) (CapabilityR
 
 func decodeCanvasReadResult(payload json.RawMessage) (CapabilityResult, error) {
 	var wire struct {
-		CanvasID        string            `json:"canvasId"`
-		Revision        *int64            `json:"revision"`
-		Nodes           []json.RawMessage `json:"nodes"`
-		Edges           []json.RawMessage `json:"edges"`
-		SelectedNodeIDs []string          `json:"selectedNodeIds"`
-		Viewport        *CanvasViewport   `json:"viewport"`
+		CanvasID        string                    `json:"canvasId"`
+		DomainProjectID string                    `json:"domainProjectId"`
+		Revision        *int64                    `json:"revision"`
+		Nodes           []json.RawMessage         `json:"nodes"`
+		Edges           []json.RawMessage         `json:"edges"`
+		SelectedNodeIDs []string                  `json:"selectedNodeIds"`
+		Viewport        *CanvasViewport           `json:"viewport"`
+		CallableModels  []CanvasCallableModelFact `json:"callableModels"`
 	}
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || wire.Revision == nil || *wire.Revision < 0 || wire.Nodes == nil || wire.Edges == nil || wire.SelectedNodeIDs == nil || wire.Viewport == nil || !validViewport(*wire.Viewport) {
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil || wire.Revision == nil || *wire.Revision < 0 || wire.Nodes == nil || wire.Edges == nil || wire.SelectedNodeIDs == nil || wire.Viewport == nil || wire.CallableModels == nil || !validViewport(*wire.Viewport) {
 		return nil, errCapabilityResultInvalid
 	}
 	canvasID, err := normalizeIdentifier(wire.CanvasID, capabilityIdentifierLimit)
 	if err != nil || validateRawObjectList(wire.Nodes) != nil || validateRawObjectList(wire.Edges) != nil {
 		return nil, errCapabilityResultInvalid
 	}
+	domainProjectID := strings.TrimSpace(wire.DomainProjectID)
+	if domainProjectID != wire.DomainProjectID || len(domainProjectID) > capabilityIdentifierLimit {
+		return nil, errCapabilityResultInvalid
+	}
 	nodeIDs, err := normalizeIdentifiers(wire.SelectedNodeIDs, capabilityResourceLimit, true)
 	if err != nil {
 		return nil, errCapabilityResultInvalid
 	}
-	return CanvasReadResult{CanvasID: canvasID, Revision: *wire.Revision, Nodes: cloneRawMessages(wire.Nodes), Edges: cloneRawMessages(wire.Edges), SelectedNodeIDs: nodeIDs, Viewport: *wire.Viewport}, nil
+	callableModels, err := normalizeCanvasCallableModels(wire.CallableModels)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	return CanvasReadResult{
+		CanvasID: canvasID, DomainProjectID: domainProjectID, Revision: *wire.Revision,
+		Nodes: cloneRawMessages(wire.Nodes), Edges: cloneRawMessages(wire.Edges),
+		SelectedNodeIDs: nodeIDs, Viewport: *wire.Viewport, CallableModels: callableModels,
+	}, nil
+}
+
+func normalizeCanvasCallableModels(values []CanvasCallableModelFact) ([]CanvasCallableModelFact, error) {
+	if len(values) > capabilityResourceLimit {
+		return nil, errCapabilityResultInvalid
+	}
+	result := make([]CanvasCallableModelFact, 0, len(values))
+	seenRecords := make(map[string]struct{}, len(values))
+	seenModels := make(map[string]struct{}, len(values))
+	previousKey := ""
+	for _, value := range values {
+		channelID, err := normalizeIdentifier(value.ChannelID, capabilityIdentifierLimit)
+		if err != nil {
+			return nil, errCapabilityResultInvalid
+		}
+		modelRecordID, err := normalizeIdentifier(value.ModelRecordID, capabilityIdentifierLimit)
+		if err != nil {
+			return nil, errCapabilityResultInvalid
+		}
+		modelKey, err := normalizeText(value.ModelKey, capabilityIdentifierLimit)
+		if err != nil {
+			return nil, errCapabilityResultInvalid
+		}
+		displayName, err := normalizeText(value.DisplayName, capabilityDisplayNameLimit)
+		if err != nil {
+			return nil, errCapabilityResultInvalid
+		}
+		billingMode, err := normalizeText(value.BillingMode, capabilityIdentifierLimit)
+		if err != nil {
+			return nil, errCapabilityResultInvalid
+		}
+		priceStrategy, err := normalizeText(value.PriceStrategy, capabilityIdentifierLimit)
+		if err != nil || !validCanvasCallableCapability(value.Capability) || value.PriceTiers == nil {
+			return nil, errCapabilityResultInvalid
+		}
+		if _, duplicate := seenRecords[modelRecordID]; duplicate {
+			return nil, errCapabilityResultInvalid
+		}
+		seenRecords[modelRecordID] = struct{}{}
+		catalogKey := channelID + "\x00" + modelKey
+		if _, duplicate := seenModels[catalogKey]; duplicate || (previousKey != "" && catalogKey < previousKey) {
+			return nil, errCapabilityResultInvalid
+		}
+		seenModels[catalogKey] = struct{}{}
+		previousKey = catalogKey
+		priced := value.UnitPriceMicrocredits > 0
+		tiers := make([]CanvasCallableModelPriceTier, len(value.PriceTiers))
+		for index, tier := range value.PriceTiers {
+			if tier.UnitPriceMicrocredits <= 0 || tier.IncludedQuantity < 0 {
+				return nil, errCapabilityResultInvalid
+			}
+			resolution := strings.TrimSpace(tier.Resolution)
+			inputVariant := strings.TrimSpace(tier.InputVariant)
+			usageMetric := strings.TrimSpace(tier.UsageMetric)
+			if resolution != tier.Resolution || inputVariant != tier.InputVariant || usageMetric != tier.UsageMetric ||
+				(resolution == "" && inputVariant == "" && usageMetric == "") {
+				return nil, errCapabilityResultInvalid
+			}
+			tiers[index] = CanvasCallableModelPriceTier{
+				Resolution: resolution, InputVariant: inputVariant, UsageMetric: usageMetric,
+				IncludedQuantity: tier.IncludedQuantity, UnitPriceMicrocredits: tier.UnitPriceMicrocredits,
+			}
+			priced = true
+		}
+		if !priced {
+			return nil, errCapabilityResultInvalid
+		}
+		var providerCapabilities json.RawMessage
+		if len(value.ProviderCapabilities) > 0 {
+			normalized, normalizeErr := normalizeJSONObject(value.ProviderCapabilities, capabilityParametersLimit, false)
+			if normalizeErr != nil {
+				return nil, errCapabilityResultInvalid
+			}
+			providerCapabilities = normalized
+		}
+		result = append(result, CanvasCallableModelFact{
+			ChannelID: channelID, ModelRecordID: modelRecordID, ModelKey: modelKey, DisplayName: displayName,
+			Capability: value.Capability, BillingMode: billingMode, PriceStrategy: priceStrategy,
+			UnitPriceMicrocredits: value.UnitPriceMicrocredits, PriceTiers: tiers,
+			ProviderCapabilities: providerCapabilities,
+		})
+	}
+	return result, nil
+}
+
+func validCanvasCallableCapability(value string) bool {
+	switch value {
+	case "image", "video", "audio", "vision":
+		return true
+	default:
+		return false
+	}
 }
 
 func decodeCanvasApplyOpsResult(payload json.RawMessage) (CapabilityResult, error) {
@@ -163,7 +320,9 @@ func decodeCanvasApplyOpsResult(payload json.RawMessage) (CapabilityResult, erro
 		AppliedOperationIDs []string                `json:"appliedOperationIds"`
 		Evidence            *CanvasApplyOpsEvidence `json:"evidence"`
 	}
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || wire.BaseRevision == nil || wire.CommittedRevision == nil || *wire.BaseRevision < 0 || *wire.CommittedRevision != *wire.BaseRevision+1 || len(wire.AppliedOperationIDs) < 1 || wire.Evidence == nil || !validSHA256(wire.ProposalHash) {
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil || wire.BaseRevision == nil || wire.CommittedRevision == nil || *wire.BaseRevision < 0 || *wire.CommittedRevision != *wire.BaseRevision+1 || len(wire.AppliedOperationIDs) < 1 || wire.Evidence == nil || !validSHA256(wire.ProposalHash) {
 		return nil, errCapabilityResultInvalid
 	}
 	canvasID, err := normalizeIdentifier(wire.CanvasID, capabilityIdentifierLimit)
@@ -228,7 +387,9 @@ func normalizeCanvasApplyOpsEvidence(evidence CanvasApplyOpsEvidence) (CanvasApp
 
 func decodeAssetsReadResult(payload json.RawMessage) (CapabilityResult, error) {
 	var wire AssetsReadResult
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || wire.Resources == nil || len(wire.Resources) > capabilityResourceLimit {
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil || wire.Resources == nil || len(wire.Resources) > capabilityResourceLimit {
 		return nil, errCapabilityResultInvalid
 	}
 	projectID, err := normalizeIdentifier(wire.DomainProjectID, capabilityIdentifierLimit)
@@ -261,7 +422,9 @@ func decodeAssetsReadResult(payload json.RawMessage) (CapabilityResult, error) {
 
 func decodeAssetsPublishResult(payload json.RawMessage) (CapabilityResult, error) {
 	var wire AssetsPublishResult
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil {
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil {
 		return nil, errCapabilityResultInvalid
 	}
 	projectID, err := normalizeIdentifier(wire.DomainProjectID, capabilityIdentifierLimit)
@@ -285,7 +448,9 @@ func decodeAssetsPublishResult(payload json.RawMessage) (CapabilityResult, error
 
 func decodeMediaGenerateResult(payload json.RawMessage) (CapabilityResult, error) {
 	var wire MediaGenerateResult
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || !wire.MediaKind.Valid() ||
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil || !wire.MediaKind.Valid() ||
 		len(wire.Resources) < 1 || len(wire.Resources) > capabilityResourceLimit {
 		return nil, errCapabilityResultInvalid
 	}
@@ -320,9 +485,73 @@ func decodeMediaGenerateResult(payload json.RawMessage) (CapabilityResult, error
 	}, nil
 }
 
+func decodeVisionAnalyzeResult(payload json.RawMessage) (CapabilityResult, error) {
+	var wire struct {
+		TaskID            string       `json:"taskId"`
+		BillingOrderID    string       `json:"billingOrderId"`
+		ModelRecordID     string       `json:"modelRecordId"`
+		ModelKey          string       `json:"modelKey"`
+		ClientRequestID   string       `json:"clientRequestId"`
+		SourceResourceIDs []string     `json:"sourceResourceIds"`
+		Detail            VisionDetail `json:"detail"`
+		Analysis          string       `json:"analysis"`
+		Usage             *struct {
+			InputTokens  *int64 `json:"inputTokens"`
+			CachedTokens *int64 `json:"cachedTokens"`
+			OutputTokens *int64 `json:"outputTokens"`
+		} `json:"usage"`
+	}
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, agentToolResultLimit) != nil || !wire.Detail.Valid() || wire.SourceResourceIDs == nil || wire.Usage == nil ||
+		wire.Usage.InputTokens == nil || wire.Usage.CachedTokens == nil || wire.Usage.OutputTokens == nil {
+		return nil, errCapabilityResultInvalid
+	}
+	taskID, err := normalizeIdentifier(wire.TaskID, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	billingOrderID, err := normalizeIdentifier(wire.BillingOrderID, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	modelRecordID, err := normalizeIdentifier(wire.ModelRecordID, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	modelKey, err := normalizeText(wire.ModelKey, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	requestID, err := normalizeIdentifier(wire.ClientRequestID, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	resourceIDs, err := normalizeResourceIdentifiers(wire.SourceResourceIDs, visionResourceLimit, false)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	analysis, err := normalizeText(wire.Analysis, capabilityInstructionsLimit)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	usage := VisionTokenUsage{
+		InputTokens: *wire.Usage.InputTokens, CachedTokens: *wire.Usage.CachedTokens, OutputTokens: *wire.Usage.OutputTokens,
+	}
+	if usage.InputTokens < 0 || usage.CachedTokens < 0 || usage.OutputTokens < 0 || usage.CachedTokens > usage.InputTokens {
+		return nil, errCapabilityResultInvalid
+	}
+	return VisionAnalyzeResult{
+		TaskID: taskID, BillingOrderID: billingOrderID, ModelRecordID: modelRecordID, ModelKey: modelKey,
+		ClientRequestID: requestID, SourceResourceIDs: resourceIDs, Detail: wire.Detail, Analysis: analysis, Usage: usage,
+	}, nil
+}
+
 func decodeSkillsLoadResult(payload json.RawMessage) (CapabilityResult, error) {
 	var wire SkillsLoadResult
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || wire.Version < 1 || !validSHA256(wire.Checksum) {
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil || wire.Version < 1 || !validSHA256(wire.Checksum) {
 		return nil, errCapabilityResultInvalid
 	}
 	skillDir, err := normalizeText(wire.SkillDir, capabilityDisplayNameLimit)

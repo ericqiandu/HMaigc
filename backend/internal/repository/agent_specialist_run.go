@@ -874,7 +874,7 @@ func (r *Repository) FailAgentSpecialistRun(input FailAgentSpecialistRunInput) (
 		if stage.Status != agentruntime.StageRunning {
 			return ErrProductionStageConflict
 		}
-		if err := r.finalizeFailedBillingTx(tx, run.BillingOrderID, run.TaskID, input.BillingAction, input.ErrorText); err != nil {
+		if err := r.finalizeFailedBillingTx(tx, run.BillingOrderID, run.TaskID, "", input.BillingAction, input.ErrorText); err != nil {
 			return err
 		}
 		taskResult := tx.Model(&model.Task{}).

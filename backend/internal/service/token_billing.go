@@ -24,6 +24,13 @@ type TokenPricingSnapshot struct {
 	MaxOutputTokens        int64 `json:"maxOutputTokens"`
 }
 
+type tokenBillingAuthority string
+
+const (
+	tokenBillingManagedReconciliation tokenBillingAuthority = "managed_reconciliation"
+	tokenBillingResponseUsage         tokenBillingAuthority = "response_usage"
+)
+
 const (
 	kuaiziBillingFenMicrocredits    int64 = 1_000_000
 	tokenBillingProtocolMarginBytes int64 = 256
@@ -68,22 +75,50 @@ func PrepareTokenBilledChatRequest(body []byte, maxOutputTokens int64) ([]byte, 
 	return prepared, int64(len(prepared)) + tokenBillingProtocolMarginBytes, nil
 }
 
-func validateTokenUsageModelBilling(item model.ChannelModel, pricing *model.ModelPricing) (TokenPricingSnapshot, error) {
-	if !kuaiziModelSupportsTokenUsageBilling(item.ModelKey) || normalizeCapability(item.Capability) != "text" {
-		return TokenPricingSnapshot{}, errors.New("Token 用量计费仅支持筷子托管文本模型")
+func tokenBillingContract(channel model.ModelChannel, item model.ChannelModel, pricing *model.ModelPricing) (TokenPricingSnapshot, tokenBillingAuthority, error) {
+	capability := normalizeCapability(item.Capability)
+	if capability != "text" && capability != "vision" {
+		return TokenPricingSnapshot{}, "", errors.New("Token 用量计费仅支持文本或视觉理解模型")
+	}
+	if channel.InterfaceType != model.ChannelInterfaceChatCompletion && channel.InterfaceType != model.ChannelInterfaceOpenAIResponse {
+		return TokenPricingSnapshot{}, "", errors.New("Token 用量计费需要 Chat Completions 或 Responses 接口")
+	}
+	channelID := strings.TrimSpace(channel.ID)
+	if channelID == "" || strings.TrimSpace(item.ChannelID) != channelID {
+		return TokenPricingSnapshot{}, "", errors.New("Token 用量计费渠道事实不完整")
+	}
+	if capability == "vision" && modelInputImageTokenCeiling(item.ModelKey) <= 0 {
+		return TokenPricingSnapshot{}, "", errors.New("视觉模型缺少已声明的图片 Token 上限")
 	}
 	if item.BillingMode != "token_usage" || item.PriceStrategy != "token" || item.UnitPriceMicrocredits != 0 || !item.PriceConfigured {
-		return TokenPricingSnapshot{}, errors.New("Token 用量计费模型配置不完整")
+		return TokenPricingSnapshot{}, "", errors.New("Token 用量计费模型配置不完整")
 	}
 	if pricing == nil || strings.ToUpper(strings.TrimSpace(pricing.Currency)) != "CNY" || pricing.InputPerMillionMicros <= 0 || pricing.OutputPerMillionMicros <= 0 || pricing.CachedPerMillionMicros < 0 || pricing.MaxOutputTokens <= 0 {
-		return TokenPricingSnapshot{}, errors.New("Token 供应商价格配置不完整")
+		return TokenPricingSnapshot{}, "", errors.New("Token 供应商价格配置不完整")
+	}
+	if strings.TrimSpace(pricing.ChannelID) != channelID || strings.TrimSpace(pricing.Model) != strings.TrimSpace(item.ModelKey) || normalizeCapability(pricing.Capability) != capability {
+		return TokenPricingSnapshot{}, "", errors.New("Token 供应商价格作用域与模型不一致")
+	}
+
+	managedChannel := isKuaiziChatChannelID(channelID)
+	managedCredential := strings.TrimSpace(item.ProviderCredentialID) != ""
+	if managedChannel != managedCredential {
+		return TokenPricingSnapshot{}, "", errors.New("Token 用量计费托管渠道与凭据事实不完整")
+	}
+	authority := tokenBillingResponseUsage
+	if managedChannel {
+		family, spec, registered := kuaiziProviderFamilyForModel(item.ModelKey)
+		if !registered || spec.Capability != capability || channelID != deterministicKuaiziChatChannelID(family) {
+			return TokenPricingSnapshot{}, "", errors.New("Token 用量计费托管模型与渠道不匹配")
+		}
+		authority = tokenBillingManagedReconciliation
 	}
 	return TokenPricingSnapshot{
 		InputPerMillionMicros:  pricing.InputPerMillionMicros,
 		CachedPerMillionMicros: pricing.CachedPerMillionMicros,
 		OutputPerMillionMicros: pricing.OutputPerMillionMicros,
 		MaxOutputTokens:        pricing.MaxOutputTokens,
-	}, nil
+	}, authority, nil
 }
 
 func tokenChargeMicrocredits(pricing TokenPricingSnapshot, usage TokenUsageFact, multiplierBPS int64) (int64, error) {
@@ -130,11 +165,15 @@ func (s *Service) ProxyTokenBillingConfig(userID string, channelID string, model
 	if item.BillingMode != "token_usage" {
 		return TokenPricingSnapshot{}, false, nil
 	}
-	pricing, err := s.repo.ModelPricing(item.ChannelID, item.ModelKey, "text")
+	channel, err := s.repo.SystemChannel(item.ChannelID)
 	if err != nil {
 		return TokenPricingSnapshot{}, false, err
 	}
-	snapshot, err := validateTokenUsageModelBilling(*item, pricing)
+	pricing, err := s.repo.ModelPricing(item.ChannelID, item.ModelKey, normalizeCapability(item.Capability))
+	if err != nil {
+		return TokenPricingSnapshot{}, false, err
+	}
+	snapshot, _, err := tokenBillingContract(*channel, *item, pricing)
 	return snapshot, err == nil, err
 }
 
@@ -173,6 +212,14 @@ func (s *Service) ReserveProxyTokenBilling(userID string, channelID string, mode
 }
 
 func (s *Service) newTokenBillingOrder(userID string, billingScope billingAccountScope, channelID string, modelKey string, scene string, idempotencyKey string, reservation TokenBillingReservation) (*model.BillingOrder, error) {
+	return s.newTokenBillingOrderWithTaskRuntime(userID, billingScope, channelID, modelKey, scene, idempotencyKey, reservation, false)
+}
+
+func (s *Service) newTaskTokenBillingOrder(userID string, billingScope billingAccountScope, channelID string, modelKey string, scene string, idempotencyKey string, reservation TokenBillingReservation) (*model.BillingOrder, error) {
+	return s.newTokenBillingOrderWithTaskRuntime(userID, billingScope, channelID, modelKey, scene, idempotencyKey, reservation, true)
+}
+
+func (s *Service) newTokenBillingOrderWithTaskRuntime(userID string, billingScope billingAccountScope, channelID string, modelKey string, scene string, idempotencyKey string, reservation TokenBillingReservation, freezeRuntimeWithTask bool) (*model.BillingOrder, error) {
 	userID = strings.TrimSpace(userID)
 	channelID = strings.TrimSpace(channelID)
 	modelKey = strings.TrimSpace(modelKey)
@@ -180,23 +227,41 @@ func (s *Service) newTokenBillingOrder(userID string, billingScope billingAccoun
 	reservation.TaskID = strings.TrimSpace(reservation.TaskID)
 	reservation.EndpointVersionID = strings.TrimSpace(reservation.EndpointVersionID)
 	reservation.CredentialVersionID = strings.TrimSpace(reservation.CredentialVersionID)
-	if userID == "" || channelID == "" || modelKey == "" || idempotencyKey == "" || reservation.EstimatedInputTokens <= 0 || reservation.MaxOutputTokens <= 0 || reservation.EndpointVersionID == "" || reservation.CredentialVersionID == "" {
+	if userID == "" || channelID == "" || modelKey == "" || idempotencyKey == "" || reservation.EstimatedInputTokens <= 0 || reservation.MaxOutputTokens <= 0 {
 		return nil, BadAuthRequest("Token 计费预留事实不完整")
 	}
 	item, err := s.requireAccessibleChannelModel(userID, channelID, modelKey)
 	if err != nil {
 		return nil, err
 	}
-	pricing, err := s.repo.ModelPricing(channelID, modelKey, "text")
+	channel, err := s.repo.SystemChannel(channelID)
+	if err != nil {
+		return nil, err
+	}
+	pricing, err := s.repo.ModelPricing(channelID, modelKey, normalizeCapability(item.Capability))
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, BadAuthRequest("当前 Agent 模型尚未配置 Token 供应商价格")
 	}
 	if err != nil {
 		return nil, err
 	}
-	configured, err := validateTokenUsageModelBilling(*item, pricing)
+	configured, authority, err := tokenBillingContract(*channel, *item, pricing)
 	if err != nil {
 		return nil, BadAuthRequest(err.Error())
+	}
+	switch authority {
+	case tokenBillingManagedReconciliation:
+		missingRuntime := reservation.EndpointVersionID == "" && reservation.CredentialVersionID == ""
+		completeRuntime := reservation.EndpointVersionID != "" && reservation.CredentialVersionID != ""
+		if (!freezeRuntimeWithTask && !completeRuntime) || (freezeRuntimeWithTask && !missingRuntime) {
+			return nil, BadAuthRequest("Token 托管计费预留的供应商版本事实无效")
+		}
+	case tokenBillingResponseUsage:
+		if reservation.EndpointVersionID != "" || reservation.CredentialVersionID != "" {
+			return nil, BadAuthRequest("Token 直连计费预留不得绑定托管供应商版本")
+		}
+	default:
+		return nil, BadAuthRequest("Token 计费权威事实无效")
 	}
 	if reservation.Pricing != configured || reservation.MaxOutputTokens != configured.MaxOutputTokens {
 		return nil, BadAuthRequest("Token 计费预留价格与已发布配置不一致")
@@ -223,7 +288,7 @@ func (s *Service) newTokenBillingOrder(userID string, billingScope billingAccoun
 	now := time.Now()
 	order := &model.BillingOrder{
 		ID: newID(), UserID: userID, TeamID: billingScope.TeamID, IdempotencyKey: "proxy-token:" + idempotencyKey, TaskID: reservation.TaskID,
-		ChannelID: channelID, ChannelModelID: item.ID, Model: modelKey, Capability: "text", Scene: truncateRunes(firstNonEmpty(strings.TrimSpace(scene), "agent"), 80),
+		ChannelID: channelID, ChannelModelID: item.ID, Model: modelKey, Capability: normalizeCapability(item.Capability), Scene: truncateRunes(firstNonEmpty(strings.TrimSpace(scene), "agent"), 80),
 		BillingMode: "token_usage", PriceVersion: item.PriceVersion, MultiplierBasisPoints: multiplierBPS, Quantity: 1,
 		AmountMicrocredits: amount, ReservedAmountMicrocredits: amount, TokenPricingSnapshotJSON: string(pricingJSON),
 		EstimatedInputTokens: reservation.EstimatedInputTokens, MaxOutputTokens: reservation.MaxOutputTokens,
@@ -501,6 +566,31 @@ func normalizeTokenUsageFact(usage TokenUsageFact) (string, TokenUsageFact) {
 		return "reported", usage
 	}
 	return "missing", TokenUsageFact{}
+}
+
+func responseUsageSettlementFromOrder(order model.BillingOrder, providerRequestID string, usage TokenUsageFact, settledAt time.Time) (repository.ResponseUsageSettlementFact, error) {
+	providerRequestID = strings.TrimSpace(providerRequestID)
+	if order.BillingMode != "token_usage" || order.ProviderEndpointVersionID != "" || order.ProviderCredentialVersionID != "" || providerRequestID == "" ||
+		(order.ProviderRequestID != "" && strings.TrimSpace(order.ProviderRequestID) != providerRequestID) || settledAt.IsZero() || !usage.Available ||
+		usage.InputTokens <= 0 || usage.CachedTokens < 0 || usage.OutputTokens <= 0 || usage.CachedTokens > usage.InputTokens {
+		return repository.ResponseUsageSettlementFact{}, errors.New("直连 Token 响应结算事实不完整")
+	}
+	var pricing TokenPricingSnapshot
+	if err := json.Unmarshal([]byte(order.TokenPricingSnapshotJSON), &pricing); err != nil {
+		return repository.ResponseUsageSettlementFact{}, errors.New("直连 Token 价格快照无效")
+	}
+	if usage.OutputTokens > pricing.MaxOutputTokens {
+		return repository.ResponseUsageSettlementFact{}, errors.New("直连 Token 输出超过冻结上限")
+	}
+	amount, err := tokenChargeMicrocredits(pricing, usage, order.MultiplierBasisPoints)
+	if err != nil {
+		return repository.ResponseUsageSettlementFact{}, err
+	}
+	return repository.ResponseUsageSettlementFact{
+		ProviderRequestID: providerRequestID,
+		Usage:             repository.TokenUsageFact{InputTokens: usage.InputTokens, CachedTokens: usage.CachedTokens, OutputTokens: usage.OutputTokens},
+		UsageStatus:       "reported", AmountMicrocredits: amount, SettledAt: settledAt,
+	}, nil
 }
 
 func (s *Service) deferTokenBillingReconciliation(order *model.BillingOrder, claimed bool, reason string) error {

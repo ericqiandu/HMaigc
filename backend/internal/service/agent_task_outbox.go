@@ -117,26 +117,26 @@ func expectedAgentTaskID(state agentruntime.RuntimeState, scope agentruntime.Sco
 		if state.Status != agentruntime.RunWaitingTool || state.PendingToolCall == nil || !state.PendingToolStarted {
 			return "", nil
 		}
-		if state.PendingToolCall.ToolName != agentruntime.ToolMediaGenerate {
+		if state.PendingToolCall.ToolName != agentruntime.ToolMediaGenerate && state.PendingToolCall.ToolName != agentruntime.ToolVisionAnalyze {
 			return "", nil
 		}
-		decoded, err := agentruntime.DecodeCapabilityArguments(
-			agentruntime.ToolMediaGenerate,
-			state.PendingToolCall.Arguments,
-		)
+		decoded, err := agentruntime.DecodeCapabilityArguments(state.PendingToolCall.ToolName, state.PendingToolCall.Arguments)
 		if err != nil {
 			return "", fmt.Errorf("decode pending media capability task identity: %w", err)
 		}
-		arguments, ok := decoded.(agentruntime.MediaGenerateArguments)
-		if !ok {
-			return "", errors.New("pending media capability arguments have an invalid type")
+		switch arguments := decoded.(type) {
+		case agentruntime.MediaGenerateArguments:
+			return MediaAttemptIdentity(scope, MediaGenerationCommand{
+				ArtifactRevisionID: agentMediaCapabilityIdentity(scope, arguments),
+				Attempt:            1,
+				TaskType:           "canvas_" + string(arguments.MediaKind),
+				Capability:         string(arguments.MediaKind),
+			}), nil
+		case agentruntime.VisionAnalyzeArguments:
+			return agentruntime.CapabilityIdempotencyKey(scope, *state.PendingToolCall)
+		default:
+			return "", errors.New("pending commercial capability arguments have an invalid type")
 		}
-		return MediaAttemptIdentity(scope, MediaGenerationCommand{
-			ArtifactRevisionID: agentMediaCapabilityIdentity(scope, arguments),
-			Attempt:            1,
-			TaskType:           "canvas_" + string(arguments.MediaKind),
-			Capability:         string(arguments.MediaKind),
-		}), nil
 	default:
 		return "", errors.New("task outbox wakeup is invalid")
 	}

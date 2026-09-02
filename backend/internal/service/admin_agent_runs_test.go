@@ -248,6 +248,40 @@ func TestInterruptAdminAgentRunDisposesLinkedMediaTaskWithoutDiscardingReconcili
 	}
 }
 
+func TestInterruptAdminAgentRunDisposesLinkedVisionTaskWithoutDiscardingReconciliation(t *testing.T) {
+	svc, db := openAdminAgentRunServiceSQLite(t)
+	now := time.Now().UTC().Add(-time.Minute)
+	const runID = "run-service-vision-task"
+	createServiceAdminRunFixture(t, db, runID, agentruntime.RunWaitingTool, now)
+	task, order := createServiceAdminRunTaskBilling(t, db, runID, model.TaskStatusRunning, model.BillingStatusRunning, "", now)
+	if err := db.Model(&model.Task{}).Where("id = ?", task.ID).
+		Select("operation", "type", "capability", "poll_stage").
+		Updates(model.Task{Operation: "agent_vision:" + runID, Type: "agent_vision_analysis", Capability: "vision", PollStage: agentVisionProviderDispatchStarted}).Error; err != nil {
+		t.Fatal(err)
+	}
+	cancelled := false
+	svc.registerActiveTask(task.ID, func() { cancelled = true })
+	admin := &model.User{ID: "admin-service", Role: model.UserRoleAdmin, Status: model.UserStatusActive}
+	detail, err := svc.AdminAgentRun(context.Background(), admin, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.LinkedVisionTaskStatus != string(model.TaskStatusRunning) || detail.ProviderRequestState != "submitted" || detail.ControlDisposition != repository.AdminAgentRunCancelRequestRequired {
+		t.Fatalf("vision detail = %#v", detail)
+	}
+	response, err := svc.InterruptAdminAgentRun(context.Background(), admin, AdminAgentRunInterruptRequest{
+		RunID: runID, ExpectedStateVersion: detail.StateVersion,
+		Reason: "停止视觉理解任务并保留迟到结果核对", Confirmation: detail.ConfirmationPhrase,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cancelled || !response.ReconciliationPending || len(response.AffectedTaskIDs) != 1 || response.AffectedTaskIDs[0] != task.ID {
+		t.Fatalf("vision response = %#v cancelled=%t", response, cancelled)
+	}
+	assertServiceAdminTaskBilling(t, db, task.ID, order.ID, model.TaskStatusCancelled, model.BillingStatusUncertain, 900, 100)
+}
+
 func TestInterruptAdminAgentRunDoesNotRefundSettledBilling(t *testing.T) {
 	svc, db := openAdminAgentRunServiceSQLite(t)
 	now := time.Now().UTC().Add(-time.Minute)
@@ -307,6 +341,7 @@ func openAdminAgentRunServiceSQLite(t *testing.T) (*Service, *gorm.DB) {
 		&model.User{}, &model.Task{}, &model.BillingOrder{}, &model.CreditAccount{}, &model.CreditLedgerEntry{},
 		&model.AgentThread{}, &model.AgentRun{}, &model.AgentTimelineItem{}, &model.AgentRunEvent{},
 		&model.AgentCheckpoint{}, &model.AgentToolCall{}, &model.AgentProductionPlanVersion{}, &model.AgentProductionArtifact{},
+		&model.AgentExternalDecision{},
 	); err != nil {
 		t.Fatal(err)
 	}

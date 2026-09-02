@@ -14,7 +14,8 @@ import (
 )
 
 func TestAgentCapabilityReadCanvasReturnsOnlyScopedFacts(t *testing.T) {
-	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
+	createAgentRuntimeImageModel(t, db, fixture)
 	payload := `{"nodes":[{"id":"node-1","type":"image","data":{"prompt":"visible"}}],"connections":[{"id":"edge-1","source":"node-1","target":"node-2"}],"viewport":{"x":12,"y":-4,"k":1.25},"chatSessions":[{"secret":"must-not-leak"}],"privateDraft":"must-not-leak"}`
 	if err := db.Model(&model.CanvasProject{}).Where("id = ?", "runtime-canvas").Update("payload_json", payload).Error; err != nil {
 		t.Fatal(err)
@@ -38,8 +39,50 @@ func TestAgentCapabilityReadCanvasReturnsOnlyScopedFacts(t *testing.T) {
 	if canvas.CanvasID != "runtime-canvas" || canvas.Revision != 7 || len(canvas.Nodes) != 1 || len(canvas.Edges) != 1 || len(canvas.SelectedNodeIDs) != 1 || canvas.SelectedNodeIDs[0] != "node-1" || canvas.Viewport.X != 12 || canvas.Viewport.Y != -4 || canvas.Viewport.Zoom != 1.25 {
 		t.Fatalf("canvas read result = %#v", canvas)
 	}
+	if canvas.DomainProjectID != "runtime-project" || len(canvas.CallableModels) != 1 {
+		t.Fatalf("canvas execution facts = %#v", canvas)
+	}
+	callableModel := canvas.CallableModels[0]
+	if callableModel.ChannelID != "runtime-image-channel" || callableModel.ModelRecordID != "runtime-image-model" ||
+		callableModel.ModelKey != "kz_gpt_image2" || callableModel.Capability != "image" ||
+		callableModel.UnitPriceMicrocredits != 250 || callableModel.ProviderCapabilities == nil {
+		t.Fatalf("canvas callable model facts = %#v", callableModel)
+	}
 	if strings.Contains(string(result.Output), "must-not-leak") || strings.Contains(string(result.Output), "chatSessions") || strings.Contains(string(result.Output), "privateDraft") {
 		t.Fatalf("canvas read leaked unrelated payload: %s", result.Output)
+	}
+}
+
+func TestAgentCapabilityReadCanvasSupportsStandaloneCanvas(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", "runtime-canvas").
+		Select("project_id", "payload_json").
+		Updates(model.CanvasProject{
+			ProjectID:   "",
+			PayloadJSON: `{"nodes":[],"connections":[],"viewport":{"x":0,"y":0,"k":1}}`,
+		}).Error; err != nil {
+		t.Fatal(err)
+	}
+	scope := agentRuntimeServiceScope()
+	scope.DomainProjectID = ""
+	registry, err := newAgentCapabilityRegistry(svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := registry.Execute(context.Background(), scope, agentruntime.ToolCallDecision{
+		ToolCallID: "read-standalone-canvas", ToolName: agentruntime.ToolCanvasRead, ActionVersion: 1,
+		Arguments: json.RawMessage(`{"canvasId":"runtime-canvas","selectedNodeIds":[],"includeViewport":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := agentruntime.DecodeCapabilityResult(agentruntime.ToolCanvasRead, result.Output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canvas := decoded.(agentruntime.CanvasReadResult)
+	if canvas.CanvasID != "runtime-canvas" || canvas.DomainProjectID != "" || canvas.Revision != 7 || len(canvas.Nodes) != 0 || len(canvas.Edges) != 0 {
+		t.Fatalf("standalone canvas read result = %#v", canvas)
 	}
 }
 
@@ -126,7 +169,7 @@ func TestAgentCapabilitySkillLoadRequiresFrozenPublishedVersion(t *testing.T) {
 	if err := database.MigrateSchema(db); err != nil {
 		t.Fatal(err)
 	}
-	configuration, err := svc.resolveAgentRuntimeConfiguration(context.Background(), agentRuntimeServiceScope().ActorUserID, AgentRuntimeConfigurationInput{
+	configuration, err := svc.resolveAgentRuntimeConfiguration(context.Background(), agentRuntimeServiceScope(), AgentRuntimeConfigurationInput{
 		SkillDirs: []string{"short-drama-director"}, ExecutionMode: agentruntime.ExecutionAutomatic,
 	})
 	if err != nil {

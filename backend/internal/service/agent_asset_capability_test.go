@@ -162,7 +162,8 @@ func TestAgentAssetPublicationFactUsesTeamTenantOwnershipInsteadOfCreatorIdentit
 	}
 	receipt := decoded.(agentruntime.AssetsPublishResult)
 	if err := db.Model(&model.Resource{}).Where("id = ?", receipt.ResourceID).
-		Updates(map[string]interface{}{"user_id": "", "team_id": "runtime-team"}).Error; err != nil {
+		Select("user_id", "team_id").
+		Updates(model.Resource{UserID: "", TeamID: "runtime-team"}).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -197,9 +198,11 @@ func TestAgentAssetCapabilityRejectsConflictingRepublishWithoutPartialMutation(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.Execute(context.Background(), agentRuntimeServiceScope(), firstCall); err != nil {
+	firstResult, err := registry.Execute(context.Background(), agentRuntimeServiceScope(), firstCall)
+	if err != nil {
 		t.Fatal(err)
 	}
+	resolveSuccessfulAgentCapabilityForTest(t, svc, firstCall, firstResult)
 
 	conflictingCall := agentAssetPublishCapabilityCallWithName(
 		"asset-publish-conflict-2", "publish-resource-conflict", "冲突名称", "publish-mutation-conflict-2",
@@ -251,6 +254,7 @@ func TestAgentAssetCapabilityRepublishesSameResourceAsOneAsset(t *testing.T) {
 		if executeErr != nil {
 			t.Fatal(executeErr)
 		}
+		resolveSuccessfulAgentCapabilityForTest(t, svc, call, result)
 		decoded, decodeErr := agentruntime.DecodeCapabilityResult(agentruntime.ToolAssetsPublish, result.Output)
 		if decodeErr != nil {
 			t.Fatal(decodeErr)
@@ -284,9 +288,11 @@ func TestAgentAssetCapabilityRejectsMutationReuseForDifferentResource(t *testing
 	}
 	firstCall := agentAssetPublishCapabilityCall("asset-publish-mutation-a", "publish-resource-mutation-a", "reused-mutation")
 	seedApprovedAgentCapabilityProposal(t, svc, db, firstCall)
-	if _, err := registry.Execute(context.Background(), agentRuntimeServiceScope(), firstCall); err != nil {
+	firstResult, err := registry.Execute(context.Background(), agentRuntimeServiceScope(), firstCall)
+	if err != nil {
 		t.Fatal(err)
 	}
+	resolveSuccessfulAgentCapabilityForTest(t, svc, firstCall, firstResult)
 	secondCall := agentAssetPublishCapabilityCall("asset-publish-mutation-b", "publish-resource-mutation-b", "reused-mutation")
 	seedApprovedAgentCapabilityProposal(t, svc, db, secondCall)
 	if _, err := registry.Execute(context.Background(), agentRuntimeServiceScope(), secondCall); !agentCapabilityErrorCode(err, "asset_publication_conflict") {

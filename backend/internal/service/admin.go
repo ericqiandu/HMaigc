@@ -64,9 +64,10 @@ type AdminUserReference struct {
 }
 
 type AdminChannelReference struct {
-	ID     string   `json:"id"`
-	Name   string   `json:"name"`
-	Models []string `json:"models"`
+	ID            string                     `json:"id"`
+	Name          string                     `json:"name"`
+	InterfaceType model.ChannelInterfaceType `json:"interfaceType"`
+	Models        []string                   `json:"models"`
 }
 
 type AdminReferenceData struct {
@@ -180,6 +181,7 @@ type PublicProviderCapabilities struct {
 	MaxAudios                                int                       `json:"maxAudios"`
 	MaxVideoDurationSeconds                  int                       `json:"maxVideoDurationSeconds"`
 	MaxAudioDurationSeconds                  int                       `json:"maxAudioDurationSeconds"`
+	MaxInputImageTokens                      int                       `json:"maxInputImageTokens"`
 	Tools                                    []string                  `json:"tools"`
 	SupportsTokenUsageBilling                bool                      `json:"supportsTokenUsageBilling"`
 }
@@ -259,7 +261,7 @@ func (s *Service) AdminReferences(actor *model.User) (*AdminReferenceData, error
 		for _, item := range items {
 			models = append(models, item.ModelKey)
 		}
-		result.Channels = append(result.Channels, AdminChannelReference{ID: channel.ID, Name: channel.Name, Models: uniqueNonEmpty(models)})
+		result.Channels = append(result.Channels, AdminChannelReference{ID: channel.ID, Name: channel.Name, InterfaceType: channel.InterfaceType, Models: uniqueNonEmpty(models)})
 	}
 	return result, nil
 }
@@ -478,8 +480,10 @@ func (s *Service) publiclyCallableChannelModels(items []model.ChannelModel) ([]m
 	}
 	result := make([]model.ChannelModel, 0, len(items))
 	for _, item := range items {
-		_, _, managed := kuaiziProviderFamilyForModel(item.ModelKey)
-		if managed && (item.ProviderCredentialID == "" || !healthy[item.ProviderCredentialID]) {
+		if isKuaiziChatChannelID(item.ChannelID) && item.ProviderCredentialID == "" {
+			continue
+		}
+		if item.ProviderCredentialID != "" && !healthy[item.ProviderCredentialID] {
 			continue
 		}
 		result = append(result, item)
@@ -782,7 +786,7 @@ func publicChannel(channel model.ModelChannel, admin bool, channelModels []model
 				Capability: item.Capability, WatermarkCapability: watermarkCapability,
 				BillingMode: item.BillingMode, PriceStrategy: item.PriceStrategy,
 				UnitPriceMicrocredits: item.UnitPriceMicrocredits, PriceTiers: tiers,
-				ProviderCapabilities: publicProviderModelCapabilities(channel.InterfaceType, item.ModelKey),
+				ProviderCapabilities: publicProviderModelCapabilities(channel.InterfaceType, item.ModelKey, item.Capability),
 			})
 		}
 	}
@@ -854,7 +858,7 @@ func channelModelPricingReady(item model.ChannelModel) bool {
 	return true
 }
 
-func publicProviderModelCapabilities(interfaceType model.ChannelInterfaceType, modelKey string) *PublicProviderCapabilities {
+func publicProviderModelCapabilities(interfaceType model.ChannelInterfaceType, modelKey string, declaredCapability string) *PublicProviderCapabilities {
 	switch interfaceType {
 	case model.ChannelInterfaceAPIMartImage:
 		return publicAPIMartImageCapabilities(modelKey)
@@ -865,8 +869,23 @@ func publicProviderModelCapabilities(interfaceType model.ChannelInterfaceType, m
 	case model.ChannelInterfaceMiniMaxSpeech:
 		return publicMiniMaxSpeechCapabilities(modelKey)
 	}
+	capability := normalizeCapability(declaredCapability)
+	chatCompatible := interfaceType == model.ChannelInterfaceChatCompletion || interfaceType == model.ChannelInterfaceOpenAIResponse
+	if chatCompatible && capability != "text" && capability != "vision" {
+		return nil
+	}
 	family, capabilities, ok := kuaiziProviderFamilyForModel(modelKey)
 	if !ok {
+		if !chatCompatible {
+			return nil
+		}
+		return &PublicProviderCapabilities{
+			ModelKey: modelKey, DisplayName: modelKey, UpstreamMode: modelKey, Capability: capability,
+			Resolutions: []string{}, ResolutionPixels: map[string]int64{}, InputVariants: []string{}, ReferenceVideoResolutions: []string{}, GeneratedAudioResolutions: []string{}, Ratios: []string{}, Qualities: []string{}, OutputCounts: []int{}, Durations: []int{}, GenerationModes: []string{}, AdaptiveRatioModes: []string{}, RequiredAdaptiveRatioModes: []string{}, Tools: []string{},
+			SupportsTokenUsageBilling: capability == "text",
+		}
+	}
+	if chatCompatible && capabilities.Capability != capability {
 		return nil
 	}
 	inputVariants := []string{}
@@ -900,8 +919,9 @@ func publicProviderModelCapabilities(interfaceType model.ChannelInterfaceType, m
 		RequiredAdaptiveRatioModes: append([]string{}, capabilities.RequiredAdaptiveRatioModes...),
 		MaxImages:                  capabilities.MaxImages, MaxImagesWithVideo: capabilities.MaxImagesWithVideo, MaxVideos: capabilities.MaxVideos, MaxAudios: capabilities.MaxAudios,
 		MaxVideoDurationSeconds: capabilities.MaxVideoDurationSeconds, MaxAudioDurationSeconds: capabilities.MaxAudioDurationSeconds,
+		MaxInputImageTokens:       capabilities.MaxInputImageTokens,
 		Tools:                     append([]string{}, capabilities.Tools...),
-		SupportsTokenUsageBilling: kuaiziModelSupportsTokenUsageBilling(modelKey),
+		SupportsTokenUsageBilling: chatCompatible && (capability == "text" || capability == "vision" && capabilities.MaxInputImageTokens > 0),
 	}
 }
 

@@ -8,6 +8,14 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+func TestGenericChatChannelCapabilityInferenceRemainsText(t *testing.T) {
+	for _, interfaceType := range []model.ChannelInterfaceType{model.ChannelInterfaceChatCompletion, model.ChannelInterfaceOpenAIResponse} {
+		if got := capabilityForChannel(model.ModelChannel{InterfaceType: interfaceType}); got != "text" {
+			t.Fatalf("%s inferred capability = %q, want text", interfaceType, got)
+		}
+	}
+}
+
 func TestNormalizeChannelModelPriceTierCollectionsEmitsEmptyArray(t *testing.T) {
 	input := []model.ChannelModel{{ID: "model-1"}}
 

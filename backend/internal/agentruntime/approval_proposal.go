@@ -33,6 +33,7 @@ const (
 	ApprovalEffectCanvasMutation  ApprovalEffectKind = "canvas_mutation"
 	ApprovalEffectAssetPublish    ApprovalEffectKind = "asset_publish"
 	ApprovalEffectMediaGeneration ApprovalEffectKind = "media_generation"
+	ApprovalEffectVisionAnalysis  ApprovalEffectKind = "vision_analysis"
 )
 
 type ApprovalScope struct {
@@ -215,7 +216,7 @@ func ValidateApprovalProposalDecision(proposal ApprovalProposal, proposalHash st
 	if !now.UTC().Before(proposal.ExpiresAt.UTC()) {
 		return ErrApprovalProposalExpired
 	}
-	if proposal.ToolName == ToolMediaGenerate && proposal.Quote == nil {
+	if (proposal.ToolName == ToolMediaGenerate || proposal.ToolName == ToolVisionAnalyze) && proposal.Quote == nil {
 		return errors.New("approval proposal cost quote is required")
 	}
 	return nil
@@ -266,9 +267,19 @@ func (proposal ApprovalProposal) validate() error {
 		if proposal.Quote.ModelRecordID != arguments.ModelRecordID || proposal.Quote.ModelKey != arguments.ModelKey {
 			return errors.New("approval cost quote does not match media model")
 		}
+	case VisionAnalyzeArguments:
+		if proposal.Quote == nil {
+			return errors.New("approval proposal cost quote is required")
+		}
+		if err := proposal.Quote.validate(); err != nil {
+			return err
+		}
+		if proposal.Quote.ModelRecordID != arguments.ModelRecordID || proposal.Quote.ModelKey != arguments.ModelKey {
+			return errors.New("approval cost quote does not match vision model")
+		}
 	default:
 		if proposal.Quote != nil {
-			return errors.New("approval cost quote is only valid for media generation")
+			return errors.New("approval cost quote is only valid for cost-bearing tools")
 		}
 	}
 	return nil
@@ -318,6 +329,11 @@ func approvalEffectFor(toolName ToolName, decoded CapabilityArguments) (Approval
 		return ApprovalEffect{
 			Kind: ApprovalEffectMediaGeneration, Summary: "生成 " + string(arguments.MediaKind) + " 媒体",
 			TargetIDs: []string{arguments.TargetCanvasNodeID},
+		}, nil
+	case VisionAnalyzeArguments:
+		return ApprovalEffect{
+			Kind: ApprovalEffectVisionAnalysis, Summary: fmt.Sprintf("理解 %d 张图片", len(arguments.SourceResourceIDs)),
+			TargetIDs: append([]string(nil), arguments.SourceResourceIDs...),
 		}, nil
 	default:
 		return ApprovalEffect{}, errors.New("approval proposal arguments are not protected")

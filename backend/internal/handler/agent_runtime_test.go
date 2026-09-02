@@ -13,6 +13,8 @@ import (
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/service"
+
+	"gorm.io/gorm"
 )
 
 func TestAgentRuntimeHTTPCreatesScopedThreadAndRejectsMalformedRequests(t *testing.T) {
@@ -23,6 +25,7 @@ func TestAgentRuntimeHTTPCreatesScopedThreadAndRejectsMalformedRequests(t *testi
 	svc := service.New(repository.New(fixture.db), t.TempDir())
 	RegisterAgentRuntimeRoutes(fixture.router.Group("/api"), svc)
 	createAgentRuntimeHandlerCanvas(t, fixture, "handler-agent-canvas")
+	configureAgentRuntimeHandlerDefaultVision(t, svc, fixture.db)
 
 	if response := fixture.request(http.MethodPost, "/api/agent/threads", `{"canvasId":"handler-agent-canvas"}`, "", ""); response.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous status = %d, body = %s", response.Code, response.Body.String())
@@ -55,6 +58,100 @@ func TestAgentRuntimeHTTPCreatesScopedThreadAndRejectsMalformedRequests(t *testi
 	failedRun := fixture.request(http.MethodPost, "/api/agent/threads/"+envelope.Data.ID+"/runs", `{"clientRequestId":"request-1","userMessage":"生成一张图片","maxSteps":6,"configuration":{"generationModels":{},"skillDirs":[],"attachments":[],"executionMode":"guided"}}`, fixture.userCookie, "")
 	if failedRun.Code != http.StatusServiceUnavailable || !strings.Contains(failedRun.Body.String(), "Agent 模型") {
 		t.Fatalf("missing model status = %d, body = %s", failedRun.Code, failedRun.Body.String())
+	}
+}
+
+func TestAgentLocalRuntimeHTTPIsStrictScopedAndCASProtected(t *testing.T) {
+	fixture := openProviderAccountHandlerFixture(t)
+	if err := database.EnsureAgentRuntimeIntegritySchema(fixture.db); err != nil {
+		t.Fatal(err)
+	}
+	svc := service.New(repository.New(fixture.db), t.TempDir())
+	RegisterAgentRuntimeRoutes(fixture.router.Group("/api"), svc)
+	createAgentRuntimeHandlerCanvas(t, fixture, "handler-agent-local-canvas")
+	configureAgentRuntimeHandlerDefaultVision(t, svc, fixture.db)
+
+	startPath := "/api/agent/local/runs"
+	startBody := `{"canvasId":"handler-agent-local-canvas","externalThreadId":"codex-thread-handler","clientRequestId":"local-turn-1","userMessage":"读取当前画布","maxSteps":8,"configuration":{"generationModels":{},"skillDirs":[],"attachments":[],"executionMode":"automatic"}}`
+	if response := fixture.request(http.MethodPost, startPath, startBody, "", ""); response.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous local start status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if response := fixture.request(http.MethodPost, startPath, strings.TrimSuffix(startBody, "}")+`,"unexpected":true}`, fixture.userCookie, ""); response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown local start field status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if response := fixture.request(http.MethodPost, startPath, startBody+` {}`, fixture.userCookie, ""); response.Code != http.StatusBadRequest {
+		t.Fatalf("trailing local start status = %d, body = %s", response.Code, response.Body.String())
+	}
+	oversizedBody := strings.Replace(startBody, "读取当前画布", strings.Repeat("x", agentRuntimeRequestLimit), 1)
+	if response := fixture.request(http.MethodPost, startPath, oversizedBody, fixture.userCookie, ""); response.Code != http.StatusBadRequest {
+		t.Fatalf("oversized local start status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	startedResponse := fixture.request(http.MethodPost, startPath, startBody, fixture.userCookie, "")
+	if startedResponse.Code != http.StatusOK {
+		t.Fatalf("local start status = %d, body = %s", startedResponse.Code, startedResponse.Body.String())
+	}
+	var startedEnvelope struct {
+		Data service.AgentRuntimeView `json:"data"`
+	}
+	if err := json.Unmarshal(startedResponse.Body.Bytes(), &startedEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	started := startedEnvelope.Data
+	if started.Run.ID == "" || started.Run.ReasoningHost != agentruntime.ReasoningHostLocalCodex ||
+		started.State.Status != agentruntime.RunRunning || started.State.StateVersion != 2 {
+		t.Fatalf("local start facts = %#v", started)
+	}
+
+	decisionPath := "/api/agent/local/runs/" + started.Run.ID + "/decisions"
+	decisionBody := `{"clientRequestId":"local-decision-1","expectedStateVersion":2,"decision":{"kind":"tool_call","toolCall":{"toolCallId":"handler-local-read","toolName":"canvas.read","actionVersion":1,"arguments":{"canvasId":"handler-agent-local-canvas","selectedNodeIds":[],"includeViewport":true},"expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}}`
+	if response := fixture.request(http.MethodPost, decisionPath, strings.TrimSuffix(decisionBody, "}")+`,"unexpected":true}`, fixture.userCookie, ""); response.Code != http.StatusBadRequest {
+		t.Fatalf("unknown local decision field status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if response := fixture.request(http.MethodPost, decisionPath, decisionBody, fixture.adminCookie, ""); response.Code != http.StatusNotFound {
+		t.Fatalf("cross-user local decision status = %d, body = %s", response.Code, response.Body.String())
+	}
+	decidedResponse := fixture.request(http.MethodPost, decisionPath, decisionBody, fixture.userCookie, "")
+	if decidedResponse.Code != http.StatusOK {
+		t.Fatalf("local decision status = %d, body = %s", decidedResponse.Code, decidedResponse.Body.String())
+	}
+
+	staleBody := `{"clientRequestId":"local-decision-stale","expectedStateVersion":2,"decision":{"kind":"final","final":{"message":"不应成功","expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}}`
+	stale := fixture.request(http.MethodPost, decisionPath, staleBody, fixture.userCookie, "")
+	if stale.Code != http.StatusConflict || !strings.Contains(stale.Body.String(), `"latestStateVersion":4`) {
+		t.Fatalf("stale local decision status = %d, body = %s", stale.Code, stale.Body.String())
+	}
+}
+
+func configureAgentRuntimeHandlerDefaultVision(t *testing.T, svc *service.Service, db *gorm.DB) {
+	t.Helper()
+	now := time.Now().UTC()
+	channel := model.ModelChannel{
+		ID: "handler-agent-vision-channel", Scope: model.ChannelScopeSystem, Enabled: true, Name: "Agent Vision",
+		BaseURL: "https://api.deepseek.com", APIKey: "handler-vision-secret", APIFormat: "openai",
+		InterfaceType: model.ChannelInterfaceChatCompletion, CreatedAt: now, UpdatedAt: now,
+	}
+	item := model.ChannelModel{
+		ID: "handler-agent-vision-model", ChannelID: channel.ID, ModelKey: "deepseek-v4-flash-vision-exp", DisplayName: "DeepSeek Vision",
+		AccessPolicy: model.ModelAccessAuthenticated, Capability: "vision", BillingMode: "token_usage", PriceStrategy: "token",
+		PriceConfigured: true, Enabled: true, PriceVersion: 3, CreatedAt: now, UpdatedAt: now,
+	}
+	pricing := model.ModelPricing{
+		ID: "handler-agent-vision-pricing", ChannelID: channel.ID, Model: item.ModelKey, Capability: "vision", Currency: "CNY",
+		InputPerMillionMicros: 1_000_000, CachedPerMillionMicros: 20_000, OutputPerMillionMicros: 2_000_000,
+		MaxOutputTokens: 8_192, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&channel).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&pricing).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateAgentDefaultVisionModelSetting(&model.User{ID: "handler-admin", Role: model.UserRoleAdmin}, service.UpdateAgentDefaultVisionModelRequest{ChannelModelID: item.ID}); err != nil {
+		t.Fatal(err)
 	}
 }
 

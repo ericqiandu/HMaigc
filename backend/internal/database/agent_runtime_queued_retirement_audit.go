@@ -238,6 +238,10 @@ func queuedRunRetirementContract(run model.AgentRun) queuedRunContractKind {
 		run.RuntimeVersion == agentruntime.RetiredRuntimeVersion && run.PolicyVersion == agentruntime.RetiredPolicyVersion {
 		return queuedRunContractCurrent
 	}
+	if run.ToolSchemaVersion == agentruntime.RetiredCloudToolSchemaVersion &&
+		run.RuntimeVersion == agentruntime.CurrentRuntimeVersion && run.PolicyVersion == agentruntime.CurrentPolicyVersion {
+		return queuedRunContractCurrent
+	}
 	if run.ToolSchemaVersion == agentruntime.CurrentToolSchemaVersion &&
 		run.RuntimeVersion <= agentruntime.CurrentRuntimeVersion && run.PolicyVersion <= agentruntime.CurrentPolicyVersion &&
 		(run.RuntimeVersion != agentruntime.CurrentRuntimeVersion || run.PolicyVersion != agentruntime.CurrentPolicyVersion) {

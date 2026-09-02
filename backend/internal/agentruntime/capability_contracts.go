@@ -20,6 +20,8 @@ const (
 	capabilityDisplayNameLimit  = 240
 	capabilityOperationLimit    = 100
 	capabilityResourceLimit     = 100
+	visionResourceLimit         = 12
+	visionPromptLimit           = 64 * 1024
 )
 
 var (
@@ -27,7 +29,7 @@ var (
 	errCapabilityResultInvalid    = errors.New("agent capability result is invalid")
 )
 
-// CapabilityArguments is intentionally closed. Only the six v6 capability
+// CapabilityArguments is intentionally closed. Only the seven current capability
 // request contracts in this package can cross the model/runtime boundary.
 type CapabilityArguments interface {
 	capabilityArguments()
@@ -95,6 +97,28 @@ type MediaGenerateArguments struct {
 
 func (MediaGenerateArguments) capabilityArguments() {}
 
+type VisionDetail string
+
+const (
+	VisionDetailLow      VisionDetail = "low"
+	VisionDetailOriginal VisionDetail = "original"
+)
+
+func (detail VisionDetail) Valid() bool {
+	return detail == VisionDetailLow || detail == VisionDetailOriginal
+}
+
+type VisionAnalyzeArguments struct {
+	ModelRecordID     string       `json:"modelRecordId"`
+	ModelKey          string       `json:"modelKey"`
+	SourceResourceIDs []string     `json:"sourceResourceIds"`
+	Prompt            string       `json:"prompt"`
+	Detail            VisionDetail `json:"detail"`
+	ClientRequestID   string       `json:"clientRequestId"`
+}
+
+func (VisionAnalyzeArguments) capabilityArguments() {}
+
 type SkillsLoadArguments struct {
 	SkillDir string `json:"skillDir"`
 	Version  int    `json:"version"`
@@ -118,6 +142,8 @@ func DecodeCapabilityArguments(name ToolName, payload json.RawMessage) (Capabili
 		return decodeAssetsPublishArguments(payload)
 	case ToolMediaGenerate:
 		return decodeMediaGenerateArguments(payload)
+	case ToolVisionAnalyze:
+		return decodeVisionAnalyzeArguments(payload)
 	case ToolSkillsLoad:
 		return decodeSkillsLoadArguments(payload)
 	default:
@@ -138,7 +164,9 @@ func decodeCanvasReadArguments(payload json.RawMessage) (CapabilityArguments, er
 		SelectedNodeIDs []string `json:"selectedNodeIds,omitempty"`
 		IncludeViewport *bool    `json:"includeViewport"`
 	}
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || wire.SelectedNodeIDs == nil || wire.IncludeViewport == nil {
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil || wire.SelectedNodeIDs == nil || wire.IncludeViewport == nil {
 		return nil, errCapabilityArgumentsInvalid
 	}
 	canvasID, err := normalizeIdentifier(wire.CanvasID, capabilityIdentifierLimit)
@@ -159,7 +187,9 @@ func decodeCanvasApplyOpsArguments(payload json.RawMessage) (CapabilityArguments
 		ClientMutationID string            `json:"clientMutationId"`
 		Operations       []json.RawMessage `json:"operations"`
 	}
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || wire.BaseRevision == nil || *wire.BaseRevision < 0 || len(wire.Operations) < 1 || len(wire.Operations) > capabilityOperationLimit {
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil || wire.BaseRevision == nil || *wire.BaseRevision < 0 || len(wire.Operations) < 1 || len(wire.Operations) > capabilityOperationLimit {
 		return nil, errCapabilityArgumentsInvalid
 	}
 	canvasID, err := normalizeIdentifier(wire.CanvasID, capabilityIdentifierLimit)
@@ -192,7 +222,9 @@ func decodeAssetsReadArguments(payload json.RawMessage) (CapabilityArguments, er
 		ResourceIDs     []string `json:"resourceIds"`
 		Limit           *int     `json:"limit"`
 	}
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || wire.ResourceIDs == nil || wire.Limit == nil || *wire.Limit < 1 || *wire.Limit > capabilityResourceLimit || len(wire.ResourceIDs) > *wire.Limit {
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil || wire.ResourceIDs == nil || wire.Limit == nil || *wire.Limit < 1 || *wire.Limit > capabilityResourceLimit || len(wire.ResourceIDs) > *wire.Limit {
 		return nil, errCapabilityArgumentsInvalid
 	}
 	projectID, err := normalizeIdentifier(wire.DomainProjectID, capabilityIdentifierLimit)
@@ -208,7 +240,9 @@ func decodeAssetsReadArguments(payload json.RawMessage) (CapabilityArguments, er
 
 func decodeAssetsPublishArguments(payload json.RawMessage) (CapabilityArguments, error) {
 	var arguments AssetsPublishArguments
-	if decodeStrictCapabilityJSON(payload, &arguments, capabilityPayloadLimit) != nil {
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&arguments)
+	}, capabilityPayloadLimit) != nil {
 		return nil, errCapabilityArgumentsInvalid
 	}
 	resourceID, err := normalizeResourceIdentifier(arguments.ResourceID)
@@ -240,7 +274,9 @@ func decodeMediaGenerateArguments(payload json.RawMessage) (CapabilityArguments,
 		TargetCanvasNodeID string          `json:"targetCanvasNodeId"`
 		ClientRequestID    string          `json:"clientRequestId"`
 	}
-	if decodeStrictCapabilityJSON(payload, &wire, capabilityPayloadLimit) != nil || !wire.MediaKind.Valid() || wire.SourceResourceIDs == nil {
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil || !wire.MediaKind.Valid() || wire.SourceResourceIDs == nil {
 		return nil, errCapabilityArgumentsInvalid
 	}
 	modelRecordID, err := normalizeIdentifier(wire.ModelRecordID, capabilityIdentifierLimit)
@@ -270,9 +306,44 @@ func decodeMediaGenerateArguments(payload json.RawMessage) (CapabilityArguments,
 	return MediaGenerateArguments{MediaKind: wire.MediaKind, ModelRecordID: modelRecordID, ModelKey: modelKey, Parameters: parameters, SourceResourceIDs: resourceIDs, TargetCanvasNodeID: targetNodeID, ClientRequestID: requestID}, nil
 }
 
+func decodeVisionAnalyzeArguments(payload json.RawMessage) (CapabilityArguments, error) {
+	var wire VisionAnalyzeArguments
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil || !wire.Detail.Valid() || wire.SourceResourceIDs == nil {
+		return nil, errCapabilityArgumentsInvalid
+	}
+	modelRecordID, err := normalizeIdentifier(wire.ModelRecordID, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityArgumentsInvalid
+	}
+	modelKey, err := normalizeText(wire.ModelKey, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityArgumentsInvalid
+	}
+	resourceIDs, err := normalizeResourceIdentifiers(wire.SourceResourceIDs, visionResourceLimit, false)
+	if err != nil {
+		return nil, errCapabilityArgumentsInvalid
+	}
+	prompt, err := normalizeText(wire.Prompt, visionPromptLimit)
+	if err != nil {
+		return nil, errCapabilityArgumentsInvalid
+	}
+	requestID, err := normalizeIdentifier(wire.ClientRequestID, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityArgumentsInvalid
+	}
+	return VisionAnalyzeArguments{
+		ModelRecordID: modelRecordID, ModelKey: modelKey, SourceResourceIDs: resourceIDs,
+		Prompt: prompt, Detail: wire.Detail, ClientRequestID: requestID,
+	}, nil
+}
+
 func decodeSkillsLoadArguments(payload json.RawMessage) (CapabilityArguments, error) {
 	var arguments SkillsLoadArguments
-	if decodeStrictCapabilityJSON(payload, &arguments, capabilityPayloadLimit) != nil || arguments.Version < 1 {
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&arguments)
+	}, capabilityPayloadLimit) != nil || arguments.Version < 1 {
 		return nil, errCapabilityArgumentsInvalid
 	}
 	skillDir, err := normalizeText(arguments.SkillDir, capabilityDisplayNameLimit)
@@ -282,14 +353,14 @@ func decodeSkillsLoadArguments(payload json.RawMessage) (CapabilityArguments, er
 	return SkillsLoadArguments{SkillDir: skillDir, Version: arguments.Version, Checksum: arguments.Checksum}, nil
 }
 
-func decodeStrictCapabilityJSON(payload json.RawMessage, target interface{}, limit int) error {
+func decodeStrictCapabilityJSON(payload json.RawMessage, decode func(*json.Decoder) error, limit int) error {
 	trimmed := bytes.TrimSpace(payload)
 	if len(trimmed) == 0 || len(trimmed) > limit || bytes.Equal(trimmed, []byte("null")) || trimmed[0] != '{' {
 		return errCapabilityArgumentsInvalid
 	}
 	decoder := json.NewDecoder(bytes.NewReader(trimmed))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
+	if err := decode(decoder); err != nil {
 		return errCapabilityArgumentsInvalid
 	}
 	var trailing json.RawMessage

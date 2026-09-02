@@ -211,6 +211,13 @@ func (r *Repository) AgentRunTreeTaskIDs(scope agentruntime.Scope) ([]string, er
 		Pluck("id", &directTaskIDs).Error; err != nil {
 		return nil, err
 	}
+	var visionTaskIDs []string
+	if err := r.db.Model(&model.Task{}).
+		Where("operation = ? AND user_id = ? AND project_id = ? AND type = ? AND audience = ?",
+			"agent_vision:"+scope.RunID, scope.ActorUserID, scope.CanvasID, "agent_vision_analysis", model.TaskAudienceInternal).
+		Pluck("id", &visionTaskIDs).Error; err != nil {
+		return nil, err
+	}
 	assemblyOperation, err := agentruntime.MediaAssemblyOperationForRun(scope.RunID)
 	if err != nil {
 		return nil, err
@@ -233,7 +240,8 @@ func (r *Repository) AgentRunTreeTaskIDs(scope agentruntime.Scope) ([]string, er
 		Pluck("task_id", &billedTaskIDs).Error; err != nil {
 		return nil, err
 	}
-	allTaskIDs := append(directTaskIDs, assemblyTaskIDs...)
+	allTaskIDs := append(directTaskIDs, visionTaskIDs...)
+	allTaskIDs = append(allTaskIDs, assemblyTaskIDs...)
 	allTaskIDs = append(allTaskIDs, specialistTaskIDs...)
 	allTaskIDs = append(allTaskIDs, billedTaskIDs...)
 	for _, taskID := range allTaskIDs {

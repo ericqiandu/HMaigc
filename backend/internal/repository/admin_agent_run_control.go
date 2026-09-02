@@ -59,6 +59,7 @@ type adminAgentRunControlTarget struct {
 	Status            model.TaskStatus `gorm:"column:status"`
 	BillingOrderID    string           `gorm:"column:billing_order_id"`
 	ProviderRequestID string           `gorm:"column:provider_request_id"`
+	PollStage         string           `gorm:"column:poll_stage"`
 }
 
 type adminAgentRunScopeFacts struct {
@@ -194,6 +195,17 @@ func loadAdminAgentRunControlTargets(db *gorm.DB, runID string) ([]adminAgentRun
 	for _, target := range modelTargets {
 		targetByID[target.TaskID] = target
 	}
+	var visionTargets []adminAgentRunControlTarget
+	if err := db.Model(&model.Task{}).
+		Select("id AS task_id, 'vision' AS kind, user_id, status, billing_order_id, provider_request_id, poll_stage").
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("operation = ? AND type = ? AND audience = ? AND status IN ?", "agent_vision:"+runID, "agent_vision_analysis", model.TaskAudienceInternal, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).
+		Find(&visionTargets).Error; err != nil {
+		return nil, err
+	}
+	for _, target := range visionTargets {
+		targetByID[target.TaskID] = target
+	}
 	var mediaTargets []adminAgentRunControlTarget
 	if err := db.Table("tasks AS tasks").
 		Select("tasks.id AS task_id, 'media' AS kind, tasks.user_id AS user_id, tasks.status AS status, tasks.billing_order_id AS billing_order_id, tasks.provider_request_id AS provider_request_id").
@@ -290,7 +302,7 @@ func disposeAdminAgentRunControlTargets(
 	reconciliationPending := false
 	for _, target := range targets {
 		providerSubmitted := strings.TrimSpace(target.ProviderRequestID) != ""
-		providerPossiblySubmitted := providerSubmitted || (allowRunningReconciliation && target.Status == model.TaskStatusRunning)
+		providerPossiblySubmitted := providerSubmitted || strings.TrimSpace(target.PollStage) != "" || (allowRunningReconciliation && target.Status == model.TaskStatusRunning)
 		billingStatus := model.BillingStatus("")
 		if target.BillingOrderID != "" {
 			var order model.BillingOrder

@@ -189,7 +189,7 @@ func ValidateSkillSelectionsForSpecialist(skills []SkillSelection, specialist Sp
 }
 
 // validSkillCapabilityToolName keeps immutable historical manifests readable
-// while allowing newly published manifests to authorize only atomic v6
+// while allowing newly published manifests to authorize only current atomic
 // capabilities. Active runtime policy still decides which schema can execute.
 func validSkillCapabilityToolName(tool AgentToolName) bool {
 	switch tool {

@@ -26,6 +26,15 @@ func TestEnrichAPICallLogCountsAsyncImageOutputs(t *testing.T) {
 	}
 }
 
+func TestAnalyticsClassifiesVisionTasksBeforeGenericAgentTasks(t *testing.T) {
+	if got := capabilityFromTaskType("agent_vision_analysis"); got != "vision" {
+		t.Fatalf("vision task capability = %q, want vision", got)
+	}
+	if got := capabilityFromTaskType("agent_storyboard"); got != "text" {
+		t.Fatalf("generic agent task capability = %q, want text", got)
+	}
+}
+
 func TestEstimateCallCostChargesAsyncImageUsageAtSuccessfulOutputOnly(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

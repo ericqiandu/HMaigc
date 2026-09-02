@@ -110,6 +110,75 @@ func (r *Repository) AgentToolCallsForScope(scope agentruntime.Scope) ([]model.A
 	return calls, err
 }
 
+func (r *Repository) CompletedCapabilityCallForThread(
+	scope agentruntime.Scope,
+	toolName agentruntime.ToolName,
+	capabilityIdempotencyKey string,
+) (*model.AgentToolCall, error) {
+	capabilityIdempotencyKey = strings.TrimSpace(capabilityIdempotencyKey)
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	if !toolName.Known() || capabilityIdempotencyKey == "" || len(capabilityIdempotencyKey) > 80 {
+		return nil, errors.New("agent capability replay identity is invalid")
+	}
+	var call model.AgentToolCall
+	err := r.db.Table("agent_tool_calls").
+		Select("agent_tool_calls.*").
+		Joins("JOIN agent_runs ON agent_runs.id = agent_tool_calls.run_id").
+		Joins("JOIN agent_threads ON agent_threads.id = agent_runs.thread_id").
+		Where(`agent_tool_calls.tool_name = ? AND agent_tool_calls.capability_idempotency_key = ?
+			AND agent_tool_calls.status = ? AND agent_runs.thread_id = ? AND agent_runs.actor_user_id = ?
+			AND agent_threads.tenant_kind = ? AND agent_threads.tenant_id = ?
+			AND agent_threads.created_by_user_id = ? AND agent_threads.domain_project_id = ?
+			AND agent_threads.canvas_id = ?`,
+			toolName, capabilityIdempotencyKey, agentruntime.ToolCallSucceeded,
+			scope.ThreadID, scope.ActorUserID, scope.TenantKind, scope.TenantID,
+			scope.ActorUserID, scope.DomainProjectID, scope.CanvasID).
+		Order("agent_tool_calls.updated_at DESC, agent_tool_calls.id DESC").
+		First(&call).Error
+	if err != nil {
+		return nil, err
+	}
+	return &call, nil
+}
+
+func (r *Repository) InFlightCapabilityCallForThread(
+	scope agentruntime.Scope,
+	toolName agentruntime.ToolName,
+	capabilityIdempotencyKey string,
+) (*model.AgentToolCall, error) {
+	capabilityIdempotencyKey = strings.TrimSpace(capabilityIdempotencyKey)
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	if !toolName.Known() || capabilityIdempotencyKey == "" || len(capabilityIdempotencyKey) > 80 {
+		return nil, errors.New("agent capability in-flight identity is invalid")
+	}
+	var call model.AgentToolCall
+	err := r.db.Table("agent_tool_calls").
+		Select("agent_tool_calls.*").
+		Joins("JOIN agent_runs ON agent_runs.id = agent_tool_calls.run_id").
+		Joins("JOIN agent_threads ON agent_threads.id = agent_runs.thread_id").
+		Where(`agent_tool_calls.tool_name = ? AND agent_tool_calls.capability_idempotency_key = ?
+			AND agent_tool_calls.status IN ? AND agent_tool_calls.approval_decision = ?
+			AND agent_runs.thread_id = ? AND agent_runs.actor_user_id = ?
+			AND agent_threads.tenant_kind = ? AND agent_threads.tenant_id = ?
+			AND agent_threads.created_by_user_id = ? AND agent_threads.domain_project_id = ?
+			AND agent_threads.canvas_id = ?`,
+			toolName, capabilityIdempotencyKey,
+			[]agentruntime.ToolCallStatus{agentruntime.ToolCallPending, agentruntime.ToolCallRunning},
+			agentruntime.ToolApprovalApproved,
+			scope.ThreadID, scope.ActorUserID, scope.TenantKind, scope.TenantID,
+			scope.ActorUserID, scope.DomainProjectID, scope.CanvasID).
+		Order("agent_tool_calls.updated_at DESC, agent_tool_calls.id DESC").
+		First(&call).Error
+	if err != nil {
+		return nil, err
+	}
+	return &call, nil
+}
+
 func (r *Repository) PublishAgentCapabilityAsset(input PublishAgentCapabilityAssetInput) (*PublishedAgentCapabilityAsset, error) {
 	input.ResourceID = strings.TrimSpace(input.ResourceID)
 	input.DisplayName = strings.TrimSpace(input.DisplayName)

@@ -18,19 +18,21 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
 )
 
 type canvasGenerationInput struct {
-	Mode            string                 `json:"mode"`
-	Prompt          string                 `json:"prompt"`
-	Config          providerConfig         `json:"config"`
-	ReferenceImages []providerMedia        `json:"referenceImages"`
-	ReferenceVideos []providerMedia        `json:"referenceVideos"`
-	ReferenceAudios []providerMedia        `json:"referenceAudios"`
-	Mask            *providerMedia         `json:"mask"`
-	Metadata        map[string]interface{} `json:"metadata"`
-	Watermark       taskWatermarkRuntime   `json:"-"`
+	Mode            string                    `json:"mode"`
+	Prompt          string                    `json:"prompt"`
+	ImageDetail     agentruntime.VisionDetail `json:"imageDetail,omitempty"`
+	Config          providerConfig            `json:"config"`
+	ReferenceImages []providerMedia           `json:"referenceImages"`
+	ReferenceVideos []providerMedia           `json:"referenceVideos"`
+	ReferenceAudios []providerMedia           `json:"referenceAudios"`
+	Mask            *providerMedia            `json:"mask"`
+	Metadata        map[string]interface{}    `json:"metadata"`
+	Watermark       taskWatermarkRuntime      `json:"-"`
 }
 
 type taskWatermarkRuntime struct {
@@ -72,6 +74,7 @@ type providerConfig struct {
 	SystemPrompt                   string `json:"systemPrompt"`
 	MaxOutputTokens                int64  `json:"maxOutputTokens,omitempty"`
 	JSONOutput                     bool   `json:"jsonOutput,omitempty"`
+	ManagedProviderRuntime         bool   `json:"-"`
 }
 
 const providerHTTPTimeout = 5 * time.Minute
@@ -100,14 +103,14 @@ type providerError struct {
 	Message string `json:"message"`
 }
 
-type kuaiziChatCompletionResult struct {
+type providerTextStreamResult struct {
 	Text              string
 	ProviderRequestID string
 	FinishReason      string
 	Usage             TokenUsageFact
 }
 
-var errKuaiziChatCompletionTextMissing = errors.New("文本接口没有返回内容")
+var errProviderTextMissing = errors.New("文本接口没有返回内容")
 
 type providerHTTPError struct {
 	StatusCode int
@@ -434,9 +437,17 @@ func (s *Service) resolveTextTaskProviderConfig(task model.Task, config provider
 	if err != nil {
 		return providerConfig{}, err
 	}
+	hasProviderRuntime := task.ProviderAccountID != "" && task.ProviderEndpointVersionID != "" && task.ProviderCredentialVersionID != ""
+	hasPartialProviderRuntime := task.ProviderAccountID != "" || task.ProviderEndpointVersionID != "" || task.ProviderCredentialVersionID != ""
+	if !hasProviderRuntime {
+		if hasPartialProviderRuntime {
+			return providerConfig{}, errors.New("Agent 任务的托管供应商版本不完整")
+		}
+		return resolved, nil
+	}
 	_, spec, managed := kuaiziProviderFamilyForModel(resolved.Model)
 	if !managed || spec.Capability != "text" {
-		return resolved, nil
+		return providerConfig{}, errors.New("筷子 Agent 渠道与模型系列不匹配")
 	}
 	if strings.TrimSpace(task.Model) != resolved.Model {
 		return providerConfig{}, errors.New("筷子 Agent 任务模型与冻结任务事实不一致")
@@ -455,6 +466,7 @@ func (s *Service) resolveTextTaskProviderConfig(task model.Task, config provider
 	resolved.BaseURL = kuaiziChatCompletionsBaseURL(runtime.BaseURL)
 	resolved.APIKey = key
 	resolved.InterfaceType = string(model.ChannelInterfaceChatCompletion)
+	resolved.ManagedProviderRuntime = true
 	return resolved, nil
 }
 
@@ -560,7 +572,7 @@ func runImageTask(ctx context.Context, input canvasGenerationInput) (map[string]
 }
 
 func runTextTask(ctx context.Context, input canvasGenerationInput) (map[string]interface{}, error) {
-	if spec, ok := kuaiziProviderModelSpec(input.Config.Model); ok && spec.Capability == "text" {
+	if input.Config.ManagedProviderRuntime {
 		return runKuaiziChatCompletionsTask(ctx, input)
 	}
 	switch input.Config.InterfaceType {
@@ -648,22 +660,22 @@ func runKuaiziChatCompletionsTask(ctx context.Context, input canvasGenerationInp
 	return map[string]interface{}{"mode": "text", "text": result.Text}, nil
 }
 
-func runKuaiziChatCompletion(ctx context.Context, input canvasGenerationInput) (kuaiziChatCompletionResult, error) {
+func runKuaiziChatCompletion(ctx context.Context, input canvasGenerationInput) (providerTextStreamResult, error) {
 	var payload map[string]interface{}
 	data, _, err := kuaiziChatCompletionsRequestBody(input)
 	if err != nil {
-		return kuaiziChatCompletionResult{}, err
+		return providerTextStreamResult{}, err
 	}
 	req, err := http.NewRequestWithContext(withKuaiziRequest(ctx), http.MethodPost, apiURL(input.Config.BaseURL, "/chat/completions"), bytes.NewReader(data))
 	if err != nil {
-		return kuaiziChatCompletionResult{}, err
+		return providerTextStreamResult{}, err
 	}
 	req.Header.Set("ApiKey", input.Config.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 	if err := doJSON(req, &payload); err != nil {
-		return kuaiziChatCompletionResult{}, err
+		return providerTextStreamResult{}, err
 	}
-	result := kuaiziChatCompletionResult{Text: extractChatCompletionText(payload), ProviderRequestID: strings.TrimSpace(stringField(payload, "id"))}
+	result := providerTextStreamResult{Text: extractChatCompletionText(payload), ProviderRequestID: strings.TrimSpace(stringField(payload, "id"))}
 	if usage, ok := payload["usage"].(map[string]interface{}); ok {
 		result.Usage = TokenUsageFact{
 			InputTokens: firstInt64(usage, "input_tokens", "prompt_tokens"), OutputTokens: firstInt64(usage, "output_tokens", "completion_tokens"), Available: true,
@@ -676,7 +688,7 @@ func runKuaiziChatCompletion(ctx context.Context, input canvasGenerationInput) (
 		}
 	}
 	if result.Text == "" {
-		return result, errKuaiziChatCompletionTextMissing
+		return result, errProviderTextMissing
 	}
 	return result, nil
 }
@@ -705,10 +717,10 @@ func kuaiziChatCompletionsRequestBody(input canvasGenerationInput) ([]byte, int6
 	return PrepareTokenBilledChatRequest(body, input.Config.MaxOutputTokens)
 }
 
-func textResponseInput(input canvasGenerationInput) (interface{}, error) {
+func textResponseInput(input canvasGenerationInput) (json.RawMessage, error) {
 	systemPrompt := strings.TrimSpace(input.Config.SystemPrompt)
 	if len(input.ReferenceImages) == 0 {
-		return withSystemPrompt(input.Config, input.Prompt), nil
+		return json.Marshal(withSystemPrompt(input.Config, input.Prompt))
 	}
 	messages := make([]map[string]interface{}, 0, 2)
 	if systemPrompt != "" {
@@ -719,7 +731,7 @@ func textResponseInput(input canvasGenerationInput) (interface{}, error) {
 		return nil, err
 	}
 	messages = append(messages, map[string]interface{}{"role": "user", "content": content})
-	return messages, nil
+	return json.Marshal(messages)
 }
 
 func textResponseContent(input canvasGenerationInput) ([]map[string]interface{}, error) {
@@ -729,7 +741,14 @@ func textResponseContent(input canvasGenerationInput) ([]map[string]interface{},
 		if err != nil {
 			return nil, err
 		}
-		content = append(content, map[string]interface{}{"type": "input_image", "image_url": url})
+		block := map[string]interface{}{"type": "input_image", "image_url": url}
+		if input.ImageDetail != "" {
+			if !input.ImageDetail.Valid() {
+				return nil, errors.New("图片理解 detail 无效")
+			}
+			block["detail"] = input.ImageDetail
+		}
+		content = append(content, block)
 	}
 	return content, nil
 }
@@ -744,7 +763,14 @@ func textChatContent(input canvasGenerationInput) (interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		content = append(content, map[string]interface{}{"type": "image_url", "image_url": map[string]interface{}{"url": url}})
+		imageURL := map[string]interface{}{"url": url}
+		if input.ImageDetail != "" {
+			if !input.ImageDetail.Valid() {
+				return nil, errors.New("图片理解 detail 无效")
+			}
+			imageURL["detail"] = input.ImageDetail
+		}
+		content = append(content, map[string]interface{}{"type": "image_url", "image_url": imageURL})
 	}
 	return content, nil
 }

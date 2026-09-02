@@ -97,6 +97,7 @@ func Models() []any {
 		&model.AgentProductionPlanVersion{},
 		&model.AgentProductionArtifact{},
 		&model.AgentRunEvent{},
+		&model.AgentExternalDecision{},
 		&model.AgentCheckpoint{},
 		&model.AgentToolCall{},
 		&model.CanvasShare{},
@@ -142,6 +143,9 @@ func MigrateSchema(db *gorm.DB) error {
 			return err
 		}
 		if err := migrateAgentRuntimeSkillChecksums(tx); err != nil {
+			return err
+		}
+		if err := backfillAgentMediaCapabilityIdempotencyKeys(tx); err != nil {
 			return err
 		}
 		if err := seedFirstPartySkills(tx); err != nil {

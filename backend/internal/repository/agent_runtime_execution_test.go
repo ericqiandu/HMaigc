@@ -180,6 +180,137 @@ func TestInitializeAgentRunFreezesModelAndCreatesCheckpointOnce(t *testing.T) {
 	}
 }
 
+func TestCreateInitializedExternalAgentRunAllowsEmptyCloudModelIdentity(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLiteFile(t)
+	scope := repositoryAgentScope()
+	now := time.Now().UTC()
+	input := CreateInitializedExternalAgentRunInput{
+		Create: CreateLocalAgentRunInput{
+			Scope: scope, ExternalThreadID: "codex-thread-1", ClientRequestID: "codex-turn-1", Now: now,
+		},
+		Initialize: InitializeAgentRunInput{
+			Scope: scope, MaxSteps: 8,
+			ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+			RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+			PolicyVersion:     agentruntime.CurrentPolicyVersion,
+			UserMessage:       "读取当前画布",
+			Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+			Now:               now,
+		},
+	}
+	initialized, err := repo.CreateInitializedExternalAgentRun(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !initialized.Created || initialized.Run.ReasoningHost != agentruntime.ReasoningHostLocalCodex ||
+		initialized.Run.ModelRecordID != "" || initialized.Run.ModelKey != "" || initialized.Run.StateVersion != 1 {
+		t.Fatalf("initialized external run = %#v", initialized)
+	}
+	input.Initialize.Scope.ThreadID = initialized.Run.ThreadID
+	input.Initialize.Scope.RunID = initialized.Run.ID
+	state, err := repo.LoadAgentCheckpoint(input.Initialize.Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != agentruntime.RunQueued || state.StateVersion != 1 || state.UserMessage != input.Initialize.UserMessage {
+		t.Fatalf("external initial checkpoint = %#v", state)
+	}
+	var taskCount int64
+	if err := db.Model(&model.Task{}).Where("type = ?", "agent_runtime_model").Count(&taskCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if taskCount != 0 {
+		t.Fatalf("external initialization created %d cloud model tasks", taskCount)
+	}
+
+	replayed, err := repo.CreateInitializedExternalAgentRun(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Created || replayed.Run.ID != initialized.Run.ID || replayed.Run.ThreadID != initialized.Run.ThreadID {
+		t.Fatalf("external initialization replay = %#v", replayed)
+	}
+}
+
+func TestCommitExternalAgentDecisionReplaysIdenticalRequest(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLiteFile(t)
+	seedScope := repositoryAgentScope()
+	now := time.Now().UTC()
+	initialized, err := repo.CreateInitializedExternalAgentRun(CreateInitializedExternalAgentRunInput{
+		Create: CreateLocalAgentRunInput{
+			Scope: seedScope, ExternalThreadID: "codex-thread-concurrent", ClientRequestID: "codex-run-concurrent", Now: now,
+		},
+		Initialize: InitializeAgentRunInput{
+			Scope: seedScope, MaxSteps: 8,
+			ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+			RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+			PolicyVersion:     agentruntime.CurrentPolicyVersion,
+			UserMessage:       "需要补充创作风格",
+			Configuration:     agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+			Now:               now,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := seedScope
+	scope.ThreadID = initialized.Run.ThreadID
+	scope.RunID = initialized.Run.ID
+	queued, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := agentruntime.BeginModelRequest(queued)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, queued, started, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	decision := agentruntime.ModelDecision{
+		Kind: agentruntime.DecisionClarificationRequest,
+		Clarification: &agentruntime.ClarificationDecision{
+			RequestID: "clarify-concurrent",
+			Questions: []agentruntime.ClarificationQuestion{{
+				ID: "style", Prompt: "请选择创作风格", Type: agentruntime.ClarificationFreeText,
+			}},
+			ExpectedDelivery: repositoryTestAnswerDelivery(),
+		},
+	}
+	transition, err := agentruntime.AdvanceExternalDecision(started.State, agentruntime.ExternalDecisionInput{
+		ExpectedStateVersion: started.State.StateVersion,
+		Decision:             decision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := CommitExternalAgentDecisionInput{
+		Scope: scope, ClientRequestID: "external-decision-concurrent", RequestHash: strings.Repeat("a", 64),
+		ExpectedStateVersion: started.State.StateVersion, Previous: started.State, Transition: transition, Now: now.Add(2 * time.Second),
+	}
+	firstReplayed, err := repo.CommitExternalAgentDecision(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstReplayed {
+		t.Fatal("first external decision unexpectedly reported a replay")
+	}
+	secondReplayed, err := repo.CommitExternalAgentDecision(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !secondReplayed {
+		t.Fatal("identical external decision did not replay its committed receipt")
+	}
+	var receiptCount int64
+	if err := db.Model(&model.AgentExternalDecision{}).Where("run_id = ?", scope.RunID).Count(&receiptCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if receiptCount != 1 {
+		t.Fatalf("external decision receipt count = %d, want 1", receiptCount)
+	}
+}
+
 func TestCreateInitializedAgentRunRollsBackIdentityWhenInitializationFails(t *testing.T) {
 	repo, db := openAgentRuntimeRepositorySQLiteFile(t)
 	scope := repositoryAgentScope()
@@ -735,9 +866,9 @@ func TestLegacyV3CommitProductionRetryApprovalClearsRefundedAttemptBindingsAtomi
 		t.Fatal(err)
 	}
 	if err := db.Model(&model.AgentProductionArtifact{}).Where("id = ?", artifact.ID).
-		Updates(map[string]any{
-			"status": model.AgentProductionArtifactFailed, "attempt": 1,
-			"task_id": task.ID, "billing_order_id": order.ID, "last_error_code": "production_generation_failed",
+		Updates(model.AgentProductionArtifact{
+			Status: model.AgentProductionArtifactFailed, Attempt: 1,
+			TaskID: task.ID, BillingOrderID: order.ID, LastErrorCode: "production_generation_failed",
 		}).Error; err != nil {
 		t.Fatal(err)
 	}

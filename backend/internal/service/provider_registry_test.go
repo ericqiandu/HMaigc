@@ -61,7 +61,7 @@ func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 		t.Fatalf("GPT Agent model = %#v", got)
 	}
 	deepseek, ok := registry.Descriptor("kuaizi", "deepseek")
-	if !ok || len(deepseek.Models) != 2 {
+	if !ok || len(deepseek.Models) != 3 {
 		t.Fatalf("kuaizi/deepseek descriptor = %#v, exists=%v", deepseek, ok)
 	}
 	if got := deepseek.Models[0]; got.ModelKey != "deepseek-v4-flash" || got.DisplayName != "DeepSeek V4 Flash" || got.UpstreamMode != "deepseek-v4-flash" || got.Capability != "text" || got.MarketingCopy != "低成本纯文本 Agent 模型，不支持图片输入" {
@@ -69,6 +69,9 @@ func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 	}
 	if got := deepseek.Models[1]; got.ModelKey != "deepseek-v4-pro" || got.DisplayName != "DeepSeek V4 Pro" || got.UpstreamMode != "deepseek-v4-pro" || got.Capability != "text" || got.MarketingCopy != "纯文本 Agent 模型，不支持图片输入" {
 		t.Fatalf("DeepSeek Pro Agent model = %#v", got)
+	}
+	if got := deepseek.Models[2]; got.ModelKey != "deepseek-v4-flash-vision-exp" || got.DisplayName != "DeepSeek V4 Flash Vision" || got.UpstreamMode != "deepseek-v4-flash-vision-exp" || got.Capability != "vision" || got.MaxInputImageTokens != 384 {
+		t.Fatalf("DeepSeek Vision model = %#v", got)
 	}
 	kling, ok := registry.Descriptor("kuaizi", "kling")
 	if !ok || len(kling.Models) != 1 {
@@ -88,13 +91,20 @@ func TestProviderRegistryContainsOnlyImplementedFamilies(t *testing.T) {
 	if got, ok := klingFacts["generatedAudioResolutions"].([]any); !ok || len(got) != 2 || got[0] != "std" || got[1] != "pro" {
 		t.Fatalf("Kling generated-audio resolutions = %#v, want [std pro]", klingFacts["generatedAudioResolutions"])
 	}
-	public := publicProviderModelCapabilities(modelpkg.ChannelInterfaceAIOpenVideoVolcengine, kuaiziKlingModel)
+	public := publicProviderModelCapabilities(modelpkg.ChannelInterfaceAIOpenVideoVolcengine, kuaiziKlingModel, "video")
 	if public == nil || public.ProviderFamily != "kling" || strings.Join(public.ReferenceVideoResolutions, ",") != "std,pro" || public.SupportsGeneratedAudioWithReferenceVideo {
 		t.Fatalf("Kling public capabilities = %#v", public)
 	}
-	seedancePublic := publicProviderModelCapabilities(modelpkg.ChannelInterfaceAIOpenVideoVolcengine, "doubao-seedance-2-0-260128")
+	seedancePublic := publicProviderModelCapabilities(modelpkg.ChannelInterfaceAIOpenVideoVolcengine, "doubao-seedance-2-0-260128", "video")
 	if seedancePublic == nil || !seedancePublic.SupportsGeneratedAudioWithReferenceVideo {
 		t.Fatalf("Seedance public reference-video audio capabilities = %#v", seedancePublic)
+	}
+}
+
+func TestDirectChatVisionCatalogAdvertisesTokenUsageBilling(t *testing.T) {
+	public := publicProviderModelCapabilities(modelpkg.ChannelInterfaceChatCompletion, "deepseek-v4-flash-vision-exp", "vision")
+	if public == nil || public.Capability != "vision" || !public.SupportsTokenUsageBilling {
+		t.Fatalf("direct vision capabilities = %#v", public)
 	}
 }
 

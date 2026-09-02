@@ -24,7 +24,7 @@ func TestVideoProvidersPublishTextToVideoCapability(t *testing.T) {
 	if !ok || len(kling.Models) != 1 || !kling.Models[0].SupportsTextToVideo {
 		t.Fatalf("Kling descriptor = %#v, exists=%v", kling, ok)
 	}
-	public := publicProviderModelCapabilities(model.ChannelInterfaceAIOpenVideoVolcengine, kuaiziKlingModel)
+	public := publicProviderModelCapabilities(model.ChannelInterfaceAIOpenVideoVolcengine, kuaiziKlingModel, "video")
 	if public == nil || !public.SupportsTextToVideo {
 		t.Fatalf("Kling public capabilities = %#v", public)
 	}

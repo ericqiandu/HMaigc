@@ -196,6 +196,37 @@ func TestApprovalProposalRequiresQuoteBoundToMediaModel(t *testing.T) {
 	}
 }
 
+func TestApprovalProposalRequiresQuoteBoundToVisionModel(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.September, 2, 10, 0, 0, 0, time.UTC)
+	call := agentruntime.ToolCallDecision{
+		ToolCallID: "vision-quote", ToolName: agentruntime.ToolVisionAnalyze, ActionVersion: 1,
+		Arguments: json.RawMessage(`{"modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","sourceResourceIds":["resource-1","resource-2"],"prompt":"描述视觉事实","detail":"low","clientRequestId":"vision-request-1"}`),
+	}
+	if _, err := agentruntime.NewApprovalProposalForTool(approvalProposalScope(), call, nil, "vision-capability-key", now.Add(time.Minute)); err == nil {
+		t.Fatal("paid vision proposal without quote was accepted")
+	}
+	quote := &agentruntime.ApprovalCostQuote{
+		ModelRecordID: "vision-record-1", ModelKey: "deepseek-v4-flash-vision-exp", PriceVersion: 4, AmountMicrocredits: 900,
+	}
+	proposal, err := agentruntime.NewApprovalProposalForTool(approvalProposalScope(), call, quote, "vision-capability-key", now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("valid vision proposal rejected: %v", err)
+	}
+	if proposal.Effect.Kind != agentruntime.ApprovalEffectVisionAnalysis || proposal.Effect.Summary != "理解 2 张图片" {
+		t.Fatalf("vision approval effect = %#v", proposal.Effect)
+	}
+	if len(proposal.Effect.TargetIDs) != 2 || proposal.Effect.TargetIDs[0] != "resource-1" || proposal.Effect.TargetIDs[1] != "resource-2" {
+		t.Fatalf("vision approval targets = %#v", proposal.Effect.TargetIDs)
+	}
+	mismatch := *quote
+	mismatch.ModelRecordID = "vision-record-2"
+	if _, err := agentruntime.NewApprovalProposalForTool(approvalProposalScope(), call, &mismatch, "vision-capability-key", now.Add(time.Minute)); err == nil {
+		t.Fatal("vision proposal with mismatched frozen model was accepted")
+	}
+}
+
 func approvalProposalScope() agentruntime.Scope {
 	return agentruntime.Scope{
 		TenantKind: agentruntime.TenantPersonal, TenantID: "user-1", ActorUserID: "user-1",

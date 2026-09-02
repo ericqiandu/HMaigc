@@ -43,49 +43,73 @@ type chatCompletionStreamChunk struct {
 	} `json:"error"`
 }
 
-func runKuaiziChatCompletionStream(ctx context.Context, input canvasGenerationInput, emit func(string) error) (kuaiziChatCompletionResult, error) {
-	data, _, err := kuaiziChatCompletionsRequestBody(input)
+func runKuaiziChatCompletionStream(ctx context.Context, input canvasGenerationInput, emit func(string) error) (providerTextStreamResult, error) {
+	return runChatCompletionStream(ctx, input, "ApiKey", input.Config.APIKey, true, emit)
+}
+
+func runOpenAIChatCompletionStream(ctx context.Context, input canvasGenerationInput, emit func(string) error) (providerTextStreamResult, error) {
+	return runChatCompletionStream(ctx, input, "Authorization", "Bearer "+input.Config.APIKey, false, emit)
+}
+
+func runChatCompletionStream(ctx context.Context, input canvasGenerationInput, headerName string, headerValue string, strictKuaizi bool, emit func(string) error) (providerTextStreamResult, error) {
+	data, err := chatCompletionStreamRequestBody(input)
 	if err != nil {
-		return kuaiziChatCompletionResult{}, err
+		return providerTextStreamResult{}, err
 	}
-	var body map[string]any
-	if err := json.Unmarshal(data, &body); err != nil {
-		return kuaiziChatCompletionResult{}, err
+	requestContext := ctx
+	if strictKuaizi {
+		requestContext = withKuaiziRequest(ctx)
 	}
-	body["stream"] = true
-	body["stream_options"] = map[string]any{"include_usage": true}
-	data, err = json.Marshal(body)
+	req, err := http.NewRequestWithContext(requestContext, http.MethodPost, apiURL(input.Config.BaseURL, "/chat/completions"), bytes.NewReader(data))
 	if err != nil {
-		return kuaiziChatCompletionResult{}, err
+		return providerTextStreamResult{}, err
 	}
-	req, err := http.NewRequestWithContext(withKuaiziRequest(ctx), http.MethodPost, apiURL(input.Config.BaseURL, "/chat/completions"), bytes.NewReader(data))
-	if err != nil {
-		return kuaiziChatCompletionResult{}, err
-	}
-	req.Header.Set("ApiKey", input.Config.APIKey)
+	req.Header.Set(headerName, headerValue)
 	req.Header.Set("Content-Type", "application/json")
 	if _, err := ValidateOutboundURL(req.URL.String()); err != nil {
-		return kuaiziChatCompletionResult{}, err
+		return providerTextStreamResult{}, err
 	}
-	response, err := KuaiziHTTPClient(strings.TrimSpace(os.Getenv("CANVAS_ENVIRONMENT")), providerHTTPTimeout).Do(req)
+	client := OutboundHTTPClient(providerHTTPTimeout)
+	if strictKuaizi {
+		client = KuaiziHTTPClient(strings.TrimSpace(os.Getenv("CANVAS_ENVIRONMENT")), providerHTTPTimeout)
+	}
+	response, err := client.Do(req)
 	if err != nil {
-		return kuaiziChatCompletionResult{}, err
+		return providerTextStreamResult{}, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		data, _ := io.ReadAll(io.LimitReader(response.Body, 64*1024))
-		return kuaiziChatCompletionResult{}, providerHTTPError{StatusCode: response.StatusCode, Status: response.Status, Body: string(data)}
+		return providerTextStreamResult{}, providerHTTPError{StatusCode: response.StatusCode, Status: response.Status, Body: string(data)}
 	}
 	if !strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
-		return kuaiziChatCompletionResult{}, fmt.Errorf("%w: content type %q", errAgentProviderStreamProtocolInvalid, response.Header.Get("Content-Type"))
+		return providerTextStreamResult{}, fmt.Errorf("%w: content type %q", errAgentProviderStreamProtocolInvalid, response.Header.Get("Content-Type"))
 	}
 	return parseChatCompletionSSE(ctx, response.Body, emit)
 }
 
-func parseChatCompletionSSE(ctx context.Context, reader io.Reader, emit func(string) error) (kuaiziChatCompletionResult, error) {
+func chatCompletionStreamRequestBody(input canvasGenerationInput) ([]byte, error) {
+	data, _, err := kuaiziChatCompletionsRequestBody(input)
+	if err != nil {
+		return nil, err
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(data, &body); err != nil {
+		return nil, err
+	}
+	body["stream"] = json.RawMessage(`true`)
+	body["stream_options"] = json.RawMessage(`{"include_usage":true}`)
+	data, err = json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func parseChatCompletionSSE(ctx context.Context, reader io.Reader, emit func(string) error) (providerTextStreamResult, error) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 32*1024), 2*1024*1024)
-	var result kuaiziChatCompletionResult
+	var result providerTextStreamResult
 	var frame []string
 	done := false
 	flush := func() error {
@@ -145,7 +169,7 @@ func parseChatCompletionSSE(ctx context.Context, reader io.Reader, emit func(str
 			}
 			if done {
 				if result.Text == "" {
-					return result, errKuaiziChatCompletionTextMissing
+					return result, errProviderTextMissing
 				}
 				return result, nil
 			}
@@ -172,7 +196,7 @@ func parseChatCompletionSSE(ctx context.Context, reader io.Reader, emit func(str
 		return result, errAgentProviderStreamTruncated
 	}
 	if result.Text == "" {
-		return result, errKuaiziChatCompletionTextMissing
+		return result, errProviderTextMissing
 	}
 	return result, nil
 }

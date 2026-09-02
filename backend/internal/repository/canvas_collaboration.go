@@ -50,6 +50,14 @@ type CanvasChangeCommit struct {
 
 type CanvasChangeApply func(current *model.CanvasProject) (payloadJSON string, title string, err error)
 
+type canvasProjectRevisionUpdates struct {
+	PayloadJSON     string
+	Title           string
+	Revision        int64
+	UpdatedByUserID string
+	UpdatedAt       time.Time
+}
+
 type AgentCanvasChangeInput struct {
 	Scope             agentruntime.Scope
 	ToolCallID        string
@@ -400,9 +408,10 @@ func commitCanvasChangeTx(
 	nextRevision := current.Revision + 1
 	result := tx.Model(&model.CanvasProject{}).
 		Where("id = ? AND revision = ?", current.ID, current.Revision).
-		Updates(map[string]any{
-			"payload_json": payloadJSON, "title": title, "revision": nextRevision,
-			"updated_by_user_id": actorUserID, "updated_at": now,
+		Select("payload_json", "title", "revision", "updated_by_user_id", "updated_at").
+		Updates(canvasProjectRevisionUpdates{
+			PayloadJSON: payloadJSON, Title: title, Revision: nextRevision,
+			UpdatedByUserID: actorUserID, UpdatedAt: now,
 		})
 	if result.Error != nil {
 		return CanvasChangeCommit{}, result.Error

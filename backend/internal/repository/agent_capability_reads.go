@@ -12,9 +12,30 @@ type AgentCapabilityResourceFact struct {
 	Name       string
 	Kind       string
 	MimeType   string
+	SizeBytes  int64
 	Width      int
 	Height     int
 	DurationMS int64
+}
+
+func (r *Repository) AgentReadyResourcesForTenant(scope agentruntime.Scope, resourceIDs []string) ([]AgentCapabilityResourceFact, error) {
+	if err := scope.Validate(); err != nil || len(resourceIDs) < 1 || len(resourceIDs) > 100 {
+		return nil, errors.New("agent ready resource scope is invalid")
+	}
+	query := r.db.Table("resources").Where("resources.status = ?", model.ResourceStatusReady)
+	switch scope.TenantKind {
+	case agentruntime.TenantPersonal:
+		query = query.Where("resources.user_id = ? AND resources.team_id = ''", scope.TenantID)
+	case agentruntime.TenantTeam:
+		query = query.Where("resources.team_id = ?", scope.TenantID)
+	default:
+		return nil, errors.New("agent ready resource tenant is invalid")
+	}
+	var facts []AgentCapabilityResourceFact
+	err := query.Where("resources.id IN ?", resourceIDs).Select(
+		"resources.id AS resource_id, resources.id AS name, resources.kind, resources.mime_type, resources.size AS size_bytes, resources.width, resources.height, resources.duration_ms AS duration_ms",
+	).Order("resources.id ASC").Find(&facts).Error
+	return facts, err
 }
 
 func (r *Repository) AgentCapabilityResourcesForScope(scope agentruntime.Scope, resourceIDs []string, limit int) ([]AgentCapabilityResourceFact, error) {
@@ -42,7 +63,7 @@ func (r *Repository) AgentCapabilityResourcesForScope(scope agentruntime.Scope, 
 	}
 	var facts []AgentCapabilityResourceFact
 	err := query.Distinct().Select(
-		"resources.id AS resource_id, assets.title AS name, resources.kind, resources.mime_type, resources.width, resources.height, resources.duration_ms AS duration_ms",
+		"resources.id AS resource_id, assets.title AS name, resources.kind, resources.mime_type, resources.size AS size_bytes, resources.width, resources.height, resources.duration_ms AS duration_ms",
 	).Order("resources.id ASC").Limit(limit).Scan(&facts).Error
 	return facts, err
 }

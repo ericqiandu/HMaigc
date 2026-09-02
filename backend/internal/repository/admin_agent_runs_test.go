@@ -124,6 +124,8 @@ func TestAdminAgentRunAggregatesControlFactsWithoutSensitiveBodies(t *testing.T)
 		{runID: "run-terminal", userID: "control-user", projectID: "project-d", canvasID: "canvas-d", status: agentruntime.RunSucceeded, updatedAt: now},
 		{runID: "run-approval", userID: "control-user", projectID: "project-e", canvasID: "canvas-e", status: agentruntime.RunWaitingApproval, updatedAt: now},
 		{runID: "run-media", userID: "control-user", projectID: "project-f", canvasID: "canvas-f", status: agentruntime.RunWaitingTool, updatedAt: now},
+		{runID: "run-vision", userID: "control-user", projectID: "project-g", canvasID: "canvas-g", status: agentruntime.RunWaitingTool, updatedAt: now},
+		{runID: "run-vision-settled", userID: "control-user", projectID: "project-h", canvasID: "canvas-h", status: agentruntime.RunSucceeded, updatedAt: now},
 	} {
 		createAdminAgentRunRecord(t, db, fixture)
 	}
@@ -196,6 +198,41 @@ func TestAdminAgentRunAggregatesControlFactsWithoutSensitiveBodies(t *testing.T)
 	if err := db.Create(&mediaArtifact).Error; err != nil {
 		t.Fatal(err)
 	}
+	visionTask := model.Task{
+		ID: "task-vision", UserID: "control-user", Audience: model.TaskAudienceInternal,
+		Type: "agent_vision_analysis", Capability: "vision", Status: model.TaskStatusRunning,
+		Operation: "agent_vision:run-vision", BillingOrderID: "billing-vision", ProviderRequestID: "provider-secret-vision-request",
+		Prompt: "sensitive vision prompt", ResultJSON: `{"analysis":"sensitive vision body"}`,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&visionTask).Error; err != nil {
+		t.Fatal(err)
+	}
+	visionBilling := model.BillingOrder{
+		ID: "billing-vision", TaskID: visionTask.ID, UserID: "control-user",
+		IdempotencyKey: "proxy-token:agent-vision:task-vision", Status: model.BillingStatusRunning,
+		ProviderRequestID: "provider-secret-vision-billing-request", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&visionBilling).Error; err != nil {
+		t.Fatal(err)
+	}
+	settledVisionTask := model.Task{
+		ID: "task-vision-settled", UserID: "control-user", Audience: model.TaskAudienceInternal,
+		Type: "agent_vision_analysis", Capability: "vision", Status: model.TaskStatusSucceeded,
+		Operation: "agent_vision:run-vision-settled", BillingOrderID: "billing-vision-settled", ProviderRequestID: "provider-secret-vision-settled-request",
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&settledVisionTask).Error; err != nil {
+		t.Fatal(err)
+	}
+	settledVisionBilling := model.BillingOrder{
+		ID: "billing-vision-settled", TaskID: settledVisionTask.ID, UserID: "control-user",
+		IdempotencyKey: "proxy-token:agent-vision:task-vision-settled", Status: model.BillingStatusSettled,
+		ProviderRequestID: "provider-secret-vision-settled-billing-request", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&settledVisionBilling).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	interruptible, err := repo.AdminAgentRun("run-interruptible", now.Add(time.Minute))
 	if err != nil {
@@ -243,12 +280,26 @@ func TestAdminAgentRunAggregatesControlFactsWithoutSensitiveBodies(t *testing.T)
 	if media.LinkedMediaTaskStatus != string(model.TaskStatusRunning) || media.ProviderRequestState != "submitted" || media.ControlDisposition != AdminAgentRunCancelRequestRequired {
 		t.Fatalf("media facts = %#v", media)
 	}
-	encoded, err := json.Marshal([]*AdminAgentRunRecord{provider, billing, approval, media})
+	vision, err := repo.AdminAgentRun("run-vision", now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vision.LinkedVisionTaskStatus != string(model.TaskStatusRunning) || vision.ProviderRequestState != "submitted" || vision.BillingState != string(model.BillingStatusRunning) || vision.ControlDisposition != AdminAgentRunCancelRequestRequired {
+		t.Fatalf("vision facts = %#v", vision)
+	}
+	settledVision, err := repo.AdminAgentRun("run-vision-settled", now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settledVision.LinkedVisionTaskStatus != string(model.TaskStatusSucceeded) || settledVision.BillingState != string(model.BillingStatusSettled) || settledVision.ControlDisposition != AdminAgentRunAlreadyTerminal {
+		t.Fatalf("settled vision facts = %#v", settledVision)
+	}
+	encoded, err := json.Marshal([]*AdminAgentRunRecord{provider, billing, approval, media, vision, settledVision})
 	if err != nil {
 		t.Fatal(err)
 	}
 	serialized := string(encoded)
-	for _, secret := range []string{"sensitive user prompt", "sensitive model body", "sensitive provider billing body", "sensitive render prompt", "provider-secret-request", "provider-secret-billing-request", "sensitive media prompt", "sensitive media title", "sensitive media script", "provider-secret-media-request", "provider-secret-media-billing-request"} {
+	for _, secret := range []string{"sensitive user prompt", "sensitive model body", "sensitive provider billing body", "sensitive render prompt", "provider-secret-request", "provider-secret-billing-request", "sensitive media prompt", "sensitive media title", "sensitive media script", "provider-secret-media-request", "provider-secret-media-billing-request", "sensitive vision prompt", "sensitive vision body", "provider-secret-vision-request", "provider-secret-vision-billing-request", "provider-secret-vision-settled-request", "provider-secret-vision-settled-billing-request"} {
 		if strings.Contains(serialized, secret) {
 			t.Fatalf("admin run summary leaked %q: %s", secret, serialized)
 		}
@@ -329,7 +380,7 @@ func openAdminAgentRunRepositorySQLite(t *testing.T) (*Repository, *gorm.DB) {
 	if err := db.AutoMigrate(
 		&model.User{}, &model.Task{}, &model.BillingOrder{},
 		&model.AgentThread{}, &model.AgentRun{}, &model.AgentTimelineItem{},
-		&model.AgentRunEvent{}, &model.AgentCheckpoint{}, &model.AgentToolCall{},
+		&model.AgentRunEvent{}, &model.AgentExternalDecision{}, &model.AgentCheckpoint{}, &model.AgentToolCall{},
 		&model.AgentProductionPlanVersion{}, &model.AgentProductionArtifact{},
 	); err != nil {
 		t.Fatal(err)

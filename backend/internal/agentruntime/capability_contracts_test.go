@@ -20,6 +20,8 @@ func validCapabilityArgumentsForTest(tool agentruntime.ToolName) json.RawMessage
 		return json.RawMessage(`{"resourceId":"resource-1","domainProjectId":"project-1","displayName":"资产","clientMutationId":"publish-1"}`)
 	case agentruntime.ToolMediaGenerate:
 		return json.RawMessage(`{"mediaKind":"image","modelRecordId":"model-record-1","modelKey":"image-model","parameters":{"prompt":"主视觉"},"sourceResourceIds":[],"targetCanvasNodeId":"node-1","clientRequestId":"media-1"}`)
+	case agentruntime.ToolVisionAnalyze:
+		return json.RawMessage(`{"modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","sourceResourceIds":["resource-1"],"prompt":"描述人物外观","detail":"low","clientRequestId":"vision-1"}`)
 	case agentruntime.ToolSkillsLoad:
 		return json.RawMessage(`{"skillDir":"storyboard-director","version":7,"checksum":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`)
 	default:
@@ -70,6 +72,11 @@ func TestCapabilityArgumentsDecodeExactCurrentContracts(t *testing.T) {
 				`"targetCanvasNodeId":"node-2","clientRequestId":"media-1"}`,
 		},
 		{
+			name:    "vision analyze",
+			tool:    agentruntime.ToolVisionAnalyze,
+			payload: `{"modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","sourceResourceIds":["resource-1","resource-2"],"prompt":"提取可追溯的视觉事实","detail":"original","clientRequestId":"vision-1"}`,
+		},
+		{
 			name:    "skills load",
 			tool:    agentruntime.ToolSkillsLoad,
 			payload: `{"skillDir":"skills/storyboard","version":2,"checksum":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
@@ -88,6 +95,67 @@ func TestCapabilityArgumentsDecodeExactCurrentContracts(t *testing.T) {
 				t.Fatal("DecodeCapabilityArguments() returned nil")
 			}
 		})
+	}
+}
+
+func TestVisionAnalyzeArgumentsAreClosedNormalizedAndBounded(t *testing.T) {
+	t.Parallel()
+
+	valid := json.RawMessage(`{"modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","sourceResourceIds":["resource-1","resource-2"],"prompt":"  描述角色造型与场景关系  ","detail":"low","clientRequestId":"vision-request-1"}`)
+	decoded, err := agentruntime.DecodeCapabilityArguments(agentruntime.ToolVisionAnalyze, valid)
+	if err != nil {
+		t.Fatalf("valid vision arguments rejected: %v", err)
+	}
+	arguments, ok := decoded.(agentruntime.VisionAnalyzeArguments)
+	if !ok {
+		t.Fatalf("vision arguments type = %T", decoded)
+	}
+	if arguments.Prompt != "描述角色造型与场景关系" || arguments.Detail != agentruntime.VisionDetailLow || len(arguments.SourceResourceIDs) != 2 {
+		t.Fatalf("normalized vision arguments = %#v", arguments)
+	}
+
+	invalid := []json.RawMessage{
+		json.RawMessage(`{"modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","sourceResourceIds":[],"prompt":"描述画面","detail":"low","clientRequestId":"vision-request-1"}`),
+		json.RawMessage(`{"modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","sourceResourceIds":["resource-1","resource-1"],"prompt":"描述画面","detail":"low","clientRequestId":"vision-request-1"}`),
+		json.RawMessage(`{"modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","sourceResourceIds":["r1","r2","r3","r4","r5","r6","r7","r8","r9","r10","r11","r12","r13"],"prompt":"描述画面","detail":"low","clientRequestId":"vision-request-1"}`),
+		json.RawMessage(`{"modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","sourceResourceIds":["resource-1"],"prompt":"","detail":"low","clientRequestId":"vision-request-1"}`),
+		json.RawMessage(`{"modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","sourceResourceIds":["resource-1"],"prompt":"描述画面","detail":"auto","clientRequestId":"vision-request-1"}`),
+		json.RawMessage(`{"modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","sourceResourceIds":["resource-1"],"prompt":"描述画面","detail":"low","clientRequestId":"vision-request-1","imageUrl":"https://example.com/private.png"}`),
+		json.RawMessage(`{"modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","sourceResourceIds":["https://example.com/private.png"],"prompt":"描述画面","detail":"low","clientRequestId":"vision-request-1"}`),
+		json.RawMessage(`{"modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","sourceResourceIds":["resource-1"],"prompt":"` + strings.Repeat("a", 64*1024+1) + `","detail":"low","clientRequestId":"vision-request-1"}`),
+	}
+	for index, payload := range invalid {
+		if _, decodeErr := agentruntime.DecodeCapabilityArguments(agentruntime.ToolVisionAnalyze, payload); decodeErr == nil {
+			t.Fatalf("invalid vision arguments %d were accepted", index)
+		}
+	}
+}
+
+func TestVisionAnalyzeResultUsesClosedUsageContract(t *testing.T) {
+	t.Parallel()
+
+	valid := json.RawMessage(`{"taskId":"task-1","billingOrderId":"billing-1","modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","clientRequestId":"vision-request-1","sourceResourceIds":["resource-1"],"detail":"original","analysis":"角色穿红色外套，站在雨夜街道。","usage":{"inputTokens":384,"cachedTokens":0,"outputTokens":42}}`)
+	decoded, err := agentruntime.DecodeCapabilityResult(agentruntime.ToolVisionAnalyze, valid)
+	if err != nil {
+		t.Fatalf("valid vision result rejected: %v", err)
+	}
+	result, ok := decoded.(agentruntime.VisionAnalyzeResult)
+	if !ok || result.Usage.InputTokens != 384 || result.Analysis == "" {
+		t.Fatalf("vision result = %#v (%T)", decoded, decoded)
+	}
+
+	invalid := []json.RawMessage{
+		json.RawMessage(`{"taskId":"task-1","billingOrderId":"billing-1","modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","clientRequestId":"vision-request-1","sourceResourceIds":["resource-1"],"detail":"low","analysis":"","usage":{"inputTokens":1,"cachedTokens":0,"outputTokens":1}}`),
+		json.RawMessage(`{"taskId":"task-1","billingOrderId":"billing-1","modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","clientRequestId":"vision-request-1","sourceResourceIds":["resource-1","resource-1"],"detail":"low","analysis":"分析","usage":{"inputTokens":1,"cachedTokens":0,"outputTokens":1}}`),
+		json.RawMessage(`{"taskId":"task-1","billingOrderId":"billing-1","modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","clientRequestId":"vision-request-1","sourceResourceIds":["resource-1"],"detail":"auto","analysis":"分析","usage":{"inputTokens":1,"cachedTokens":0,"outputTokens":1}}`),
+		json.RawMessage(`{"taskId":"task-1","billingOrderId":"billing-1","modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","clientRequestId":"vision-request-1","sourceResourceIds":["resource-1"],"detail":"low","analysis":"分析","usage":{"inputTokens":1,"cachedTokens":2,"outputTokens":1}}`),
+		json.RawMessage(`{"taskId":"task-1","billingOrderId":"billing-1","modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","clientRequestId":"vision-request-1","sourceResourceIds":["resource-1"],"detail":"low","analysis":"分析","usage":{"inputTokens":1,"outputTokens":1}}`),
+		json.RawMessage(`{"taskId":"task-1","billingOrderId":"billing-1","modelRecordId":"vision-record-1","modelKey":"deepseek-v4-flash-vision-exp","clientRequestId":"vision-request-1","sourceResourceIds":["resource-1"],"detail":"low","analysis":"分析","usage":{"inputTokens":1,"cachedTokens":0,"outputTokens":1},"providerRequestId":"secret-provider-id"}`),
+	}
+	for index, payload := range invalid {
+		if _, decodeErr := agentruntime.DecodeCapabilityResult(agentruntime.ToolVisionAnalyze, payload); decodeErr == nil {
+			t.Fatalf("invalid vision result %d was accepted", index)
+		}
 	}
 }
 
@@ -190,6 +258,18 @@ func TestCapabilityCanvasOperationsRejectDuplicateAndInvalidStructures(t *testin
 	if _, err := agentruntime.DecodeCapabilityArguments(agentruntime.ToolCanvasApplyOps, generationMixedIntoCanvas); err == nil {
 		t.Fatal("paid generation was accepted as a canvas operation")
 	}
+
+	unsupportedNodeType := json.RawMessage(`{"canvasId":"canvas-1","baseRevision":0,"clientMutationId":"mutation-1","operations":[` +
+		`{"operationId":"op-1","type":"add_node","node":{"id":"node-1","type":"media","title":"非法媒体占位","position":{"x":0,"y":0},"width":320,"height":320,"metadata":{"status":"loading"}}}]}`)
+	if _, err := agentruntime.DecodeCapabilityArguments(agentruntime.ToolCanvasApplyOps, unsupportedNodeType); err == nil {
+		t.Fatal("unsupported canvas node type was accepted")
+	}
+
+	unsupportedNodeStatus := json.RawMessage(`{"canvasId":"canvas-1","baseRevision":0,"clientMutationId":"mutation-1","operations":[` +
+		`{"operationId":"op-1","type":"add_node","node":{"id":"node-1","type":"image","title":"非法状态占位","position":{"x":0,"y":0},"width":320,"height":320,"metadata":{"status":"pending"}}}]}`)
+	if _, err := agentruntime.DecodeCapabilityArguments(agentruntime.ToolCanvasApplyOps, unsupportedNodeStatus); err == nil {
+		t.Fatal("unsupported canvas node status was accepted")
+	}
 }
 
 func TestCapabilityMediaGenerationUsesAuthoritativeCapabilityFacts(t *testing.T) {
@@ -272,5 +352,29 @@ func TestCapabilityResultsUseStrictVersionedSchemas(t *testing.T) {
 	jumpedRevision := json.RawMessage(`{"canvasId":"canvas-1","baseRevision":7,"committedRevision":9,"clientMutationId":"mutation-1","proposalHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","appliedOperationIds":["operation-1"],"evidence":{"addedNodeIds":["node-1"],"updatedNodeIds":[],"deletedNodeIds":[],"upsertedConnectionIds":[],"deletedConnectionIds":[],"selectedNodeIds":["node-1"],"viewportApplied":false}}`)
 	if _, err := agentruntime.DecodeCapabilityResult(agentruntime.ToolCanvasApplyOps, jumpedRevision); err == nil {
 		t.Fatal("canvas receipt that skipped revisions was accepted")
+	}
+}
+
+func TestCanvasReadResultRequiresAuthoritativeExecutionFacts(t *testing.T) {
+	t.Parallel()
+
+	valid := json.RawMessage(`{"canvasId":"canvas-1","domainProjectId":"project-1","revision":7,"nodes":[],"edges":[],"selectedNodeIds":[],"viewport":{"x":0,"y":0,"zoom":1},"callableModels":[{"channelId":"channel-1","modelRecordId":"record-1","modelKey":"image-model","displayName":"Image Model","capability":"image","billingMode":"fixed_request","priceStrategy":"flat","unitPriceMicrocredits":100,"priceTiers":[],"providerCapabilities":{}}]}`)
+	decoded, err := agentruntime.DecodeCapabilityResult(agentruntime.ToolCanvasRead, valid)
+	if err != nil {
+		t.Fatalf("canvas read execution facts rejected: %v", err)
+	}
+	result := decoded.(agentruntime.CanvasReadResult)
+	if result.DomainProjectID != "project-1" || len(result.CallableModels) != 1 || result.CallableModels[0].ModelRecordID != "record-1" {
+		t.Fatalf("canvas read execution facts = %#v", result)
+	}
+
+	for _, invalid := range []json.RawMessage{
+		json.RawMessage(`{"canvasId":"canvas-1","domainProjectId":"project-1","revision":7,"nodes":[],"edges":[],"selectedNodeIds":[],"viewport":{"x":0,"y":0,"zoom":1}}`),
+		json.RawMessage(`{"canvasId":"canvas-1","domainProjectId":"project-1","revision":7,"nodes":[],"edges":[],"selectedNodeIds":[],"viewport":{"x":0,"y":0,"zoom":1},"callableModels":[{"channelId":"channel-1","modelRecordId":"","modelKey":"image-model","displayName":"Image Model","capability":"image","billingMode":"fixed_request","priceStrategy":"flat","unitPriceMicrocredits":100,"priceTiers":[]}]}`),
+		json.RawMessage(`{"canvasId":"canvas-1","domainProjectId":"project-1","revision":7,"nodes":[],"edges":[],"selectedNodeIds":[],"viewport":{"x":0,"y":0,"zoom":1},"callableModels":[{"channelId":"channel-1","modelRecordId":"record-1","modelKey":"image-model","displayName":"Image Model","capability":"image","billingMode":"fixed_request","priceStrategy":"flat","unitPriceMicrocredits":0,"priceTiers":[]}]}`),
+	} {
+		if _, err := agentruntime.DecodeCapabilityResult(agentruntime.ToolCanvasRead, invalid); err == nil {
+			t.Fatal("canvas read result without valid execution facts was accepted")
+		}
 	}
 }

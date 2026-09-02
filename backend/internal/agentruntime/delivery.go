@@ -36,13 +36,14 @@ func (kind ArtifactKind) Valid() bool {
 type DeliveryFact string
 
 const (
-	DeliveryFactFinalMessage       DeliveryFact = "final_message"
-	DeliveryFactCanvasRevision     DeliveryFact = "canvas_revision"
-	DeliveryFactArtifact           DeliveryFact = "artifact"
-	DeliveryFactArtifactRevision   DeliveryFact = "artifact_revision"
-	DeliveryFactResource           DeliveryFact = "resource"
-	DeliveryFactPublication        DeliveryFact = "publication"
-	DeliveryFactTaskBackedResource DeliveryFact = "task_backed_resource"
+	DeliveryFactFinalMessage        DeliveryFact = "final_message"
+	DeliveryFactCanvasRevision      DeliveryFact = "canvas_revision"
+	DeliveryFactArtifact            DeliveryFact = "artifact"
+	DeliveryFactArtifactRevision    DeliveryFact = "artifact_revision"
+	DeliveryFactResource            DeliveryFact = "resource"
+	DeliveryFactPublication         DeliveryFact = "publication"
+	DeliveryFactTaskBackedResource  DeliveryFact = "task_backed_resource"
+	DeliveryFactCanvasBoundResource DeliveryFact = "canvas_bound_resource"
 )
 
 type DeliveryCriterion struct {
@@ -111,7 +112,7 @@ func (expected ExpectedDelivery) Validate() error {
 			if criterion.Artifact != "" {
 				return errors.New("expected delivery criterion artifact is unexpected")
 			}
-		case DeliveryFactArtifact, DeliveryFactArtifactRevision, DeliveryFactResource, DeliveryFactPublication, DeliveryFactTaskBackedResource:
+		case DeliveryFactArtifact, DeliveryFactArtifactRevision, DeliveryFactResource, DeliveryFactPublication, DeliveryFactTaskBackedResource, DeliveryFactCanvasBoundResource:
 			if !criterion.Artifact.Valid() {
 				return errors.New("expected delivery criterion artifact is required")
 			}
@@ -164,6 +165,8 @@ type DeliveryArtifact struct {
 	SourceTaskID        string       `json:"sourceTaskId,omitempty"`
 	SourceTaskSucceeded bool         `json:"sourceTaskSucceeded,omitempty"`
 	CurrentRevision     bool         `json:"currentRevision,omitempty"`
+	TargetCanvasNodeID  string       `json:"targetCanvasNodeId,omitempty"`
+	CanvasBound         bool         `json:"canvasBound,omitempty"`
 }
 
 type DeliveryEvidence struct {
@@ -209,6 +212,9 @@ func VerifyDelivery(expected ExpectedDelivery, evidence DeliveryEvidence) Delive
 			satisfied = evidence.CanvasRevision > 0 && evidence.CanvasID == expected.TargetCanvasID && evidence.CanvasCurrent
 		case DeliveryFactArtifact:
 			satisfied = deliveryArtifactMatches(artifacts[criterion.Artifact], func(artifact DeliveryArtifact) bool {
+				if criterion.Artifact == ArtifactText {
+					return artifact.ArtifactID != "" && artifact.RevisionID != "" && artifact.Approved && artifact.CurrentRevision
+				}
 				return artifact.URL != ""
 			})
 		case DeliveryFactArtifactRevision:
@@ -231,6 +237,12 @@ func VerifyDelivery(expected ExpectedDelivery, evidence DeliveryEvidence) Delive
 				return revisionCurrent && artifact.ResourceID != "" && artifact.ResourceReady && artifact.URL != "" &&
 					artifact.SourceTaskID != "" && artifact.SourceTaskSucceeded
 			})
+		case DeliveryFactCanvasBoundResource:
+			satisfied = deliveryArtifactMatches(artifacts[criterion.Artifact], func(artifact DeliveryArtifact) bool {
+				return artifact.ResourceID != "" && artifact.ResourceReady && artifact.URL != "" &&
+					artifact.SourceTaskID != "" && artifact.SourceTaskSucceeded &&
+					artifact.TargetCanvasNodeID != "" && artifact.CanvasBound
+			})
 		}
 		if !satisfied {
 			missing = append(missing, criterion)
@@ -245,8 +257,13 @@ func VerifyDelivery(expected ExpectedDelivery, evidence DeliveryEvidence) Delive
 func validDeliveryArtifact(artifact DeliveryArtifact) bool {
 	if !artifact.Kind.Valid() || !validOptionalDeliveryIdentity(artifact.ArtifactID) ||
 		!validOptionalDeliveryIdentity(artifact.RevisionID) || !validOptionalDeliveryIdentity(artifact.ResourceID) ||
-		!validOptionalDeliveryIdentity(artifact.PublicationID) || !validOptionalDeliveryIdentity(artifact.SourceTaskID) || strings.TrimSpace(artifact.URL) != artifact.URL ||
+		!validOptionalDeliveryIdentity(artifact.PublicationID) || !validOptionalDeliveryIdentity(artifact.SourceTaskID) ||
+		!validOptionalDeliveryIdentity(artifact.TargetCanvasNodeID) || strings.TrimSpace(artifact.URL) != artifact.URL ||
 		len(artifact.URL) > 4*1024 || (artifact.ArtifactID == "") != (artifact.RevisionID == "") {
+		return false
+	}
+	if artifact.CanvasBound && (artifact.TargetCanvasNodeID == "" || artifact.ResourceID == "" || artifact.URL == "" ||
+		!artifact.ResourceReady || artifact.SourceTaskID == "" || !artifact.SourceTaskSucceeded) {
 		return false
 	}
 	hasExactRevision := artifact.ArtifactID != "" && artifact.RevisionID != ""

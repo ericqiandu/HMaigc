@@ -143,9 +143,9 @@ func (r *Repository) AgentThreadHistory(scope agentruntime.Scope, limit int) ([]
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		var threads []model.AgentThread
 		if err := tx.Where(`tenant_kind = ? AND tenant_id = ? AND created_by_user_id = ?
-			AND domain_project_id = ? AND canvas_id = ? AND status = ?`,
+			AND domain_project_id = ? AND canvas_id = ? AND status = ? AND reasoning_host = ?`,
 			scope.TenantKind, scope.TenantID, scope.ActorUserID, scope.DomainProjectID,
-			scope.CanvasID, agentruntime.ThreadActive).
+			scope.CanvasID, agentruntime.ThreadActive, agentruntime.ReasoningHostManaged).
 			Order(`COALESCE((SELECT MAX(agent_runs.updated_at) FROM agent_runs
 				WHERE agent_runs.thread_id = agent_threads.id), agent_threads.updated_at) DESC, agent_threads.id DESC`).
 			Limit(limit).Find(&threads).Error; err != nil {
@@ -217,7 +217,8 @@ func agentThreadHistoryFacts(
 		thread := row.AgentThread
 		if thread.TenantKind != scope.TenantKind || thread.TenantID != scope.TenantID ||
 			thread.CreatedByUserID != scope.ActorUserID || thread.DomainProjectID != scope.DomainProjectID ||
-			thread.CanvasID != scope.CanvasID || thread.Status != agentruntime.ThreadActive || row.ActivityAt.IsZero() {
+			thread.CanvasID != scope.CanvasID || thread.Status != agentruntime.ThreadActive ||
+			thread.ReasoningHost != agentruntime.ReasoningHostManaged || thread.ExternalThreadID != "" || row.ActivityAt.IsZero() {
 			return nil, errors.New("agent thread history scope facts are inconsistent")
 		}
 		threadByID[thread.ID] = thread
@@ -230,7 +231,8 @@ func agentThreadHistoryFacts(
 	for _, run := range runs {
 		thread, ok := threadByID[run.ThreadID]
 		if !ok || run.ActorUserID != scope.ActorUserID || run.UpdatedAt.Before(run.CreatedAt) ||
-			run.LastEventSequence < 0 || run.StateVersion < 0 || run.StepNumber < 0 || run.MaxSteps < 0 {
+			run.ReasoningHost != agentruntime.ReasoningHostManaged || run.LastEventSequence < 0 ||
+			run.StateVersion < 0 || run.StepNumber < 0 || run.MaxSteps < 0 {
 			return nil, errors.New("agent thread history run facts are inconsistent")
 		}
 		if thread.ID != run.ThreadID {

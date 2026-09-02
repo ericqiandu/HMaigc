@@ -1,6 +1,7 @@
 package database
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +9,143 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
 )
+
+func TestToolSchemaV8CutoverRetiresSafeV7RunsAndPreservesCurrentAndTerminalFacts(t *testing.T) {
+	db := openAgentRuntimeSchemaSQLite(t)
+	if err := MigrateBaseSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.September, 2, 11, 0, 0, 0, time.UTC)
+	queued := agentruntime.RuntimeState{
+		StateVersion: 1, StepNumber: 0, MaxSteps: 8, Status: agentruntime.RunQueued,
+		UserMessage: "分析图片", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+	}
+	waiting := agentruntime.RuntimeState{
+		StateVersion: 2, StepNumber: 1, MaxSteps: 8, Status: agentruntime.RunWaitingApproval,
+		UserMessage: "生成图片", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+		PendingToolCall: &agentruntime.ToolCallDecision{
+			ToolCallID: "media-v7", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
+			Arguments: json.RawMessage(`{"mediaKind":"image","modelRecordId":"image-record","modelKey":"image-model","parameters":{"prompt":"红色方块"},"sourceResourceIds":[],"targetCanvasNodeId":"node-1","clientRequestId":"media-v7"}`),
+			ExpectedDelivery: agentruntime.ExpectedDelivery{
+				Kind: agentruntime.DeliveryGeneratedAsset, RequiredArtifacts: []agentruntime.ArtifactKind{agentruntime.ArtifactImage},
+				CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactTaskBackedResource, Artifact: agentruntime.ArtifactImage}},
+			},
+		},
+	}
+	seedState := func(runID string, state agentruntime.RuntimeState, createdAt time.Time) {
+		t.Helper()
+		encoded, err := json.Marshal(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		run := model.AgentRun{
+			ID: runID, ThreadID: "thread-" + runID, ActorUserID: "user-v7", ClientRequestID: "request-" + runID,
+			Status: state.Status, LastEventSequence: 1, StateVersion: state.StateVersion, StepNumber: state.StepNumber, MaxSteps: state.MaxSteps,
+			ModelRecordID: "agent-record", ModelKey: "agent-model", ToolSchemaVersion: agentruntime.RetiredCloudToolSchemaVersion,
+			RuntimeVersion: agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
+			CreatedAt: createdAt, UpdatedAt: createdAt,
+		}
+		if err := db.Create(&run).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Create(&model.AgentRunEvent{
+			ID: "event-" + runID, RunID: runID, Sequence: 1, Kind: agentruntime.EventRunCreated,
+			PayloadJSON: string(encoded), CreatedAt: createdAt,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Create(&model.AgentCheckpoint{
+			ID: "checkpoint-" + runID, RunID: runID, Sequence: 1,
+			StateVersion: state.StateVersion, StateJSON: string(encoded), CreatedAt: createdAt,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedState("v7-queued", queued, now)
+	seedState("v7-waiting", waiting, now.Add(time.Second))
+
+	running := model.AgentRun{
+		ID: "v7-running", ThreadID: "thread-v7-running", ActorUserID: "user-v7", ClientRequestID: "request-v7-running",
+		Status: agentruntime.RunRunning, ToolSchemaVersion: agentruntime.RetiredCloudToolSchemaVersion,
+		RuntimeVersion: agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
+		CreatedAt: now.Add(2 * time.Second), UpdatedAt: now.Add(2 * time.Second),
+	}
+	current := model.AgentRun{
+		ID: "v8-current", ThreadID: "thread-v8-current", ActorUserID: "user-v8", ClientRequestID: "request-v8-current",
+		Status: agentruntime.RunQueued, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion: agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
+		CreatedAt: now.Add(3 * time.Second), UpdatedAt: now.Add(3 * time.Second),
+	}
+	completedAt := now.Add(-time.Minute)
+	terminal := model.AgentRun{
+		ID: "v7-terminal", ThreadID: "thread-v7-terminal", ActorUserID: "user-v7", ClientRequestID: "request-v7-terminal",
+		Status: agentruntime.RunSucceeded, ToolSchemaVersion: agentruntime.RetiredCloudToolSchemaVersion,
+		RuntimeVersion: agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
+		CreatedAt: now.Add(-time.Hour), UpdatedAt: completedAt, CompletedAt: &completedAt,
+	}
+	if err := db.Create(&[]model.AgentRun{running, current, terminal}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	audit, err := AuditAgentRuntimeUpgrade(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if audit.CandidateRuns != 3 || audit.RetirableRuns != 2 || !upgradeAuditHasBlocker(audit, running.ID, agentRuntimeUpgradeBlockerNonRetirableStatus) {
+		t.Fatalf("v8 cutover audit = %#v", audit)
+	}
+	if err := db.Model(&model.AgentRun{}).Where("id = ?", running.ID).Update("status", agentruntime.RunCancelled).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureAgentRuntimeIntegritySchema(db); err != nil {
+		t.Fatalf("retire safe v7 runs: %v", err)
+	}
+	for _, expected := range []struct {
+		runID  string
+		status agentruntime.RunStatus
+	}{
+		{runID: "v7-queued", status: agentruntime.RunFailed},
+		{runID: "v7-waiting", status: agentruntime.RunCancelled},
+	} {
+		var run model.AgentRun
+		if err := db.First(&run, "id = ?", expected.runID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if run.Status != expected.status || run.ToolSchemaVersion != agentruntime.RetiredCloudToolSchemaVersion {
+			t.Fatalf("retired v7 run %s = %#v", expected.runID, run)
+		}
+		if expected.status == agentruntime.RunFailed {
+			var checkpoint model.AgentCheckpoint
+			if err := db.Order("sequence DESC").First(&checkpoint, "run_id = ?", expected.runID).Error; err != nil {
+				t.Fatal(err)
+			}
+			var terminalState agentruntime.RuntimeState
+			if err := json.Unmarshal([]byte(checkpoint.StateJSON), &terminalState); err != nil {
+				t.Fatal(err)
+			}
+			if terminalState.FailureCode != agentruntime.FailureRuntimeSchemaRetired {
+				t.Fatalf("retired v7 checkpoint %s = %#v", expected.runID, terminalState)
+			}
+		} else {
+			var event model.AgentRunEvent
+			if err := db.Order("sequence DESC").First(&event, "run_id = ?", expected.runID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(event.PayloadJSON, `"reason":"`+agentruntime.FailureRuntimeSchemaRetired+`"`) {
+				t.Fatalf("retired v7 waiting event %s = %s", expected.runID, event.PayloadJSON)
+			}
+		}
+	}
+	for _, expected := range []model.AgentRun{current, terminal} {
+		var stored model.AgentRun
+		if err := db.First(&stored, "id = ?", expected.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if stored.Status != expected.Status || stored.ToolSchemaVersion != expected.ToolSchemaVersion || (expected.CompletedAt != nil && stored.CompletedAt == nil) {
+			t.Fatalf("preserved run %s changed: %#v", expected.ID, stored)
+		}
+	}
+}
 
 func TestAuditAgentRuntimeUpgrade_ReportsEveryActiveRunAndIsReadOnly(t *testing.T) {
 	db := openAgentRuntimeSchemaSQLite(t)

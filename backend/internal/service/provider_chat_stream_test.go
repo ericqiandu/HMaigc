@@ -16,12 +16,16 @@ func TestRunKuaiziChatCompletionStreamRequestsStrictStreaming(t *testing.T) {
 	t.Setenv("CANVAS_ENVIRONMENT", "development")
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body map[string]any
+		var body struct {
+			Stream        bool `json:"stream"`
+			StreamOptions struct {
+				IncludeUsage bool `json:"include_usage"`
+			} `json:"stream_options"`
+		}
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			t.Error(err)
 		}
-		options, _ := body["stream_options"].(map[string]any)
-		if body["stream"] != true || options["include_usage"] != true {
+		if !body.Stream || !body.StreamOptions.IncludeUsage {
 			t.Errorf("stream request = %#v", body)
 		}
 		writer.Header().Set("Content-Type", "text/event-stream")
@@ -31,6 +35,32 @@ func TestRunKuaiziChatCompletionStreamRequestsStrictStreaming(t *testing.T) {
 
 	result, err := runKuaiziChatCompletionStream(context.Background(), canvasGenerationInput{Prompt: "hello", Config: providerConfig{BaseURL: server.URL, APIKey: "key", Model: "model", MaxOutputTokens: 100, JSONOutput: true}}, func(string) error { return nil })
 	if err != nil || result.ProviderRequestID != "req-1" {
+		t.Fatalf("result = %#v, error = %v", result, err)
+	}
+}
+
+func TestRunOpenAIChatCompletionStreamUsesBearerAuthentication(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer direct-key" || request.Header.Get("ApiKey") != "" {
+			t.Errorf("authentication headers = Authorization %q ApiKey %q", request.Header.Get("Authorization"), request.Header.Get("ApiKey"))
+		}
+		var body struct {
+			Stream bool `json:"stream"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if !body.Stream {
+			t.Errorf("stream request = %#v", body)
+		}
+		writer.Header().Set("Content-Type", "text/event-stream")
+		_, _ = writer.Write([]byte("data: {\"id\":\"req-direct\",\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	result, err := runOpenAIChatCompletionStream(context.Background(), canvasGenerationInput{Prompt: "hello", Config: providerConfig{BaseURL: server.URL, APIKey: "direct-key", Model: "model"}}, func(string) error { return nil })
+	if err != nil || result.ProviderRequestID != "req-direct" || result.Text != "ok" {
 		t.Fatalf("result = %#v, error = %v", result, err)
 	}
 }

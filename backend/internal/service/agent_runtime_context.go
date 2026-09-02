@@ -16,6 +16,7 @@ const agentRuntimeModelContextLimit = 512 * 1024
 
 type agentRuntimeCallableModelFact struct {
 	ChannelID             string                        `json:"channelId"`
+	ModelRecordID         string                        `json:"modelRecordId"`
 	Model                 string                        `json:"model"`
 	DisplayName           string                        `json:"displayName"`
 	Capability            string                        `json:"capability"`
@@ -99,13 +100,29 @@ func (s *Service) agentRuntimeCallableModels(actorUserID string) ([]agentRuntime
 		if err != nil {
 			return nil, err
 		}
+		modelRecordIDs := make(map[string]string, len(items))
+		for _, modelItem := range items {
+			modelKey := strings.TrimSpace(modelItem.ModelKey)
+			modelRecordID := strings.TrimSpace(modelItem.ID)
+			if modelKey == "" || modelRecordID == "" {
+				return nil, errors.New("agent callable model identity is invalid")
+			}
+			if _, duplicate := modelRecordIDs[modelKey]; duplicate {
+				return nil, errors.New("agent callable model identity is invalid")
+			}
+			modelRecordIDs[modelKey] = modelRecordID
+		}
 		public := publicChannel(channel, false, items, hasMembership)
 		for _, item := range public.ModelCosts {
 			if !item.Accessible || !agentRuntimeMediaCapability(item.Capability) {
 				continue
 			}
+			modelRecordID, found := modelRecordIDs[item.Model]
+			if !found {
+				return nil, errors.New("agent callable model identity is invalid")
+			}
 			result = append(result, agentRuntimeCallableModelFact{
-				ChannelID: channel.ID, Model: item.Model, DisplayName: item.DisplayName, Capability: item.Capability,
+				ChannelID: channel.ID, ModelRecordID: modelRecordID, Model: item.Model, DisplayName: item.DisplayName, Capability: item.Capability,
 				BillingMode: item.BillingMode, PriceStrategy: item.PriceStrategy,
 				UnitPriceMicrocredits: item.UnitPriceMicrocredits,
 				PriceTiers:            append([]PublicChannelModelPriceTier(nil), item.PriceTiers...),
@@ -246,16 +263,22 @@ func frozenAgentRuntimeModelContext(scope agentruntime.Scope, state agentruntime
 
 func validateAgentRuntimeCallableModels(models []agentRuntimeCallableModelFact) error {
 	seen := make(map[string]struct{}, len(models))
+	seenRecordIDs := make(map[string]struct{}, len(models))
 	previous := ""
 	for _, item := range models {
 		item.ChannelID = strings.TrimSpace(item.ChannelID)
+		item.ModelRecordID = strings.TrimSpace(item.ModelRecordID)
 		item.Model = strings.TrimSpace(item.Model)
 		item.DisplayName = strings.TrimSpace(item.DisplayName)
 		item.BillingMode = strings.TrimSpace(item.BillingMode)
 		item.PriceStrategy = strings.TrimSpace(item.PriceStrategy)
-		if item.ChannelID == "" || item.Model == "" || item.DisplayName == "" || !agentRuntimeMediaCapability(item.Capability) || item.BillingMode == "" || item.PriceStrategy == "" {
+		if item.ChannelID == "" || item.ModelRecordID == "" || item.Model == "" || item.DisplayName == "" || !agentRuntimeMediaCapability(item.Capability) || item.BillingMode == "" || item.PriceStrategy == "" {
 			return errors.New("agent callable model facts are invalid")
 		}
+		if _, duplicate := seenRecordIDs[item.ModelRecordID]; duplicate {
+			return errors.New("agent callable model facts are invalid")
+		}
+		seenRecordIDs[item.ModelRecordID] = struct{}{}
 		key := item.ChannelID + "\x00" + item.Model
 		if _, duplicate := seen[key]; duplicate || (previous != "" && key < previous) {
 			return errors.New("agent callable model facts are invalid")
@@ -263,6 +286,9 @@ func validateAgentRuntimeCallableModels(models []agentRuntimeCallableModelFact) 
 		seen[key] = struct{}{}
 		previous = key
 		priced := item.UnitPriceMicrocredits > 0
+		if item.Capability == "vision" && item.BillingMode == "token_usage" && item.PriceStrategy == "token" && item.UnitPriceMicrocredits == 0 && len(item.PriceTiers) == 0 && item.ProviderCapabilities != nil && item.ProviderCapabilities.SupportsTokenUsageBilling && item.ProviderCapabilities.MaxInputImageTokens > 0 {
+			priced = true
+		}
 		usageMetrics := make(map[string]struct{}, len(item.PriceTiers))
 		for _, tier := range item.PriceTiers {
 			resolution := strings.TrimSpace(tier.Resolution)

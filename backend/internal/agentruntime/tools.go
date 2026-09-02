@@ -27,8 +27,10 @@ func ToolPoliciesForSchema(toolSchemaVersion int) ([]ToolPolicy, bool) {
 		names = []ToolName{ToolSkillLoad, ToolProductionPlan, ToolProductionRender, ToolCanvasCommit}
 	case ProductionToolSchemaVersion:
 		names = []ToolName{ToolSkillLoad, ToolSpecialistDelegate, ToolVisionAnalyze, ToolMediaGenerate, ToolCanvasProject, ToolMediaAssemble}
-	case CurrentToolSchemaVersion:
+	case RetiredCloudToolSchemaVersion:
 		names = []ToolName{ToolCanvasRead, ToolCanvasApplyOps, ToolAssetsRead, ToolAssetsPublish, ToolMediaGenerate, ToolSkillsLoad}
+	case CurrentToolSchemaVersion:
+		names = []ToolName{ToolCanvasRead, ToolCanvasApplyOps, ToolAssetsRead, ToolAssetsPublish, ToolMediaGenerate, ToolVisionAnalyze, ToolSkillsLoad}
 	default:
 		return nil, false
 	}
@@ -70,6 +72,17 @@ func ToolPolicyForSchema(name ToolName, toolSchemaVersion int) (ToolPolicy, bool
 			return ToolPolicy{}, false
 		}
 	case CurrentToolSchemaVersion:
+		switch name {
+		case ToolCanvasRead, ToolAssetsRead, ToolSkillsLoad:
+			return ToolPolicy{Name: name, RiskLevel: ToolRiskRead, RequiredAccess: AccessViewer}, true
+		case ToolCanvasApplyOps, ToolAssetsPublish:
+			return ToolPolicy{Name: name, RiskLevel: ToolRiskWrite, RequiredAccess: AccessEditor}, true
+		case ToolMediaGenerate, ToolVisionAnalyze:
+			return ToolPolicy{Name: name, RiskLevel: ToolRiskCost, RequiredAccess: AccessEditor}, true
+		default:
+			return ToolPolicy{}, false
+		}
+	case RetiredCloudToolSchemaVersion:
 		switch name {
 		case ToolCanvasRead, ToolAssetsRead, ToolSkillsLoad:
 			return ToolPolicy{Name: name, RiskLevel: ToolRiskRead, RequiredAccess: AccessViewer}, true

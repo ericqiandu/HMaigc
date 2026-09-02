@@ -57,8 +57,10 @@ type PendingSteer struct {
 }
 
 type GenerationModelSelection struct {
-	ChannelID string `json:"channelId"`
-	Model     string `json:"model"`
+	ChannelID     string `json:"channelId"`
+	ModelRecordID string `json:"modelRecordId,omitempty"`
+	Model         string `json:"model"`
+	PriceVersion  int64  `json:"priceVersion,omitempty"`
 }
 
 type GenerationModelSelections struct {
@@ -119,6 +121,7 @@ type RuntimeTransition struct {
 	State                RuntimeState
 	EventKinds           []EventKind
 	RejectedToolCall     *ToolCallDecision
+	ToolReplay           *ToolReplay
 	ApprovalProposalHash string
 	ApprovalCostQuote    *ApprovalCostQuote
 	ApprovalResolution   ApprovalResolution
@@ -928,10 +931,14 @@ func ValidateRunConfiguration(configuration RunConfiguration) error {
 			continue
 		}
 		selection.ChannelID = strings.TrimSpace(selection.ChannelID)
+		selection.ModelRecordID = strings.TrimSpace(selection.ModelRecordID)
 		selection.Model = strings.TrimSpace(selection.Model)
-		if selection.ChannelID == "" || len(selection.ChannelID) > 80 || selection.Model == "" || len(selection.Model) > 120 {
+		if selection.ChannelID == "" || len(selection.ChannelID) > 80 || len(selection.ModelRecordID) > 80 || selection.Model == "" || len(selection.Model) > 120 || selection.PriceVersion < 0 {
 			return errors.New("agent runtime generation model selection is invalid")
 		}
+	}
+	if vision := configuration.GenerationModels.Vision; vision != nil && (vision.ModelRecordID == "" || vision.PriceVersion <= 0) {
+		return errors.New("agent runtime vision model snapshot is invalid")
 	}
 	if len(configuration.Skills) > 8 {
 		return errors.New("agent runtime skill selection is invalid")

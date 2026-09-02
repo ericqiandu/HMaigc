@@ -67,6 +67,113 @@ func TestCreateAgentRunIsIdempotentWithinThread(t *testing.T) {
 	}
 }
 
+func TestCreateAgentRunPersistsManagedReasoningHost(t *testing.T) {
+	repo, _ := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	record, err := repo.CreateAgentRun(CreateAgentRunInput{
+		Scope: scope, ClientRequestID: "managed-request", Now: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Thread.ReasoningHost != agentruntime.ReasoningHostManaged || record.Thread.ExternalThreadID != "" ||
+		record.Run.ReasoningHost != agentruntime.ReasoningHostManaged {
+		t.Fatalf("managed run origin = thread(%q, %q) run(%q)", record.Thread.ReasoningHost, record.Thread.ExternalThreadID, record.Run.ReasoningHost)
+	}
+}
+
+func TestCreateLocalAgentRunReusesExternalThreadAndClientRequest(t *testing.T) {
+	repo, _ := openAgentRuntimeRepositorySQLite(t)
+	firstScope := repositoryAgentScope()
+	firstScope.ThreadID = "local-thread-candidate-1"
+	firstScope.RunID = "local-run-candidate-1"
+	first, err := repo.CreateLocalAgentRun(CreateLocalAgentRunInput{
+		Scope: firstScope, ExternalThreadID: "codex-thread-1", ClientRequestID: "local-request-1", Now: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Created || first.Thread.ID != firstScope.ThreadID || first.Run.ID != firstScope.RunID ||
+		first.Thread.ReasoningHost != agentruntime.ReasoningHostLocalCodex || first.Thread.ExternalThreadID != "codex-thread-1" ||
+		first.Run.ReasoningHost != agentruntime.ReasoningHostLocalCodex {
+		t.Fatalf("first local run = %#v", first)
+	}
+
+	replayedScope := firstScope
+	replayedScope.ThreadID = "local-thread-candidate-2"
+	replayedScope.RunID = "local-run-candidate-2"
+	replayed, err := repo.CreateLocalAgentRun(CreateLocalAgentRunInput{
+		Scope: replayedScope, ExternalThreadID: "codex-thread-1", ClientRequestID: "local-request-1", Now: time.Now().UTC().Add(time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Created || replayed.Thread.ID != first.Thread.ID || replayed.Run.ID != first.Run.ID {
+		t.Fatalf("local replay = %#v, want existing thread %s run %s", replayed, first.Thread.ID, first.Run.ID)
+	}
+}
+
+func TestCreateLocalAgentRunRejectsMissingExternalThreadID(t *testing.T) {
+	repo, _ := openAgentRuntimeRepositorySQLite(t)
+	_, err := repo.CreateLocalAgentRun(CreateLocalAgentRunInput{
+		Scope: repositoryAgentScope(), ClientRequestID: "local-request", Now: time.Now().UTC(),
+	})
+	if err == nil {
+		t.Fatal("local run without an external thread id was accepted")
+	}
+}
+
+func TestCreateLocalAgentRunIsIdempotentUnderConcurrency(t *testing.T) {
+	repo, _ := openAgentRuntimeRepositorySQLiteFile(t)
+	const workers = 8
+	results := make(chan *AgentRunRecord, workers)
+	errs := make(chan error, workers)
+	var wait sync.WaitGroup
+	for index := 0; index < workers; index++ {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			scope := repositoryAgentScope()
+			scope.ThreadID = fmt.Sprintf("local-concurrent-thread-%d", index)
+			scope.RunID = fmt.Sprintf("local-concurrent-run-%d", index)
+			record, err := repo.CreateLocalAgentRun(CreateLocalAgentRunInput{
+				Scope: scope, ExternalThreadID: "codex-concurrent-thread", ClientRequestID: "local-concurrent-request", Now: time.Now().UTC(),
+			})
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- record
+		}(index)
+	}
+	wait.Wait()
+	close(errs)
+	close(results)
+	for err := range errs {
+		t.Fatalf("concurrent local run creation failed: %v", err)
+	}
+	var threadID string
+	var runID string
+	created := 0
+	count := 0
+	for record := range results {
+		count++
+		if record.Created {
+			created++
+		}
+		if threadID == "" {
+			threadID = record.Thread.ID
+			runID = record.Run.ID
+		}
+		if record.Thread.ID != threadID || record.Run.ID != runID {
+			t.Fatalf("concurrent local identities diverged: thread=%s/%s run=%s/%s", record.Thread.ID, threadID, record.Run.ID, runID)
+		}
+	}
+	if count != workers || created != 1 {
+		t.Fatalf("concurrent local results = %d, created = %d", count, created)
+	}
+}
+
 func TestRetireLegacyAgentRunsLeavesTerminalHistoryUntouched(t *testing.T) {
 	repo, db := openAgentRuntimeRepositorySQLite(t)
 	if err := database.EnsureAgentProductionRuntimeSchema(db); err != nil {
@@ -178,6 +285,60 @@ func TestRetireLegacyAgentRunsBlocksPendingTask(t *testing.T) {
 		t.Fatalf("blocked retirement = %d, %v", retired, err)
 	}
 	assertLegacyRetirementRunStatus(t, db, scope.RunID, agentruntime.RunQueued)
+}
+
+func TestRetireLegacyAgentRunsBlocksPendingVisionTask(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	if err := database.EnsureAgentProductionRuntimeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	scope := legacyRetirementScope("vision-task-blocked")
+	initializeLegacyRetirementRun(t, repo, scope, now)
+	visionTask := model.Task{
+		ID: "legacy-vision-task", UserID: scope.ActorUserID, ProjectID: scope.CanvasID,
+		Audience: model.TaskAudienceInternal, ExecutionKind: model.TaskExecutionProvider,
+		Type: "agent_vision_analysis", Capability: "vision", Status: model.TaskStatusRunning,
+		Operation: "agent_vision:" + scope.RunID, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&visionTask).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	audit, err := repo.AuditRetirableLegacyAgentRuns(agentruntime.LegacyRuntimeVersion, agentruntime.CurrentRuntimeVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(audit) != 1 || !audit[0].HasPendingTask {
+		t.Fatalf("vision-blocked legacy retirement audit = %#v", audit)
+	}
+	retired, err := repo.RetireLegacyAgentRunsAtSafeBoundary(agentruntime.LegacyRuntimeVersion, agentruntime.CurrentRuntimeVersion, agentruntime.FailureRuntimeSchemaRetired)
+	if !errors.Is(err, ErrLegacyRunRetirementBlocked) || retired != 0 {
+		t.Fatalf("vision-blocked retirement = %d, %v", retired, err)
+	}
+	assertLegacyRetirementRunStatus(t, db, scope.RunID, agentruntime.RunQueued)
+}
+
+func TestAgentRunTreeTaskIDsIncludesDirectVisionTask(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	visionTask := model.Task{
+		ID: "agent-vision-tree-task", UserID: scope.ActorUserID, ProjectID: scope.CanvasID,
+		Audience: model.TaskAudienceInternal, ExecutionKind: model.TaskExecutionProvider,
+		Type: "agent_vision_analysis", Capability: "vision", Status: model.TaskStatusRunning,
+		Operation: "agent_vision:" + scope.RunID, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	if err := db.Create(&visionTask).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	taskIDs, err := repo.AgentRunTreeTaskIDs(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(taskIDs) != 1 || taskIDs[0] != visionTask.ID {
+		t.Fatalf("run tree task IDs = %#v, want [%s]", taskIDs, visionTask.ID)
+	}
 }
 
 func TestRetireLegacyAgentRunsBlocksActiveArtifactTask(t *testing.T) {
@@ -640,6 +801,7 @@ func openAgentRuntimeRepositorySQLite(t *testing.T) (*Repository, *gorm.DB) {
 		&model.AgentRun{},
 		&model.AgentTimelineItem{},
 		&model.AgentRunEvent{},
+		&model.AgentExternalDecision{},
 		&model.AgentCheckpoint{},
 		&model.AgentToolCall{},
 		&model.AgentProductionPlanVersion{},
@@ -671,7 +833,7 @@ func openAgentRuntimeRepositorySQLiteFile(t *testing.T) (*Repository, *gorm.DB) 
 	}
 	sqlDB.SetMaxOpenConns(16)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(&model.AgentThread{}, &model.AgentRun{}, &model.AgentTimelineItem{}, &model.AgentRunEvent{}, &model.AgentCheckpoint{}, &model.AgentToolCall{}, &model.AgentProductionPlanVersion{}, &model.AgentProductionArtifact{}, &model.Task{}, &model.BillingOrder{}); err != nil {
+	if err := db.AutoMigrate(&model.AgentThread{}, &model.AgentRun{}, &model.AgentTimelineItem{}, &model.AgentRunEvent{}, &model.AgentExternalDecision{}, &model.AgentCheckpoint{}, &model.AgentToolCall{}, &model.AgentProductionPlanVersion{}, &model.AgentProductionArtifact{}, &model.Task{}, &model.BillingOrder{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.EnsureAgentRuntimeIntegritySchema(db); err != nil {

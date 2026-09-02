@@ -62,6 +62,7 @@ type AdminAgentRunRecord struct {
 	InactiveSeconds        int64                               `json:"inactiveSeconds" gorm:"-"`
 	ActivityClassification AdminAgentRunActivityClassification `json:"activityClassification" gorm:"-"`
 	LinkedModelTaskStatus  string                              `json:"linkedModelTaskStatus" gorm:"-"`
+	LinkedVisionTaskStatus string                              `json:"linkedVisionTaskStatus" gorm:"-"`
 	LinkedMediaTaskStatus  string                              `json:"linkedMediaTaskStatus" gorm:"-"`
 	BillingState           string                              `json:"billingState" gorm:"-"`
 	ProviderRequestState   string                              `json:"providerRequestState" gorm:"-"`
@@ -149,6 +150,13 @@ type adminAgentRunTaskFact struct {
 	Status            model.TaskStatus `gorm:"column:status"`
 	BillingOrderID    string           `gorm:"column:billing_order_id"`
 	ProviderRequestID string           `gorm:"column:provider_request_id"`
+	PollStage         string           `gorm:"column:poll_stage"`
+}
+
+type adminAgentRunVisionBillingLink struct {
+	RunID      string
+	TaskID     string
+	TaskActive bool
 }
 
 type adminAgentRunDirectBillingFact struct {
@@ -181,6 +189,7 @@ func (r *Repository) hydrateAdminAgentRunFacts(records []AdminAgentRunRecord) er
 	for index := range records {
 		record := &records[index]
 		record.LinkedModelTaskStatus = "none"
+		record.LinkedVisionTaskStatus = "none"
 		record.LinkedMediaTaskStatus = "none"
 		record.BillingState = "none"
 		record.ProviderRequestState = "none"
@@ -196,6 +205,9 @@ func (r *Repository) hydrateAdminAgentRunFacts(records []AdminAgentRunRecord) er
 	if err := r.hydrateAdminAgentRunModelTaskFacts(runIDs, recordByRunID, activeTaskIDs, activeBillingOrderIDs); err != nil {
 		return err
 	}
+	if err := r.hydrateAdminAgentRunVisionTaskFacts(runIDs, recordByRunID, activeTaskIDs, activeBillingOrderIDs); err != nil {
+		return err
+	}
 	if err := r.hydrateAdminAgentRunMediaTaskFacts(runIDs, recordByRunID, activeTaskIDs, activeBillingOrderIDs); err != nil {
 		return err
 	}
@@ -207,6 +219,101 @@ func (r *Repository) hydrateAdminAgentRunFacts(records []AdminAgentRunRecord) er
 	}
 	for index := range records {
 		finalizeAdminAgentRunControlFacts(&records[index])
+	}
+	return nil
+}
+
+func (r *Repository) hydrateAdminAgentRunVisionTaskFacts(
+	runIDs []string,
+	records map[string]*AdminAgentRunRecord,
+	activeTaskIDs map[string]map[string]struct{},
+	activeBillingOrderIDs map[string]map[string]struct{},
+) error {
+	operations := make([]string, 0, len(runIDs))
+	runIDByOperation := make(map[string]string, len(runIDs))
+	for _, runID := range runIDs {
+		operation := "agent_vision:" + runID
+		operations = append(operations, operation)
+		runIDByOperation[operation] = runID
+	}
+	var facts []adminAgentRunTaskFact
+	if err := r.db.Model(&model.Task{}).
+		Select("id AS task_id, operation AS run_id, status, billing_order_id, provider_request_id, poll_stage").
+		Where("operation IN ? AND type = ? AND audience = ?", operations, "agent_vision_analysis", model.TaskAudienceInternal).
+		Order("updated_at DESC, id DESC").
+		Scan(&facts).Error; err != nil {
+		return err
+	}
+	billingLinks := make(map[string]adminAgentRunVisionBillingLink, len(facts))
+	for _, fact := range facts {
+		runID := runIDByOperation[fact.RunID]
+		record := records[runID]
+		if record == nil {
+			continue
+		}
+		fact.RunID = runID
+		record.LinkedVisionTaskStatus = preferredAdminAgentRunTaskStatus(record.LinkedVisionTaskStatus, fact.Status)
+		active := adminAgentRunTaskStatusActive(string(fact.Status))
+		if active && strings.TrimSpace(fact.BillingOrderID) == "" {
+			record.hasBlockingBilling = true
+		}
+		trackAdminAgentRunActiveTaskFact(fact, activeTaskIDs, activeBillingOrderIDs)
+		if strings.TrimSpace(fact.ProviderRequestID) != "" || strings.TrimSpace(fact.PollStage) != "" {
+			record.ProviderRequestState = "submitted"
+		} else if record.ProviderRequestState == "none" {
+			record.ProviderRequestState = "not_submitted"
+		}
+		if strings.TrimSpace(fact.BillingOrderID) != "" {
+			billingLinks[fact.BillingOrderID] = adminAgentRunVisionBillingLink{RunID: runID, TaskID: fact.TaskID, TaskActive: active}
+		}
+	}
+	return r.hydrateAdminAgentRunVisionBillingFacts(records, billingLinks)
+}
+
+func (r *Repository) hydrateAdminAgentRunVisionBillingFacts(
+	records map[string]*AdminAgentRunRecord,
+	links map[string]adminAgentRunVisionBillingLink,
+) error {
+	if len(links) == 0 {
+		return nil
+	}
+	orderIDs := make([]string, 0, len(links))
+	for orderID := range links {
+		orderIDs = append(orderIDs, orderID)
+	}
+	var facts []adminAgentRunLinkedTaskBillingFact
+	if err := r.db.Model(&model.BillingOrder{}).
+		Select("id AS billing_order_id, task_id, user_id, status").
+		Where("id IN ?", orderIDs).
+		Scan(&facts).Error; err != nil {
+		return err
+	}
+	found := make(map[string]struct{}, len(facts))
+	for _, fact := range facts {
+		link, exists := links[fact.BillingOrderID]
+		if !exists {
+			continue
+		}
+		found[fact.BillingOrderID] = struct{}{}
+		record := records[link.RunID]
+		if record == nil {
+			continue
+		}
+		if fact.TaskID != link.TaskID || fact.UserID != record.ActorUserID {
+			if link.TaskActive {
+				record.hasBlockingBilling = true
+			}
+			continue
+		}
+		record.BillingState = preferredAdminAgentRunBillingStatus(record.BillingState, fact.Status)
+	}
+	for orderID, link := range links {
+		if _, exists := found[orderID]; exists || !link.TaskActive {
+			continue
+		}
+		if record := records[link.RunID]; record != nil {
+			record.hasBlockingBilling = true
+		}
 	}
 	return nil
 }
@@ -551,7 +658,7 @@ func finalizeAdminAgentRunControlFacts(record *AdminAgentRunRecord) {
 		record.ControlBlockedReason = "billing_unresolved"
 		return
 	}
-	if adminAgentRunTaskStatusActive(record.LinkedModelTaskStatus) || adminAgentRunTaskStatusActive(record.LinkedMediaTaskStatus) {
+	if adminAgentRunTaskStatusActive(record.LinkedModelTaskStatus) || adminAgentRunTaskStatusActive(record.LinkedVisionTaskStatus) || adminAgentRunTaskStatusActive(record.LinkedMediaTaskStatus) {
 		record.ControlDisposition = AdminAgentRunCancelRequestRequired
 		return
 	}

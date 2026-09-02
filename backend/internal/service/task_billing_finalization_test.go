@@ -430,12 +430,22 @@ func TestAgentTaskOutboxIgnoresStaleModelWakeupAfterRunAdvances(t *testing.T) {
 
 func TestExpectedAgentTaskIDReadsFrozenGenerationTaskIdentity(t *testing.T) {
 	scope := agentRuntimeServiceScope()
+	visionCall := agentruntime.ToolCallDecision{
+		ToolCallID: "vision-outbox", ToolName: agentruntime.ToolVisionAnalyze, ActionVersion: 1,
+		Arguments: []byte(`{"modelRecordId":"runtime-vision-model","modelKey":"deepseek-v4-flash-vision-exp","sourceResourceIds":["vision-resource"],"prompt":"描述主体","detail":"low","clientRequestId":"vision-outbox-request"}`),
+	}
+	visionTaskID, err := agentruntime.CapabilityIdempotencyKey(scope, visionCall)
+	if err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
-		name      string
-		toolName  agentruntime.ToolName
-		arguments []byte
-		want      string
-		wantErr   bool
+		name          string
+		toolName      agentruntime.ToolName
+		toolCallID    string
+		actionVersion int
+		arguments     []byte
+		want          string
+		wantErr       bool
 	}{
 		{
 			name: "retired production render", toolName: agentruntime.ToolProductionRender,
@@ -446,8 +456,13 @@ func TestExpectedAgentTaskIDReadsFrozenGenerationTaskIdentity(t *testing.T) {
 			arguments: []byte(`{"commercial":{"taskId":"media-task"}}`), wantErr: true,
 		},
 		{
-			name: "retired visual analysis", toolName: agentruntime.ToolVisionAnalyze,
-			arguments: []byte(`{"commercial":{"taskId":"vision-task"}}`), want: "",
+			name: "retired visual analysis envelope", toolName: agentruntime.ToolVisionAnalyze,
+			arguments: []byte(`{"commercial":{"taskId":"vision-task"}}`), wantErr: true,
+		},
+		{
+			name: "atomic vision capability", toolName: agentruntime.ToolVisionAnalyze,
+			toolCallID: visionCall.ToolCallID, actionVersion: visionCall.ActionVersion,
+			arguments: visionCall.Arguments, want: visionTaskID,
 		},
 		{
 			name: "atomic media capability", toolName: agentruntime.ToolMediaGenerate,
@@ -466,7 +481,10 @@ func TestExpectedAgentTaskIDReadsFrozenGenerationTaskIdentity(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			state := agentruntime.RuntimeState{
 				Status: agentruntime.RunWaitingTool, PendingToolStarted: true,
-				PendingToolCall: &agentruntime.ToolCallDecision{ToolName: test.toolName, Arguments: test.arguments},
+				PendingToolCall: &agentruntime.ToolCallDecision{
+					ToolCallID: test.toolCallID, ToolName: test.toolName,
+					ActionVersion: test.actionVersion, Arguments: test.arguments,
+				},
 			}
 			got, err := expectedAgentTaskID(state, scope, agentWakeGenerationTaskFinished)
 			if test.wantErr {

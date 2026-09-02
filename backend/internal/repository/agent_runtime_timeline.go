@@ -586,25 +586,24 @@ func agentTimelineMutationForEvent(
 			}, nil
 		}
 		var toolName agentruntime.ToolName
-		var safeOutput *agentruntime.CanvasApplyOpsResult
+		var safeOutput json.RawMessage
 		if previous.PendingToolCall != nil {
 			toolName = previous.PendingToolCall.ToolName
-			if toolName == agentruntime.ToolCanvasApplyOps && state.LastToolResult.Succeeded {
-				decoded, err := agentruntime.DecodeCapabilityResult(toolName, state.LastToolResult.Output)
-				output, ok := decoded.(agentruntime.CanvasApplyOpsResult)
-				if err != nil || !ok {
-					return nil, errors.New("agent canvas apply ops timeline output is invalid")
+			if state.LastToolResult.Succeeded {
+				var err error
+				safeOutput, err = agentTimelinePublicCapabilityOutput(toolName, state.LastToolResult.Output)
+				if err != nil {
+					return nil, err
 				}
-				safeOutput = &output
 			}
 		}
 		content, err := marshalAgentTimelineContent(struct {
-			ToolCallID    string                             `json:"toolCallId"`
-			ToolName      agentruntime.ToolName              `json:"toolName,omitempty"`
-			ActionVersion int                                `json:"actionVersion"`
-			Succeeded     bool                               `json:"succeeded"`
-			ErrorCode     string                             `json:"errorCode,omitempty"`
-			Output        *agentruntime.CanvasApplyOpsResult `json:"output,omitempty"`
+			ToolCallID    string                `json:"toolCallId"`
+			ToolName      agentruntime.ToolName `json:"toolName,omitempty"`
+			ActionVersion int                   `json:"actionVersion"`
+			Succeeded     bool                  `json:"succeeded"`
+			ErrorCode     string                `json:"errorCode,omitempty"`
+			Output        json.RawMessage       `json:"output,omitempty"`
 		}{
 			ToolCallID: state.LastToolResult.ToolCallID, ToolName: toolName, ActionVersion: state.LastToolResult.ActionVersion,
 			Succeeded: state.LastToolResult.Succeeded, ErrorCode: state.LastToolResult.ErrorCode, Output: safeOutput,
@@ -692,6 +691,34 @@ func agentTimelineMutationForEvent(
 		return nil, nil
 	default:
 		return nil, fmt.Errorf("agent timeline event kind is unsupported: %s", kind)
+	}
+}
+
+func agentTimelinePublicCapabilityOutput(toolName agentruntime.ToolName, payload json.RawMessage) (json.RawMessage, error) {
+	switch toolName {
+	case agentruntime.ToolCanvasApplyOps:
+		decoded, err := agentruntime.DecodeCapabilityResult(toolName, payload)
+		output, ok := decoded.(agentruntime.CanvasApplyOpsResult)
+		if err != nil || !ok {
+			return nil, errors.New("agent canvas apply ops timeline output is invalid")
+		}
+		return marshalAgentTimelineContent(output)
+	case agentruntime.ToolMediaGenerate:
+		decoded, err := agentruntime.DecodeCapabilityResult(toolName, payload)
+		output, ok := decoded.(agentruntime.MediaGenerateResult)
+		if err != nil || !ok {
+			return nil, errors.New("agent media generate timeline output is invalid")
+		}
+		return marshalAgentTimelineContent(output)
+	case agentruntime.ToolVisionAnalyze:
+		decoded, err := agentruntime.DecodeCapabilityResult(toolName, payload)
+		output, ok := decoded.(agentruntime.VisionAnalyzeResult)
+		if err != nil || !ok {
+			return nil, errors.New("agent vision analyze timeline output is invalid")
+		}
+		return marshalAgentTimelineContent(output)
+	default:
+		return nil, nil
 	}
 }
 

@@ -222,7 +222,7 @@ func inspectLegacyRunRetirementFacts(db *gorm.DB, run model.AgentRun) (legacyRun
 	linkedTaskIDs := db.Model(&model.AgentProductionArtifact{}).
 		Select("task_id").Where("plan_version_id IN (?) AND task_id <> ''", planVersionIDs)
 	relatedTaskIDs := db.Model(&model.Task{}).
-		Select("id").Where("operation = ? OR id IN (?)", "agent_model:"+run.ID, linkedTaskIDs)
+		Select("id").Where("operation IN ? OR id IN (?)", []string{"agent_model:" + run.ID, "agent_vision:" + run.ID}, linkedTaskIDs)
 	var pendingTaskCount int64
 	if err := db.Model(&model.Task{}).Where("id IN (?) AND status IN ?", relatedTaskIDs, []model.TaskStatus{
 		model.TaskStatusQueued, model.TaskStatusRunning,

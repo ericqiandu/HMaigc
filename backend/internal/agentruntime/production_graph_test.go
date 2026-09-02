@@ -9,7 +9,7 @@ import (
 )
 
 func TestRuntimeV5CloudContractIsTheOnlyCurrentContract(t *testing.T) {
-	if agentruntime.CurrentRuntimeVersion != 5 || agentruntime.CurrentPolicyVersion != 5 || agentruntime.CurrentToolSchemaVersion != 6 || agentruntime.CloudAgentUIProtocolVersion != 5 {
+	if agentruntime.CurrentRuntimeVersion != 5 || agentruntime.CurrentPolicyVersion != 5 || agentruntime.CurrentToolSchemaVersion != 8 || agentruntime.RetiredCloudToolSchemaVersion != 7 || agentruntime.CloudAgentUIProtocolVersion != 5 {
 		t.Fatalf("current runtime did not hard cut to cloud capabilities: runtime=%d policy=%d tools=%d ui=%d",
 			agentruntime.CurrentRuntimeVersion, agentruntime.CurrentPolicyVersion, agentruntime.CurrentToolSchemaVersion, agentruntime.CloudAgentUIProtocolVersion)
 	}

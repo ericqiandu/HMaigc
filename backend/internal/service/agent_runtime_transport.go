@@ -312,10 +312,15 @@ type AgentControlError struct {
 	ErrorCode          string `json:"errorCode"`
 	Message            string `json:"-"`
 	LatestStateVersion int    `json:"latestStateVersion,omitempty"`
+	Cause              error  `json:"-"`
 }
 
 func (err *AgentControlError) Error() string {
 	return err.Message
+}
+
+func (err *AgentControlError) Unwrap() error {
+	return err.Cause
 }
 
 func (err *AgentClarificationError) Error() string {
@@ -691,7 +696,7 @@ func (s *Service) enrichAgentRuntimeView(scope agentruntime.Scope, view *AgentRu
 	if err != nil {
 		return nil, err
 	}
-	if record.Status != agentruntime.ToolCallPending || !record.ApprovalRequired || record.ApprovalDecision != "" ||
+	if record.Status != agentruntime.ToolCallWaitingApproval || !record.ApprovalRequired || record.ApprovalDecision != "" ||
 		record.ToolName != string(call.ToolName) || !equalAgentToolArguments(record.InputJSON, call.Arguments) || record.ApprovalProposalHash == "" || record.ApprovalExpiresAt == nil {
 		return nil, errors.New("agent approval projection conflicts with the frozen tool call")
 	}

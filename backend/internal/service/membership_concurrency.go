@@ -23,6 +23,7 @@ func taskConcurrencyCapability(taskType string) (string, error) {
 		taskType == "canvas_text",
 		taskType == "agent_session",
 		taskType == agentRuntimeModelTaskType,
+		taskType == agentVisionTaskType,
 		taskType == "agent_storyboard",
 		taskType == "agent_storyboard_rows":
 		return taskCapabilityOther, nil
@@ -69,7 +70,7 @@ func concurrencyClassCapabilities(concurrencyClass string) []string {
 	case taskCapabilityVideo:
 		return []string{"video"}
 	case taskCapabilityOther:
-		return []string{"audio", "text"}
+		return []string{"audio", "text", "vision"}
 	default:
 		return nil
 	}

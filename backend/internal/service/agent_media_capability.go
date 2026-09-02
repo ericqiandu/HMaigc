@@ -185,13 +185,13 @@ func (s *Service) agentMediaCapabilityCommand(scope agentruntime.Scope, argument
 	if err != nil {
 		return MediaGenerationCommand{}, err
 	}
-	capabilities := publicProviderModelCapabilities(channel.InterfaceType, selected.ModelKey)
+	capabilities := publicProviderModelCapabilities(channel.InterfaceType, selected.ModelKey, selected.Capability)
 	if capabilities == nil {
 		return MediaGenerationCommand{}, errAgentMediaModelUnavailable
 	}
 	facts := []repository.AgentCapabilityResourceFact{}
 	if len(arguments.SourceResourceIDs) > 0 {
-		facts, err = s.repo.AgentCapabilityResourcesForScope(scope, arguments.SourceResourceIDs, len(arguments.SourceResourceIDs))
+		facts, err = s.agentMediaInputResourcesForScope(scope, arguments.SourceResourceIDs)
 		if err != nil || len(facts) != len(arguments.SourceResourceIDs) {
 			return MediaGenerationCommand{}, errors.Join(errAgentMediaInputChanged, err)
 		}

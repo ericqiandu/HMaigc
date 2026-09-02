@@ -216,7 +216,7 @@ func TestNormalizeTaskInputMakesTypedProviderConfigBillable(t *testing.T) {
 		BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100_000, PriceConfigured: true, Enabled: true,
 		AccessPolicy: model.ModelAccessAuthenticated,
 	}
-	if err := db.Create(&model.ModelChannel{ID: "channel-1", Scope: model.ChannelScopeSystem, Enabled: true}).Error; err != nil {
+	if err := db.Create(&model.ModelChannel{ID: "channel-1", Scope: model.ChannelScopeSystem, Enabled: true, InterfaceType: model.ChannelInterfaceChatCompletion}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Create(&channelModel).Error; err != nil {
@@ -250,7 +250,7 @@ func TestTaskBillingOrderRejectsAgentModelOutsideAdministratorDefault(t *testing
 	if err := db.AutoMigrate(&model.ModelChannel{}, &model.ChannelModel{}, &model.ChannelModelPriceTier{}, &model.SystemSetting{}, &model.MembershipPlan{}, &model.MembershipSubscription{}, &model.TeamMember{}); err != nil {
 		t.Fatal(err)
 	}
-	channel := model.ModelChannel{ID: "channel", Scope: model.ChannelScopeSystem, Enabled: true}
+	channel := model.ModelChannel{ID: "channel", Scope: model.ChannelScopeSystem, Enabled: true, InterfaceType: model.ChannelInterfaceChatCompletion}
 	models := []model.ChannelModel{
 		{ID: "default", ChannelID: channel.ID, ModelKey: "gpt", Capability: "text", BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100, PriceConfigured: true, Enabled: true, AccessPolicy: model.ModelAccessAuthenticated},
 		{ID: "other", ChannelID: channel.ID, ModelKey: "deepseek", Capability: "text", BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100, PriceConfigured: true, Enabled: true, AccessPolicy: model.ModelAccessAuthenticated},

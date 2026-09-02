@@ -24,27 +24,41 @@ type AgentRuntimeResourceInput struct {
 	Name       string
 }
 
-func (s *Service) resolveAgentRuntimeConfiguration(ctx context.Context, actorUserID string, input AgentRuntimeConfigurationInput) (agentruntime.RunConfiguration, error) {
+func (s *Service) resolveAgentRuntimeConfiguration(ctx context.Context, scope agentruntime.Scope, input AgentRuntimeConfigurationInput) (agentruntime.RunConfiguration, error) {
+	return s.resolveAgentRuntimeConfigurationForHost(ctx, scope, input, agentruntime.ReasoningHostManaged)
+}
+
+func (s *Service) resolveExternalAgentRuntimeConfiguration(ctx context.Context, scope agentruntime.Scope, input AgentRuntimeConfigurationInput) (agentruntime.RunConfiguration, error) {
+	return s.resolveAgentRuntimeConfigurationForHost(ctx, scope, input, agentruntime.ReasoningHostLocalCodex)
+}
+
+func (s *Service) resolveAgentRuntimeConfigurationForHost(ctx context.Context, scope agentruntime.Scope, input AgentRuntimeConfigurationInput, reasoningHost agentruntime.ReasoningHost) (agentruntime.RunConfiguration, error) {
+	if err := scope.Validate(); err != nil {
+		return agentruntime.RunConfiguration{}, err
+	}
+	if !reasoningHost.Valid() {
+		return agentruntime.RunConfiguration{}, errors.New("Agent 推理宿主无效")
+	}
 	normalized, err := normalizeAgentRuntimeConfigurationInput(input)
 	if err != nil {
 		return agentruntime.RunConfiguration{}, err
 	}
-	callableModels, err := s.agentRuntimeCallableModels(actorUserID)
+	callableModels, err := s.agentRuntimeCallableModels(scope.ActorUserID)
 	if err != nil {
 		return agentruntime.RunConfiguration{}, err
 	}
 	if _, err := filterAgentRuntimeCallableModels(callableModels, normalized.GenerationModels); err != nil {
 		return agentruntime.RunConfiguration{}, err
 	}
-	skills, err := s.resolveAgentRuntimeSkillSelections(ctx, actorUserID, normalized.SkillDirs)
+	skills, err := s.resolveAgentRuntimeSkillSelections(ctx, scope.ActorUserID, normalized.SkillDirs)
 	if err != nil {
 		return agentruntime.RunConfiguration{}, err
 	}
 	attachments := make([]agentruntime.ResourceAttachment, 0, len(normalized.Attachments))
 	for _, inputAttachment := range normalized.Attachments {
-		resource, resourceErr := s.repo.ResourceForUser(actorUserID, inputAttachment.ResourceID)
+		resource, resourceErr := s.agentRuntimeResourceForScope(scope, inputAttachment.ResourceID)
 		if errors.Is(resourceErr, gorm.ErrRecordNotFound) {
-			return agentruntime.RunConfiguration{}, Forbidden("Agent 参考图片不存在或不属于当前用户")
+			return agentruntime.RunConfiguration{}, Forbidden("Agent 参考媒体不存在或不属于当前运行租户")
 		}
 		if resourceErr != nil {
 			return agentruntime.RunConfiguration{}, resourceErr
@@ -57,11 +71,38 @@ func (s *Service) resolveAgentRuntimeConfiguration(ctx context.Context, actorUse
 			SizeBytes: resource.Size, Width: resource.Width, Height: resource.Height, DurationMS: resource.DurationMs,
 		})
 	}
+	if reasoningHost == agentruntime.ReasoningHostManaged {
+		visionModel, _, visionErr := s.agentRuntimeDefaultVisionModel()
+		if visionErr != nil {
+			return agentruntime.RunConfiguration{}, visionErr
+		}
+		normalized.GenerationModels.Vision = &agentruntime.GenerationModelSelection{
+			ChannelID: visionModel.ChannelID, ModelRecordID: visionModel.ID, Model: visionModel.ModelKey, PriceVersion: visionModel.PriceVersion,
+		}
+	}
 	configuration := agentruntime.RunConfiguration{GenerationModels: normalized.GenerationModels, Skills: skills, Attachments: attachments, ExecutionMode: normalized.ExecutionMode}
 	if err := agentruntime.ValidateRunConfiguration(configuration); err != nil {
 		return agentruntime.RunConfiguration{}, BadAuthRequest("Agent 模型或 Skill 选择无效")
 	}
 	return configuration, nil
+}
+
+func (s *Service) agentRuntimeResourceForScope(scope agentruntime.Scope, resourceID string) (*model.Resource, error) {
+	switch scope.TenantKind {
+	case agentruntime.TenantPersonal:
+		resource, err := s.repo.ResourceForUser(scope.ActorUserID, resourceID)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(resource.TeamID) != "" {
+			return nil, gorm.ErrRecordNotFound
+		}
+		return resource, nil
+	case agentruntime.TenantTeam:
+		return s.repo.ResourceForTeam(scope.TenantID, resourceID)
+	default:
+		return nil, errors.New("Agent 运行租户无效")
+	}
 }
 
 func (s *Service) resolveAgentRuntimeSkillSelections(ctx context.Context, actorUserID string, dirs []string) ([]agentruntime.SkillSelection, error) {
@@ -94,12 +135,15 @@ func (s *Service) resolveAgentRuntimeSkillSelections(ctx context.Context, actorU
 }
 
 func normalizeAgentRuntimeConfigurationInput(input AgentRuntimeConfigurationInput) (AgentRuntimeConfigurationInput, error) {
+	if input.GenerationModels.Vision != nil {
+		return AgentRuntimeConfigurationInput{}, BadAuthRequest("视觉理解模型由管理员统一配置，客户端不能提交")
+	}
+	if err := validateGenerationModelSelections(input.GenerationModels); err != nil {
+		return AgentRuntimeConfigurationInput{}, BadAuthRequest("Agent 模型选择无效")
+	}
 	result := AgentRuntimeConfigurationInput{GenerationModels: cloneGenerationModelSelections(input.GenerationModels), ExecutionMode: input.ExecutionMode}
 	if result.ExecutionMode != agentruntime.ExecutionGuided && result.ExecutionMode != agentruntime.ExecutionAutomatic {
 		return AgentRuntimeConfigurationInput{}, BadAuthRequest("Agent 执行模式无效")
-	}
-	if err := validateGenerationModelSelections(result.GenerationModels); err != nil {
-		return AgentRuntimeConfigurationInput{}, BadAuthRequest("Agent 模型选择无效")
 	}
 	seen := make(map[string]struct{}, len(input.SkillDirs))
 	for _, raw := range input.SkillDirs {
@@ -158,11 +202,11 @@ func agentRuntimeConfigurationMatchesInput(configuration agentruntime.RunConfigu
 }
 
 func validateGenerationModelSelections(selections agentruntime.GenerationModelSelections) error {
-	for _, selection := range []*agentruntime.GenerationModelSelection{selections.Image, selections.Video, selections.Audio, selections.Vision} {
+	for _, selection := range []*agentruntime.GenerationModelSelection{selections.Image, selections.Video, selections.Audio} {
 		if selection == nil {
 			continue
 		}
-		if strings.TrimSpace(selection.ChannelID) == "" || len(selection.ChannelID) > 80 || strings.TrimSpace(selection.Model) == "" || len(selection.Model) > 120 {
+		if strings.TrimSpace(selection.ChannelID) == "" || len(selection.ChannelID) > 80 || strings.TrimSpace(selection.Model) == "" || len(selection.Model) > 120 || selection.ModelRecordID != "" || selection.PriceVersion != 0 {
 			return errors.New("invalid generation model selection")
 		}
 	}
@@ -202,15 +246,12 @@ func cloneGenerationModelSelections(value agentruntime.GenerationModelSelections
 	if value.Audio != nil {
 		result.Audio = &agentruntime.GenerationModelSelection{ChannelID: strings.TrimSpace(value.Audio.ChannelID), Model: strings.TrimSpace(value.Audio.Model)}
 	}
-	if value.Vision != nil {
-		result.Vision = &agentruntime.GenerationModelSelection{ChannelID: strings.TrimSpace(value.Vision.ChannelID), Model: strings.TrimSpace(value.Vision.Model)}
-	}
 	return result
 }
 
 func sameGenerationModelSelections(left agentruntime.GenerationModelSelections, right agentruntime.GenerationModelSelections) bool {
 	return sameGenerationModelSelection(left.Image, right.Image) && sameGenerationModelSelection(left.Video, right.Video) &&
-		sameGenerationModelSelection(left.Audio, right.Audio) && sameGenerationModelSelection(left.Vision, right.Vision)
+		sameGenerationModelSelection(left.Audio, right.Audio)
 }
 
 func sameGenerationModelSelection(left *agentruntime.GenerationModelSelection, right *agentruntime.GenerationModelSelection) bool {

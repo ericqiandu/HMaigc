@@ -74,6 +74,38 @@ func TestPostgresTokenSettlementReturnsDifferenceExactlyOnce(t *testing.T) {
 	assertTokenBillingSettlement(t, db, order.ID, 94_000_000, 0, 6_000_000, 24_000_000)
 }
 
+func TestPostgresTokenBillingResponseUsageSettlementReturnsDifferenceExactlyOnce(t *testing.T) {
+	db := openPostgresTokenBillingSchema(t)
+	repo := New(db)
+	order := postgresTokenOrder("pg-response-usage", "pg-response-usage-user")
+	account := model.CreditAccount{UserID: order.UserID, AvailableMicrocredits: 100_000_000, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := db.Create(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ReserveBillingOrder(order); err != nil {
+		t.Fatal(err)
+	}
+	fact := ResponseUsageSettlementFact{
+		ProviderRequestID: "resp-pg-response-usage",
+		Usage:             TokenUsageFact{InputTokens: 20, CachedTokens: 2, OutputTokens: 5},
+		UsageStatus:       "reported", AmountMicrocredits: 6_000_000, SettledAt: time.Now().UTC(),
+	}
+	if err := repo.SettleTokenBillingFromResponseUsage(order.ID, fact); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SettleTokenBillingFromResponseUsage(order.ID, fact); err != nil {
+		t.Fatal(err)
+	}
+	assertTokenBillingSettlement(t, db, order.ID, 94_000_000, 0, 6_000_000, 24_000_000)
+	var stored model.BillingOrder
+	if err := db.First(&stored, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.ProviderRequestID != fact.ProviderRequestID || stored.ProviderBillingUnit != "microcredit" {
+		t.Fatalf("postgres response-usage settlement = %#v", stored)
+	}
+}
+
 func openPostgresTokenBillingSchema(t *testing.T) *gorm.DB {
 	t.Helper()
 	db := testsupport.OpenPaymentIntegrationPostgres(t)

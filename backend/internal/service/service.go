@@ -251,7 +251,10 @@ func agentTaskParentRunID(operation string) (string, bool) {
 	if runID, ok := agentRuntimeModelRunID(operation); ok {
 		return runID, true
 	}
-	return agentMediaGenerationRunID(operation)
+	if runID, ok := agentMediaGenerationRunID(operation); ok {
+		return runID, true
+	}
+	return agentVisionRunID(operation)
 }
 
 func validateTaskEnvelopeBillingTenant(binding taskruntime.Binding, order *model.BillingOrder) error {
@@ -1206,11 +1209,14 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 	_ = s.log(task.UserID, task.ID, "info", "后端任务开始处理", "")
 	runID := ""
 	wakeup := agentWakeGenerationTaskFinished
+	visionTask := task.Type == agentVisionTaskType
 	if task.Type == agentRuntimeModelTaskType {
 		runID, _ = agentRuntimeModelRunID(task.Operation)
 		wakeup = agentWakeModelTaskFinished
 	} else if mediaRunID, mediaTask := agentMediaGenerationRunID(task.Operation); mediaTask {
 		runID = mediaRunID
+	} else if visionRunID, found := agentVisionRunID(task.Operation); found {
+		runID = visionRunID
 	}
 	terminalOutbox, outboxErr := taskAgentRunOutboxDraft(*task, time.Now().UTC())
 	if outboxErr != nil {
@@ -1292,7 +1298,7 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 				return orderErr
 			}
 		}
-		if !billingAlreadyUncertain {
+		if !billingAlreadyUncertain && !visionTask {
 			var billingStartErr error
 			if tokenBilledTask {
 				billingStartErr = s.BeginTokenBillingRequest(task.BillingOrderID)
@@ -1318,12 +1324,22 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 			}
 		}
 	}
-	result, canvasOps, err := s.processTask(ctx, *task)
+	var visionExecution *agentVisionExecution
+	var result map[string]interface{}
+	var canvasOps []map[string]interface{}
+	if visionTask {
+		visionExecution, err = s.processAgentVisionAnalysisTask(ctx, task)
+		if visionExecution != nil {
+			task.ProviderRequestID = visionExecution.ProviderRequestID
+		}
+	} else {
+		result, canvasOps, err = s.processTask(ctx, *task)
+	}
 	providerSucceeded := err == nil
-	if err == nil {
+	if err == nil && !visionTask {
 		result, err = s.persistGeneratedMediaResult(task.UserID, result)
 	}
-	if err == nil {
+	if err == nil && !visionTask {
 		_, err = s.finalizeCharacterTurnaroundTask(*task, result)
 	}
 	if err != nil {
@@ -1368,7 +1384,9 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		task.Error = taskFailureMessage(err)
 		task.CompletedAt = ptr(time.Now())
 		action := repository.FailedTaskBillingRefund
-		if providerSucceeded || (!channelSlotFailedBeforeRequest && s.BillingFailureRequiresReview(task.BillingOrderID, task.ID, err)) {
+		visionRequestSent := visionExecution != nil && visionExecution.RequestSent
+		if providerSucceeded || visionRequestSent || errors.Is(err, errAgentVisionDispatchAmbiguous) ||
+			(!visionTask && !channelSlotFailedBeforeRequest && s.BillingFailureRequiresReview(task.BillingOrderID, task.ID, err)) {
 			action = repository.FailedTaskBillingUncertain
 		}
 		if finalizeErr := s.repo.FinalizeFailedTaskAndBillingWithOutbox(task, action, task.Error, terminalOutbox); finalizeErr != nil {
@@ -1385,7 +1403,11 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		return err
 	}
 	if latest.Status == model.TaskStatusCancelled {
-		resultJSON, marshalErr := json.Marshal(result)
+		var cancellationResult interface{} = result
+		if visionTask && visionExecution != nil {
+			cancellationResult = visionExecution.Result
+		}
+		resultJSON, marshalErr := json.Marshal(cancellationResult)
 		if marshalErr != nil {
 			billingErr := s.MarkBillingUncertain(task.BillingOrderID, "上游已返回结果，但取消任务的结果无法编码")
 			return errors.Join(marshalErr, billingErr)
@@ -1406,6 +1428,38 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		terminalOutboxCommitted = terminalOutbox != nil
 		_ = s.markSessionFailed(*latest, "会话任务已取消。")
 		_ = s.log(task.UserID, task.ID, "warn", "任务已取消，上游已生成的资产已保留", "")
+		return nil
+	}
+	if visionTask {
+		if visionExecution == nil {
+			return errors.New("vision.analyze execution result is missing")
+		}
+		task.Stage = "持久化图片理解结果"
+		task.Progress = 90
+		if progressErr := s.repo.UpdateTaskProgress(task.ID, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken, task.Stage, task.Progress); progressErr != nil {
+			return progressErr
+		}
+		if err := s.saveAgentVisionTaskCompletion(task, *visionExecution); err != nil {
+			task.Status = model.TaskStatusFailed
+			task.Stage = "图片理解结果保存失败"
+			task.Error = taskFailureMessage(err)
+			task.CompletedAt = ptr(time.Now())
+			if finalizeErr := s.repo.FinalizeFailedTaskAndBillingWithOutbox(task, repository.FailedTaskBillingUncertain, "上游已成功但图片理解结果未保存："+task.Error, terminalOutbox); finalizeErr != nil {
+				_ = s.log(task.UserID, task.ID, "error", "图片理解结果与计费终态提交失败", taskFailureMessage(finalizeErr))
+				return errors.Join(err, fmt.Errorf("任务与计费终态提交失败：%w", finalizeErr))
+			}
+			terminalOutboxCommitted = terminalOutbox != nil
+			_ = s.log(task.UserID, task.ID, "error", "图片理解结果保存失败", task.Error)
+			return err
+		}
+		terminalOutboxCommitted = terminalOutbox != nil
+		if visionExecution.ManagedBilling {
+			if err := s.settleCompletedTaskBilling(ctx, task.BillingOrderID); err != nil {
+				_ = s.MarkBillingUncertain(task.BillingOrderID, "图片理解成功但积分结算失败："+err.Error())
+				_ = s.log(task.UserID, task.ID, "error", "图片理解积分结算失败，已进入待核对", err.Error())
+			}
+		}
+		_ = s.log(task.UserID, task.ID, "info", "图片理解任务完成，结果已持久化", "")
 		return nil
 	}
 	resultJSON, _ := json.Marshal(result)

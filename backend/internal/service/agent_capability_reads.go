@@ -172,18 +172,61 @@ func (executor agentCanvasReadCapabilityExecutor) Execute(ctx context.Context, s
 	if err != nil {
 		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "capability_ownership_forbidden", Err: err}
 	}
-	if strings.TrimSpace(scope.DomainProjectID) == "" || canvas.ProjectID != scope.DomainProjectID {
+	if canvas.ProjectID != scope.DomainProjectID {
 		return agentruntime.ToolExecutionResult{}, failAgentCapability("capability_scope_conflict", "canvas.read project scope is stale")
 	}
 	result, err := decodeScopedCanvasReadResult(canvas.ID, canvas.Revision, canvas.PayloadJSON, arguments.SelectedNodeIDs)
 	if err != nil {
 		return agentruntime.ToolExecutionResult{}, err
 	}
+	callableModels, err := executor.service.agentRuntimeCallableModels(scope.ActorUserID)
+	if err != nil {
+		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "canvas_model_facts_unavailable", Err: err}
+	}
+	result.DomainProjectID = scope.DomainProjectID
+	result.CallableModels, err = canvasReadCallableModelFacts(callableModels)
+	if err != nil {
+		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "canvas_model_facts_invalid", Err: err}
+	}
 	execution, err := agentruntime.NewToolExecutionResult(agentruntime.ToolCanvasRead, result)
 	if err != nil {
 		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "capability_result_invalid", Err: err}
 	}
 	return execution, nil
+}
+
+func canvasReadCallableModelFacts(values []agentRuntimeCallableModelFact) ([]agentruntime.CanvasCallableModelFact, error) {
+	result := make([]agentruntime.CanvasCallableModelFact, 0, len(values))
+	for _, value := range values {
+		// canvas.read publishes only models that media.generate can invoke. The
+		// administrator-selected vision model is frozen separately in the Run
+		// configuration and is consumed exclusively by vision.analyze.
+		if value.Capability == "vision" {
+			continue
+		}
+		priceTiers := make([]agentruntime.CanvasCallableModelPriceTier, len(value.PriceTiers))
+		for index, tier := range value.PriceTiers {
+			priceTiers[index] = agentruntime.CanvasCallableModelPriceTier{
+				Resolution: tier.Resolution, InputVariant: tier.InputVariant, UsageMetric: tier.UsageMetric,
+				IncludedQuantity: tier.IncludedQuantity, UnitPriceMicrocredits: tier.UnitPriceMicrocredits,
+			}
+		}
+		var providerCapabilities json.RawMessage
+		if value.ProviderCapabilities != nil {
+			encoded, err := json.Marshal(value.ProviderCapabilities)
+			if err != nil {
+				return nil, err
+			}
+			providerCapabilities = encoded
+		}
+		result = append(result, agentruntime.CanvasCallableModelFact{
+			ChannelID: value.ChannelID, ModelRecordID: value.ModelRecordID, ModelKey: value.Model,
+			DisplayName: value.DisplayName, Capability: value.Capability, BillingMode: value.BillingMode,
+			PriceStrategy: value.PriceStrategy, UnitPriceMicrocredits: value.UnitPriceMicrocredits,
+			PriceTiers: priceTiers, ProviderCapabilities: providerCapabilities,
+		})
+	}
+	return result, nil
 }
 
 func decodeScopedCanvasReadResult(canvasID string, revision int64, payload string, selectedNodeIDs []string) (agentruntime.CanvasReadResult, error) {
@@ -222,5 +265,6 @@ func decodeScopedCanvasReadResult(canvasID string, revision int64, payload strin
 		Nodes: append([]json.RawMessage{}, document.Nodes...), Edges: append([]json.RawMessage{}, document.Connections...),
 		SelectedNodeIDs: append([]string{}, selectedNodeIDs...),
 		Viewport:        agentruntime.CanvasViewport{X: *document.Viewport.X, Y: *document.Viewport.Y, Zoom: *document.Viewport.K},
+		CallableModels:  []agentruntime.CanvasCallableModelFact{},
 	}, nil
 }

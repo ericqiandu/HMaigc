@@ -57,6 +57,9 @@ func TestTaskWatermarkCapabilityUsesClosedBackendFacts(t *testing.T) {
 	if got, err := svc.taskWatermarkCapability("text", nil); err != nil || got != model.WatermarkCapabilityNotApplicable {
 		t.Fatalf("text capability = %q, err=%v", got, err)
 	}
+	if got, err := svc.taskWatermarkCapability("vision", nil); err != nil || got != model.WatermarkCapabilityNotApplicable {
+		t.Fatalf("vision capability = %q, err=%v", got, err)
+	}
 }
 
 func TestTaskWatermarkCapabilityUsesManagedRegistryIdentity(t *testing.T) {

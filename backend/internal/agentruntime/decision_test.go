@@ -7,7 +7,7 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 )
 
-func TestCurrentDecisionParserAcceptsV6AndRejectsV5Tools(t *testing.T) {
+func TestCurrentDecisionParserAcceptsV8AndRejectsHistoricalTools(t *testing.T) {
 	t.Parallel()
 
 	currentTools := []string{
@@ -16,6 +16,7 @@ func TestCurrentDecisionParserAcceptsV6AndRejectsV5Tools(t *testing.T) {
 		"assets.read",
 		"assets.publish",
 		"media.generate",
+		"vision.analyze",
 		"skills.load",
 	}
 	for _, toolName := range currentTools {
@@ -32,7 +33,6 @@ func TestCurrentDecisionParserAcceptsV6AndRejectsV5Tools(t *testing.T) {
 	retiredTools := []string{
 		"skill.load",
 		"specialist.delegate",
-		"vision.analyze",
 		"canvas.project",
 		"media.assemble",
 	}
@@ -90,6 +90,9 @@ func TestParseModelDecisionForToolSchemaHardCutsCurrentTools(t *testing.T) {
 	}
 	if _, err := agentruntime.ParseModelDecisionForToolSchema(legacy, agentruntime.LegacyToolSchemaVersion); err == nil {
 		t.Fatal("retired schema remained executable after hard cut")
+	}
+	if _, err := agentruntime.ParseModelDecisionForToolSchema(current, agentruntime.RetiredCloudToolSchemaVersion); err == nil {
+		t.Fatal("retired cloud v7 schema remained executable after v8 hard cut")
 	}
 }
 

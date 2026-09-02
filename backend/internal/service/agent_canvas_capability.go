@@ -69,7 +69,7 @@ func (executor agentCanvasApplyOpsCapabilityExecutor) Execute(ctx context.Contex
 	if err != nil {
 		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "capability_ownership_forbidden", Err: err}
 	}
-	if canvas.ProjectID != scope.DomainProjectID || strings.TrimSpace(scope.DomainProjectID) == "" {
+	if canvas.ProjectID != scope.DomainProjectID {
 		return agentruntime.ToolExecutionResult{}, failAgentCapability("capability_scope_conflict", "canvas.apply_ops project scope is stale")
 	}
 	if canvas.Revision != arguments.BaseRevision {

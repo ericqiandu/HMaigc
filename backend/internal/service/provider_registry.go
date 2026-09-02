@@ -51,6 +51,7 @@ type ProviderModelSpec struct {
 	MaxAudios                                int                       `json:"maxAudios"`
 	MaxVideoDurationSeconds                  int                       `json:"maxVideoDurationSeconds"`
 	MaxAudioDurationSeconds                  int                       `json:"maxAudioDurationSeconds"`
+	MaxInputImageTokens                      int                       `json:"maxInputImageTokens"`
 	Tools                                    []string                  `json:"tools"`
 	Published                                bool                      `json:"published"`
 	ChannelModelID                           string                    `json:"channelModelId"`
@@ -230,6 +231,10 @@ func kuaiziProviderAdapterDescriptors() []ProviderAdapterDescriptor {
 					ModelKey: "deepseek-v4-pro", DisplayName: "DeepSeek V4 Pro", MarketingCopy: "纯文本 Agent 模型，不支持图片输入",
 					UpstreamMode: "deepseek-v4-pro", Capability: "text", WatermarkCapability: model.WatermarkCapabilityNotApplicable,
 				},
+				{
+					ModelKey: "deepseek-v4-flash-vision-exp", DisplayName: "DeepSeek V4 Flash Vision", MarketingCopy: "支持图片理解的 DeepSeek 视觉模型",
+					UpstreamMode: "deepseek-v4-flash-vision-exp", Capability: "vision", MaxInputImageTokens: 384, WatermarkCapability: model.WatermarkCapabilityNotApplicable,
+				},
 			},
 		},
 	}
@@ -349,9 +354,12 @@ func kuaiziProviderFamilyForModel(modelKey string) (string, ProviderModelSpec, b
 	return "", ProviderModelSpec{}, false
 }
 
-func kuaiziModelSupportsTokenUsageBilling(modelKey string) bool {
-	family, spec, managed := kuaiziProviderFamilyForModel(modelKey)
-	return managed && family == "deepseek" && spec.Capability == "text"
+func modelInputImageTokenCeiling(modelKey string) int {
+	spec, registered := kuaiziProviderModelSpec(modelKey)
+	if !registered || spec.Capability != "vision" {
+		return 0
+	}
+	return spec.MaxInputImageTokens
 }
 
 func validateProviderRegistryRuntime(descriptors []ProviderAdapterDescriptor) error {

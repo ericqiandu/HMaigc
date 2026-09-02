@@ -7,6 +7,17 @@ import (
 
 type TenantKind string
 
+type ReasoningHost string
+
+const (
+	ReasoningHostManaged    ReasoningHost = "managed"
+	ReasoningHostLocalCodex ReasoningHost = "local_codex"
+)
+
+func (host ReasoningHost) Valid() bool {
+	return host == ReasoningHostManaged || host == ReasoningHostLocalCodex
+}
+
 const (
 	TenantPersonal TenantKind = "personal"
 	TenantTeam     TenantKind = "team"
@@ -49,8 +60,9 @@ const (
 	ProductionAgentUIProtocolVersion = 4
 	CloudRuntimeVersion              = 5
 	CloudPolicyVersion               = 5
-	CloudToolSchemaVersion           = 6
+	CloudToolSchemaVersion           = 8
 	CloudAgentUIProtocolVersion      = 5
+	RetiredCloudToolSchemaVersion    = 7
 	RetiredRuntimeVersion            = 3
 	RetiredPolicyVersion             = 3
 	RetiredToolSchemaVersion         = 4

@@ -51,6 +51,16 @@ func (s *Service) advanceAgentRun(scope agentruntime.Scope, wakeup agentRunWakeu
 		}
 		switch view.State.Status {
 		case agentruntime.RunQueued, agentruntime.RunRunning:
+			switch view.Run.ReasoningHost {
+			case agentruntime.ReasoningHostManaged:
+				// Managed runs continue by scheduling the next authoritative model step.
+			case agentruntime.ReasoningHostLocalCodex:
+				// External reasoning resumes only when the browser bridge submits the
+				// next decision. Tool completion must never create a cloud model task.
+				return s.agentRuntimeProgressForCurrentState(scope, view.State)
+			default:
+				return nil, errors.New("agent reasoning host is invalid")
+			}
 			progress, stepErr := s.resumeAgentRuntimeStep(scope)
 			if stepErr != nil {
 				return s.handleAgentRunAdvanceError(scope, view.State, stepErr)

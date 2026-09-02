@@ -98,6 +98,42 @@ func TestAgentCanvasCapabilityAppliesApprovedProposalExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestAgentCanvasCapabilityAppliesApprovedProposalToStandaloneCanvas(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", "runtime-canvas").Update("project_id", "").Error; err != nil {
+		t.Fatal(err)
+	}
+	scope := agentRuntimeServiceScope()
+	scope.DomainProjectID = ""
+	scope.ThreadID = "standalone-canvas-thread"
+	scope.RunID = "standalone-canvas-run"
+	call := agentCanvasApplyOpsCall(`{"canvasId":"runtime-canvas","baseRevision":7,"clientMutationId":"standalone-mutation","operations":[{"operationId":"standalone-add","type":"add_node","node":{"id":"standalone-image","type":"image","title":"独立画布图片","position":{"x":0,"y":0},"width":300,"height":300,"metadata":{}}}]}`)
+	seedAgentCanvasProposalForScope(t, svc, db, scope, call, true)
+	registry, err := newAgentCapabilityRegistry(svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := registry.Execute(context.Background(), scope, call)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := agentruntime.DecodeCapabilityResult(agentruntime.ToolCanvasApplyOps, result.Output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := decoded.(agentruntime.CanvasApplyOpsResult)
+	if receipt.CommittedRevision != 8 || len(receipt.Evidence.AddedNodeIDs) != 1 || receipt.Evidence.AddedNodeIDs[0] != "standalone-image" {
+		t.Fatalf("standalone canvas receipt = %#v", receipt)
+	}
+	var canvas model.CanvasProject
+	if err := db.First(&canvas, "id = ?", "runtime-canvas").Error; err != nil {
+		t.Fatal(err)
+	}
+	if canvas.ProjectID != "" || canvas.Revision != 8 || !strings.Contains(canvas.PayloadJSON, `"id":"standalone-image"`) {
+		t.Fatalf("standalone canvas = %#v", canvas)
+	}
+}
+
 func TestAgentCanvasCapabilityRejectsStaleRevisionWithoutPartialMutation(t *testing.T) {
 	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
 	call := agentCanvasApplyOpsCall(`{"canvasId":"runtime-canvas","baseRevision":6,"clientMutationId":"stale-mutation","operations":[{"operationId":"op-add","type":"add_node","node":{"id":"node-stale","type":"text","title":"不应写入","position":{"x":0,"y":0},"width":200,"height":100,"metadata":{}}}]}`)
@@ -192,6 +228,11 @@ func TestAgentRuntimeViewProjectsExactPendingApprovalProposal(t *testing.T) {
 	call := agentCanvasApplyOpsCall(`{"canvasId":"runtime-canvas","baseRevision":7,"clientMutationId":"approval-view-mutation","operations":[{"operationId":"op-add","type":"add_node","node":{"id":"node-approved","type":"text","title":"待确认","position":{"x":0,"y":0},"width":200,"height":100,"metadata":{}}}]}`)
 	proposalHash := seedAgentCanvasProposal(t, svc, db, call, false)
 	scope := agentRuntimeServiceScope()
+	if err := db.Model(&model.AgentToolCall{}).
+		Where("run_id = ? AND tool_call_id = ? AND action_version = ?", scope.RunID, call.ToolCallID, call.ActionVersion).
+		Update("status", agentruntime.ToolCallWaitingApproval).Error; err != nil {
+		t.Fatal(err)
+	}
 	run, err := svc.repo.AgentRunForScope(scope)
 	if err != nil {
 		t.Fatal(err)
@@ -251,7 +292,7 @@ func TestAgentRuntimeViewProjectsAuthoritativeMediaApprovalQuote(t *testing.T) {
 		t.Fatal("media.generate policy is missing")
 	}
 	record.ID = newID()
-	record.Status = agentruntime.ToolCallPending
+	record.Status = agentruntime.ToolCallWaitingApproval
 	record.RiskLevel = policy.RiskLevel
 	record.RequiredAccess = policy.RequiredAccess
 	record.ApprovalRequired = true
@@ -332,9 +373,13 @@ func seedApprovedAgentCanvasProposal(t *testing.T, svc *Service, db *gorm.DB, ca
 
 func seedAgentCanvasProposal(t *testing.T, svc *Service, db *gorm.DB, call agentruntime.ToolCallDecision, approved bool) string {
 	t.Helper()
-	scope := agentRuntimeServiceScope()
+	return seedAgentCanvasProposalForScope(t, svc, db, agentRuntimeServiceScope(), call, approved)
+}
+
+func seedAgentCanvasProposalForScope(t *testing.T, svc *Service, db *gorm.DB, scope agentruntime.Scope, call agentruntime.ToolCallDecision, approved bool) string {
+	t.Helper()
 	now := time.Now().UTC()
-	configuration, err := svc.resolveAgentRuntimeConfiguration(context.Background(), scope.ActorUserID, guidedAgentRuntimeConfigurationInput())
+	configuration, err := svc.resolveAgentRuntimeConfiguration(context.Background(), scope, guidedAgentRuntimeConfigurationInput())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,6 +417,7 @@ func seedAgentCanvasProposal(t *testing.T, svc *Service, db *gorm.DB, call agent
 		ApprovalProposalHash: proposalHash, ApprovalExpiresAt: &proposal.ExpiresAt, CreatedAt: now, UpdatedAt: now,
 	}
 	if approved {
+		record.Status = agentruntime.ToolCallPending
 		record.ApprovalDecision = agentruntime.ToolApprovalApproved
 		record.ApprovalByUserID = scope.ActorUserID
 		record.ApprovalDecidedAt = &now

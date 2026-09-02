@@ -16,13 +16,14 @@
 
 ## Agent Runtime 作用域与恢复事实
 
-单一 Agent Runtime 当前建立服务端作用域、恢复事实、计费模型决策循环、工具审批、画布确定性修改、真实生成任务协调与版本化影视生产计划。七张核心表职责如下：
+单一 Agent Runtime 当前建立服务端作用域、恢复事实、计费模型决策循环、工具审批、画布确定性修改、真实生成任务协调与版本化影视生产计划。核心表职责如下：
 
-- `agent_threads` 固定个人或团队租户、创建用户、领域项目和画布；租户与权限只能由现有画布权限服务签发，浏览器不能提交或覆盖这些身份事实；
-- `agent_runs` 保存一次运行的 actor、客户端幂等请求号、显式状态、最后事件序号及冻结的 runtime/policy/tool schema 版本；`thread_id + client_request_id` 唯一；
+- `agent_threads` 固定推理宿主、外部线程身份、个人或团队租户、创建用户、领域项目和画布；租户与权限只能由现有画布权限服务签发，浏览器不能提交或覆盖这些身份事实；
+- `agent_runs` 保存一次运行的推理宿主、actor、客户端幂等请求号、显式状态、最后事件序号及冻结的 runtime/policy/tool schema 版本；`thread_id + client_request_id` 唯一，托管运行与本机 Codex 运行不能互换推理宿主或模型身份；
 - `agent_run_events` 以 `run_id + sequence` 唯一保存有序事件；序号由数据库原子递增，不依赖进程内计数器；
 - `agent_checkpoints` 以同一 run/sequence 保存可恢复状态版本；事件、序号和 checkpoint 在一个事务内提交或回滚；
-- `agent_tool_calls` 以 `run_id + tool_call_id + action_version` 唯一冻结工具名、完整参数、风险、权限、审批、幂等键、执行开始时间与真实结果；审批和执行只能消费当前 checkpoint 指向的精确调用版本。
+- `agent_external_decisions` 为本机 Codex 每次结构化决策保存不可变幂等回执，冻结请求摘要、预期状态版本和结果状态版本；回执与 Runtime 状态转换必须在同一事务提交，重复请求只能读取同一结果，载荷或预期版本变化必须冲突；
+- `agent_tool_calls` 以 `run_id + tool_call_id + action_version` 唯一冻结工具名、完整参数、风险、权限、审批、幂等键、执行开始时间与真实结果；审批和执行只能消费当前 checkpoint 指向的精确调用版本。`media.generate` 还以租户、用户、项目、画布、线程、目标节点和客户端请求号派生稳定商业幂等键：首个活动或成功调用独占该键，失败调用释放，重放调用只保存原始 run/tool/action 来源而不再次占有商业身份；
 - `agent_production_plan_versions` 以 `tenant_kind + tenant_id + domain_project_id + canvas_id + plan_key + version` 唯一追加不可变的生产计划版本，并绑定来源 run、基础版本、剧本和总时长；相同业务键可在不同租户和画布独立存在，同一 Scope 的同一基础版本只允许一个事实胜出；
 - `agent_production_artifacts` 以 `plan_version_id + shot_key + kind` 唯一保存一份脚本 Artifact 及逐镜头分镜图、视频片段 Ledger；Task、BillingOrder 与 Resource 只能各绑定一次，状态与 attempt 使用 CAS 转换。
 
