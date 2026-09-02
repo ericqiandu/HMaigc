@@ -65,7 +65,7 @@ jobs:
 
       - name: Test web
         working-directory: web
-        run: bun test
+        run: bun run test
 
       - name: Build web
         working-directory: web
