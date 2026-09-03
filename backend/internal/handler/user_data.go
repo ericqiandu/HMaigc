@@ -196,6 +196,19 @@ func RegisterUserDataRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"assets": assets})
 	})
+	r.GET("/assets/health", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		health, err := svc.UserAssetHealth(c.Request.Context(), user.ID)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, gin.H{"assets": health})
+	})
 	r.GET("/assets/:id", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {

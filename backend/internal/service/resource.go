@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha1"
 	"encoding/base64"
@@ -676,23 +677,43 @@ type ossObjectMetadata struct {
 }
 
 func headOSSObject(setting ossSettingValue, objectKey string) (ossObjectMetadata, error) {
+	metadata, exists, err := inspectOSSObject(context.Background(), setting, objectKey)
+	if err != nil {
+		return ossObjectMetadata{}, err
+	}
+	if !exists {
+		return ossObjectMetadata{}, errors.New("OSS 对象不存在")
+	}
+	return metadata, nil
+}
+
+func ossObjectExists(ctx context.Context, setting ossSettingValue, objectKey string) (bool, error) {
+	_, exists, err := inspectOSSObject(ctx, setting, objectKey)
+	return exists, err
+}
+
+func inspectOSSObject(ctx context.Context, setting ossSettingValue, objectKey string) (ossObjectMetadata, bool, error) {
 	req, err := newOSSRequest(http.MethodHead, setting, objectKey, "", nil)
 	if err != nil {
-		return ossObjectMetadata{}, err
+		return ossObjectMetadata{}, false, err
 	}
+	req = req.WithContext(ctx)
 	resp, err := OutboundHTTPClient(30 * time.Second).Do(req)
 	if err != nil {
-		return ossObjectMetadata{}, err
+		return ossObjectMetadata{}, false, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return ossObjectMetadata{}, false, nil
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return ossObjectMetadata{}, fmt.Errorf("OSS 对象校验失败：%s %s", resp.Status, strings.TrimSpace(string(detail)))
+		return ossObjectMetadata{}, false, fmt.Errorf("OSS 对象校验失败：%s %s", resp.Status, strings.TrimSpace(string(detail)))
 	}
 	return ossObjectMetadata{
 		contentLength: resp.ContentLength,
 		etag:          strings.Trim(resp.Header.Get("ETag"), `"`),
-	}, nil
+	}, true, nil
 }
 
 func getOSSObjectRange(setting ossSettingValue, objectKey string, rangeHeader string) (*ossObjectStream, error) {
