@@ -567,6 +567,43 @@ func TestDeleteUserAssetDeletesExclusiveLocalFile(t *testing.T) {
 	}
 }
 
+func TestDeleteUserAssetDeletesOrphanedAssetWithMissingResource(t *testing.T) {
+	svc := newAssetDeletionTestService(t)
+	saveAssetDeletionRecord(t, svc, "asset-orphaned", "resource-missing", time.Now())
+
+	if err := svc.DeleteUserAsset("user-1", "asset-orphaned"); err != nil {
+		t.Fatalf("DeleteUserAsset() error = %v", err)
+	}
+	if _, err := svc.repo.AssetForUser("user-1", "asset-orphaned"); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("deleted orphaned asset lookup error = %v", err)
+	}
+}
+
+func TestDeleteUserAssetRejectsResourceOwnedByAnotherUser(t *testing.T) {
+	svc := newAssetDeletionTestService(t)
+	now := time.Now()
+	if err := svc.repo.CreateResource(&model.Resource{
+		ID: "resource-foreign", UserID: "user-2", Kind: "image",
+		Status: model.ResourceStatusReady, Provider: "local",
+		ObjectKey: "users/user-2/image/foreign.png", MimeType: "image/png",
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	saveAssetDeletionRecord(t, svc, "asset-foreign-reference", "resource-foreign", now)
+
+	err := svc.DeleteUserAsset("user-1", "asset-foreign-reference")
+	if err == nil || !strings.Contains(err.Error(), "不属于当前账号") {
+		t.Fatalf("DeleteUserAsset() error = %v", err)
+	}
+	if _, err := svc.repo.AssetForUser("user-1", "asset-foreign-reference"); err != nil {
+		t.Fatalf("asset must remain after ownership rejection: %v", err)
+	}
+	if _, err := svc.repo.ResourceForUser("user-2", "resource-foreign"); err != nil {
+		t.Fatalf("foreign resource must remain after ownership rejection: %v", err)
+	}
+}
+
 func newAssetDeletionTestService(t *testing.T) *Service {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

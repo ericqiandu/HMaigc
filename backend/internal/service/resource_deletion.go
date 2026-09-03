@@ -41,7 +41,18 @@ func (s *Service) assetExclusiveResources(asset *model.Asset) ([]model.Resource,
 	for _, resourceID := range orderedIDs {
 		resource, err := s.repo.ResourceForUser(asset.UserID, resourceID)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("素材 %s 引用的资源 %s 不存在", asset.ID, resourceID)
+			existingResource, lookupErr := s.repo.Resource(resourceID)
+			switch {
+			case errors.Is(lookupErr, gorm.ErrRecordNotFound):
+				log.Printf("asset deletion detected missing resource reference asset=%s resource=%s", asset.ID, resourceID)
+				continue
+			case lookupErr != nil:
+				return nil, lookupErr
+			case existingResource.UserID != asset.UserID:
+				return nil, BadAuthRequest("素材包含不属于当前账号的资源引用，无法删除")
+			default:
+				return nil, fmt.Errorf("素材 %s 的资源归属校验失败：%s", asset.ID, resourceID)
+			}
 		}
 		if err != nil {
 			return nil, err
