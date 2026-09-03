@@ -25,6 +25,7 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 	evidence := agentruntime.DeliveryEvidence{FinalMessage: strings.TrimSpace(finalMessage)}
 	artifactIndex := make(map[string]int)
 	createdCanvasNodeIDs := make(map[string]struct{})
+	generatedPromptByTaskID := make(map[string]string)
 	upsertArtifact := func(artifact agentruntime.DeliveryArtifact) error {
 		identity := artifact.ResourceID
 		if identity == "" {
@@ -66,7 +67,15 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 			if artifactsErr != nil {
 				return agentruntime.DeliveryEvidence{}, artifactsErr
 			}
+			prompt, promptErr := currentMediaCapabilityPrompt(call)
+			if promptErr != nil {
+				return agentruntime.DeliveryEvidence{}, promptErr
+			}
 			for _, artifact := range artifacts {
+				if current, exists := generatedPromptByTaskID[artifact.SourceTaskID]; exists && current != prompt {
+					return agentruntime.DeliveryEvidence{}, errors.New("agent media delivery prompt facts conflict")
+				}
+				generatedPromptByTaskID[artifact.SourceTaskID] = prompt
 				if err := upsertArtifact(artifact); err != nil {
 					return agentruntime.DeliveryEvidence{}, err
 				}
@@ -90,7 +99,7 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 		if err != nil {
 			return agentruntime.DeliveryEvidence{}, err
 		}
-		if err := reconcileCanvasDeliveryEvidence(&evidence, *project, scope); err != nil {
+		if err := reconcileCanvasDeliveryEvidence(&evidence, *project, scope, generatedPromptByTaskID); err != nil {
 			return agentruntime.DeliveryEvidence{}, err
 		}
 		textArtifacts, err := canvasPayloadCreatedTextDeliveryArtifacts(project.PayloadJSON, createdCanvasNodeIDs, project.Revision)
@@ -106,7 +115,7 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 	return evidence, nil
 }
 
-func reconcileCanvasDeliveryEvidence(evidence *agentruntime.DeliveryEvidence, project model.CanvasProject, scope agentruntime.Scope) error {
+func reconcileCanvasDeliveryEvidence(evidence *agentruntime.DeliveryEvidence, project model.CanvasProject, scope agentruntime.Scope, generatedPromptByTaskID map[string]string) error {
 	if evidence.CanvasID != scope.CanvasID || !agentCanvasProjectBelongsToScope(project, scope) {
 		return errors.New("agent canvas current revision scope is invalid")
 	}
@@ -117,7 +126,8 @@ func reconcileCanvasDeliveryEvidence(evidence *agentruntime.DeliveryEvidence, pr
 	evidence.CanvasRevision = project.Revision
 	evidence.CanvasCurrent = true
 	for index := range evidence.Artifacts {
-		evidence.Artifacts[index].CanvasBound = canvasPayloadBindsGeneratedResource(project.PayloadJSON, evidence.Artifacts[index])
+		artifact := evidence.Artifacts[index]
+		evidence.Artifacts[index].CanvasBound = canvasPayloadBindsGeneratedResource(project.PayloadJSON, artifact, generatedPromptByTaskID[artifact.SourceTaskID])
 	}
 	return nil
 }
@@ -252,8 +262,41 @@ func (s *Service) currentMediaCapabilityDeliveryArtifacts(scope agentruntime.Sco
 	return artifacts, nil
 }
 
-func canvasPayloadBindsGeneratedResource(payload string, artifact agentruntime.DeliveryArtifact) bool {
-	if artifact.TargetCanvasNodeID == "" || artifact.ResourceID == "" || artifact.URL == "" {
+func currentMediaCapabilityPrompt(call model.AgentToolCall) (string, error) {
+	decoded, err := agentruntime.DecodeCapabilityArguments(agentruntime.ToolMediaGenerate, json.RawMessage(call.InputJSON))
+	if err != nil {
+		return "", errors.New("agent media delivery prompt input is invalid")
+	}
+	arguments, ok := decoded.(agentruntime.MediaGenerateArguments)
+	if !ok {
+		return "", errors.New("agent media delivery prompt input type is invalid")
+	}
+	switch arguments.MediaKind {
+	case agentruntime.MediaKindImage:
+		parameters, decodeErr := decodeAgentImageGenerationParameters(arguments.Parameters)
+		if decodeErr != nil {
+			return "", errors.New("agent image delivery prompt is invalid")
+		}
+		return parameters.Prompt, nil
+	case agentruntime.MediaKindVideo:
+		parameters, decodeErr := decodeAgentVideoGenerationParameters(arguments.Parameters)
+		if decodeErr != nil {
+			return "", errors.New("agent video delivery prompt is invalid")
+		}
+		return parameters.Prompt, nil
+	case agentruntime.MediaKindAudio:
+		parameters, decodeErr := decodeAgentAudioGenerationParameters(arguments.Parameters)
+		if decodeErr != nil {
+			return "", errors.New("agent audio delivery prompt is invalid")
+		}
+		return parameters.Prompt, nil
+	default:
+		return "", errors.New("agent media delivery prompt kind is invalid")
+	}
+}
+
+func canvasPayloadBindsGeneratedResource(payload string, artifact agentruntime.DeliveryArtifact, expectedPrompt string) bool {
+	if artifact.TargetCanvasNodeID == "" || artifact.ResourceID == "" || artifact.URL == "" || expectedPrompt == "" {
 		return false
 	}
 	var document struct {
@@ -261,9 +304,11 @@ func canvasPayloadBindsGeneratedResource(payload string, artifact agentruntime.D
 			ID       string `json:"id"`
 			Type     string `json:"type"`
 			Metadata struct {
-				Content    string `json:"content"`
-				StorageKey string `json:"storageKey"`
-				Status     string `json:"status"`
+				Content         string  `json:"content"`
+				StorageKey      string  `json:"storageKey"`
+				Status          string  `json:"status"`
+				Prompt          string  `json:"prompt"`
+				ComposerContent *string `json:"composerContent"`
 			} `json:"metadata"`
 		} `json:"nodes"`
 	}
@@ -276,7 +321,8 @@ func canvasPayloadBindsGeneratedResource(payload string, artifact agentruntime.D
 			continue
 		}
 		if matched || node.Type != string(artifact.Kind) || node.Metadata.Content != artifact.URL ||
-			node.Metadata.StorageKey != "resource:"+artifact.ResourceID || node.Metadata.Status != "success" {
+			node.Metadata.StorageKey != "resource:"+artifact.ResourceID || node.Metadata.Status != "success" || node.Metadata.Prompt != expectedPrompt ||
+			node.Metadata.ComposerContent == nil || *node.Metadata.ComposerContent != expectedPrompt {
 			return false
 		}
 		matched = true

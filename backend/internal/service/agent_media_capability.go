@@ -94,6 +94,9 @@ func (executor agentMediaGenerateCapabilityExecutor) Execute(ctx context.Context
 	if err != nil {
 		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "media_result_invalid", Err: err}
 	}
+	if err := executor.service.persistAgentMediaPromptOnCanvas(scope, call, arguments, current.Prompt); err != nil {
+		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "media_canvas_prompt_binding_failed", Err: err}
+	}
 	return agentruntime.NewToolExecutionResult(agentruntime.ToolMediaGenerate, agentruntime.MediaGenerateResult{
 		TaskID: task.ID, BillingOrderID: order.ID, MediaKind: arguments.MediaKind,
 		ClientRequestID: arguments.ClientRequestID, Resources: resources,
@@ -168,6 +171,9 @@ func (s *Service) freezeAgentMediaCapabilityQuote(scope agentruntime.Scope, call
 
 func (s *Service) agentMediaCapabilityCommand(scope agentruntime.Scope, arguments agentruntime.MediaGenerateArguments) (MediaGenerationCommand, error) {
 	if err := scope.Validate(); err != nil {
+		return MediaGenerationCommand{}, err
+	}
+	if err := s.validateAgentMediaTargetCanvasNode(scope, arguments.TargetCanvasNodeID, arguments.MediaKind); err != nil {
 		return MediaGenerationCommand{}, err
 	}
 	selected, err := s.repo.ChannelModelByRecordID(arguments.ModelRecordID)

@@ -18,6 +18,7 @@ var (
 	errAgentMediaArgumentsInvalid  = errors.New("agent media generation arguments are invalid")
 	errAgentMediaInputChanged      = errors.New("agent media generation input changed after approval proposal")
 	errAgentMediaModelUnavailable  = errors.New("agent media generation model is unavailable")
+	errAgentMediaTargetInvalid     = errors.New("agent media generation target canvas node is invalid")
 	errAgentNativeAudioUnavailable = errors.New("agent video model does not support the requested native audio facts")
 )
 
