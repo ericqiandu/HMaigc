@@ -215,6 +215,7 @@ async function runMembershipSetupDialogCase(browser, baseURL, theme, viewport, s
             await waitForMembershipPlanAction(page, "creator-flagship-year", label, failures);
         }
         await page.click('[data-plan-code="creator-flagship-year"] .membership-storefront-plan-action');
+        await page.waitForFunction(() => document.querySelector(".membership-storefront-close") === null, { timeout: 5_000 });
         assert.equal(await page.$(".membership-storefront-close"), null, `${label}: 付款弹窗打开时页面关闭按钮仍可操作`);
         if (state === "membership-personal-order-failure-dialog") {
             await page.waitForFunction(() => document.body.innerText.includes("会员订单服务暂时不可用"), { timeout: 15_000 });
