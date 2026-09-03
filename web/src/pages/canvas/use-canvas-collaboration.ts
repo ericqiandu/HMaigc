@@ -15,7 +15,6 @@ import {
     type CanvasRealtimeEnvelope,
 } from "@/services/api/canvas-collaboration";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
-import { removeRetiredCanvasNodes } from "@/lib/canvas/canvas-retired-content-migration";
 import type { CanvasConnection, CanvasNodeData, Position } from "@/types/canvas";
 import type { DirectorScene } from "@/types/director";
 import { canvasUsesRevisionedMutations } from "@/lib/canvas/canvas-persistence-policy";
@@ -97,22 +96,20 @@ export function useCanvasCollaboration({ projectId, projectLoaded, project, node
 
     const applyDocument = useCallback(
         (document: CanvasCollaborationDocument, metadata?: Partial<CanvasProject>) => {
-            const migratedGraph = removeRetiredCanvasNodes(document);
-            const migratedDocument = { ...document, ...migratedGraph };
-            setNodes(migratedDocument.nodes);
-            setConnections(migratedDocument.connections);
+            setNodes(document.nodes);
+            setConnections(document.connections);
             setBackgroundMode(document.backgroundMode);
             setShowImageInfo(document.showImageInfo);
             updateProject(projectId, {
                 title: document.title,
-                nodes: migratedDocument.nodes,
-                connections: migratedDocument.connections,
+                nodes: document.nodes,
+                connections: document.connections,
                 backgroundMode: document.backgroundMode,
                 showImageInfo: document.showImageInfo,
                 directorScenes: document.directorScenes,
                 ...metadata,
             });
-            currentDocumentRef.current = migratedDocument;
+            currentDocumentRef.current = document;
         },
         [projectId, setBackgroundMode, setConnections, setNodes, setShowImageInfo, updateProject],
     );

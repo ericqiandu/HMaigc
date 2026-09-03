@@ -86,7 +86,7 @@ Skill 目录、版本和 SHA-256 在 Run 创建时冻结，`skills.load` 只能�
 
 #### 历史审计边界
 
-Runtime v4/v5 的 Production Graph、Stage、Specialist、Artifact Ledger 和媒体装配模型、仓储及数据库表只为读取既有终态审计事实保留。当前 `vision.analyze` 是 Tool schema v8 的新原子能力，与历史 Production Graph 视觉阶段没有执行兼容层或数据回退；非终态旧 Run 只能通过既有原子退役审计收口，历史记录不会删除、迁移成新决策或恢复执行。
+Runtime v4/v5 的 Production Graph、Stage、Specialist、Artifact Ledger、旧 Production Plan/Media Attempt 和媒体装配模型及数据库表只为读取既有终态审计事实保留；已无调用方的 Specialist、Production Plan/Media Attempt、旧资产发布和媒体装配写仓储已删除，管理端仅保留运行树、事件投影与历史状态解码所需的窄读取边界。当前 `vision.analyze` 是 Tool schema v8 的新原子能力，与历史 Production Graph 视觉阶段没有执行兼容层或数据回退；非终态旧 Run 只能通过既有原子退役审计收口，历史记录不会删除、迁移成新决策或恢复执行。
 
 ### Agent 模型计费链路
 
