@@ -346,6 +346,14 @@ func applyAgentCanvasNodePatch(current json.RawMessage, expectedNodeID string, p
 		if _, ok := allowed[key]; !ok || len(bytes.TrimSpace(value)) == 0 || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 			return nil, failAgentCapability("canvas_node_patch_forbidden", "canvas.apply_ops node patch contains a forbidden field")
 		}
+		if key == "metadata" {
+			merged, err := mergeAgentCanvasMetadata(currentObject[key], value)
+			if err != nil {
+				return nil, err
+			}
+			currentObject[key] = merged
+			continue
+		}
 		currentObject[key] = append(json.RawMessage(nil), value...)
 	}
 	encoded, err := json.Marshal(currentObject)
@@ -356,6 +364,27 @@ func applyAgentCanvasNodePatch(current json.RawMessage, expectedNodeID string, p
 		return nil, err
 	}
 	return encoded, nil
+}
+
+func mergeAgentCanvasMetadata(current json.RawMessage, patch json.RawMessage) (json.RawMessage, error) {
+	currentMetadata := map[string]json.RawMessage{}
+	patchMetadata := map[string]json.RawMessage{}
+	if json.Unmarshal(current, &currentMetadata) != nil || currentMetadata == nil ||
+		json.Unmarshal(patch, &patchMetadata) != nil || patchMetadata == nil {
+		return nil, failAgentCapability("canvas_node_invalid", "canvas.apply_ops metadata patch is invalid")
+	}
+	for key, value := range patchMetadata {
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			delete(currentMetadata, key)
+			continue
+		}
+		currentMetadata[key] = append(json.RawMessage(nil), value...)
+	}
+	merged, err := json.Marshal(currentMetadata)
+	if err != nil {
+		return nil, &agentCapabilityExecutionError{Code: "canvas_node_invalid", Err: err}
+	}
+	return merged, nil
 }
 
 func validateAgentCanvasNode(raw json.RawMessage, expectedNodeID string) error {

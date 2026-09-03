@@ -28,6 +28,7 @@ type UserDataSummary struct {
 	Category               string                  `json:"category,omitempty"`
 	Status                 string                  `json:"status,omitempty"`
 	Title                  string                  `json:"title"`
+	PreviewURL             string                  `json:"previewUrl,omitempty"`
 	TeamID                 string                  `json:"teamId,omitempty"`
 	Revision               int64                   `json:"revision,omitempty"`
 	DefaultTeamAccess      model.CanvasAccessLevel `json:"defaultTeamAccess,omitempty"`
@@ -51,9 +52,32 @@ func (s *Service) UserAssetSummaries(userID string) ([]UserDataSummary, error) {
 	}
 	result := make([]UserDataSummary, 0, len(assets))
 	for _, asset := range assets {
-		result = append(result, UserDataSummary{ID: asset.ID, Kind: asset.Kind, Category: string(asset.Category), Status: string(asset.Status), Title: asset.Title, CreatedAt: asset.CreatedAt, UpdatedAt: asset.UpdatedAt})
+		previewURL, err := assetSummaryPreview(asset.Kind, asset.PayloadJSON)
+		if err != nil {
+			return nil, fmt.Errorf("读取素材 %s 的预览信息失败：%w", asset.ID, err)
+		}
+		result = append(result, UserDataSummary{ID: asset.ID, Kind: asset.Kind, Category: string(asset.Category), Status: string(asset.Status), Title: asset.Title, PreviewURL: previewURL, CreatedAt: asset.CreatedAt, UpdatedAt: asset.UpdatedAt})
 	}
 	return result, nil
+}
+
+func assetSummaryPreview(kind string, payloadJSON string) (string, error) {
+	var payload struct {
+		CoverURL string `json:"coverUrl"`
+		Data     struct {
+			DataURL string `json:"dataUrl"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
+		return "", err
+	}
+	if coverURL := strings.TrimSpace(payload.CoverURL); coverURL != "" {
+		return coverURL, nil
+	}
+	if strings.TrimSpace(kind) == "image" {
+		return strings.TrimSpace(payload.Data.DataURL), nil
+	}
+	return "", nil
 }
 
 func (s *Service) UserAsset(userID string, id string) (json.RawMessage, error) {

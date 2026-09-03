@@ -38,17 +38,23 @@ func TestCanvasPayloadBindsGeneratedResourceOnlyWithExactVisibleMediaFacts(t *te
 		Kind: agentruntime.ArtifactImage, ResourceID: "resource-1", URL: "/api/resources/resource-1/file",
 		TargetCanvasNodeID: "image-node-1",
 	}
-	bound := `{"nodes":[{"id":"image-node-1","type":"image","title":"主视觉","position":{"x":0,"y":0},"width":512,"height":512,"metadata":{"content":"/api/resources/resource-1/file","storageKey":"resource:resource-1","status":"success"}}],"connections":[]}`
-	if !canvasPayloadBindsGeneratedResource(bound, artifact) {
+	expectedPrompt := "雨夜纸船"
+	bound := `{"nodes":[{"id":"image-node-1","type":"image","title":"主视觉","position":{"x":0,"y":0},"width":512,"height":512,"metadata":{"content":"/api/resources/resource-1/file","storageKey":"resource:resource-1","status":"success","prompt":"雨夜纸船","composerContent":"雨夜纸船"}}],"connections":[]}`
+	if !canvasPayloadBindsGeneratedResource(bound, artifact, expectedPrompt) {
 		t.Fatal("exact generated media binding was not recognized")
 	}
 	for _, payload := range []string{
+		`{"nodes":[{"id":"image-node-1","type":"image","title":"主视觉","position":{"x":0,"y":0},"width":512,"height":512,"metadata":{"content":"/api/resources/resource-1/file","storageKey":"resource:resource-1","status":"success"}}],"connections":[]}`,
+		`{"nodes":[{"id":"image-node-1","type":"image","title":"主视觉","position":{"x":0,"y":0},"width":512,"height":512,"metadata":{"content":"/api/resources/resource-1/file","storageKey":"resource:resource-1","status":"success","prompt":"雨夜纸船"}}],"connections":[]}`,
+		`{"nodes":[{"id":"image-node-1","type":"image","title":"主视觉","position":{"x":0,"y":0},"width":512,"height":512,"metadata":{"content":"/api/resources/resource-1/file","storageKey":"resource:resource-1","status":"success","prompt":"晴日纸船"}}],"connections":[]}`,
+		`{"nodes":[{"id":"image-node-1","type":"image","title":"主视觉","position":{"x":0,"y":0},"width":512,"height":512,"metadata":{"content":"/api/resources/resource-1/file","storageKey":"resource:resource-1","status":"success","prompt":"雨夜纸船","composerContent":""}}],"connections":[]}`,
+		`{"nodes":[{"id":"image-node-1","type":"image","title":"主视觉","position":{"x":0,"y":0},"width":512,"height":512,"metadata":{"content":"/api/resources/resource-1/file","storageKey":"resource:resource-1","status":"success","prompt":"雨夜纸船","composerContent":"晴日纸船"}}],"connections":[]}`,
 		`{"nodes":[{"id":"image-node-1","type":"image","title":"主视觉","position":{"x":0,"y":0},"width":512,"height":512,"metadata":{"content":"/api/resources/resource-1/file","storageKey":"resource:resource-1","status":"loading"}}],"connections":[]}`,
 		`{"nodes":[{"id":"image-node-1","type":"image","title":"主视觉","position":{"x":0,"y":0},"width":512,"height":512,"metadata":{"content":"/api/resources/resource-other/file","storageKey":"resource:resource-1","status":"success"}}],"connections":[]}`,
 		`{"nodes":[{"id":"image-node-1","type":"image","title":"主视觉","position":{"x":0,"y":0},"width":512,"height":512,"metadata":{"content":"/api/resources/resource-1/file","storageKey":"resource:resource-other","status":"success"}}],"connections":[]}`,
 		`{"nodes":[{"id":"other-node","type":"image","title":"主视觉","position":{"x":0,"y":0},"width":512,"height":512,"metadata":{"content":"/api/resources/resource-1/file","storageKey":"resource:resource-1","status":"success"}}],"connections":[]}`,
 	} {
-		if canvasPayloadBindsGeneratedResource(payload, artifact) {
+		if canvasPayloadBindsGeneratedResource(payload, artifact, expectedPrompt) {
 			t.Fatalf("invalid generated media binding was accepted: %s", payload)
 		}
 	}
@@ -88,15 +94,15 @@ func TestReconcileCanvasDeliveryEvidenceAcceptsNewerCurrentRevision(t *testing.T
 		CanvasRevision: 17,
 		Artifacts: []agentruntime.DeliveryArtifact{{
 			Kind: agentruntime.ArtifactVideo, ResourceID: "resource-1", URL: "/api/resources/resource-1/file",
-			TargetCanvasNodeID: "video-node-1",
+			SourceTaskID: "video-task-1", TargetCanvasNodeID: "video-node-1",
 		}},
 	}
 	project := model.CanvasProject{
 		ID: "runtime-canvas", UserID: "runtime-user", ProjectID: "runtime-project", Revision: 18,
-		PayloadJSON: `{"nodes":[{"id":"video-node-1","type":"video","metadata":{"content":"/api/resources/resource-1/file","storageKey":"resource:resource-1","status":"success","assetId":"asset-1"}}],"connections":[]}`,
+		PayloadJSON: `{"nodes":[{"id":"video-node-1","type":"video","metadata":{"content":"/api/resources/resource-1/file","storageKey":"resource:resource-1","status":"success","prompt":"镜头推进","composerContent":"镜头推进","assetId":"asset-1"}}],"connections":[]}`,
 	}
 
-	if err := reconcileCanvasDeliveryEvidence(&evidence, project, agentRuntimeServiceScope()); err != nil {
+	if err := reconcileCanvasDeliveryEvidence(&evidence, project, agentRuntimeServiceScope(), map[string]string{"video-task-1": "镜头推进"}); err != nil {
 		t.Fatal(err)
 	}
 	if !evidence.CanvasCurrent || evidence.CanvasRevision != 18 {
@@ -113,7 +119,7 @@ func TestReconcileCanvasDeliveryEvidenceRejectsRevisionRegression(t *testing.T) 
 		ID: "runtime-canvas", UserID: "runtime-user", ProjectID: "runtime-project", Revision: 17,
 	}
 
-	if err := reconcileCanvasDeliveryEvidence(&evidence, project, agentRuntimeServiceScope()); err == nil {
+	if err := reconcileCanvasDeliveryEvidence(&evidence, project, agentRuntimeServiceScope(), map[string]string{}); err == nil {
 		t.Fatal("expected a current project revision older than the committed receipt to fail")
 	}
 }

@@ -4,7 +4,6 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 import { nanoid } from "nanoid";
 import { localForageStorage } from "@/lib/localforage-storage";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
-import { removeRetiredCanvasProjectContent } from "@/lib/canvas/canvas-retired-content-migration";
 import type { CanvasAgentLaunchRequest, CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 import type { DirectorScene } from "@/types/director";
 
@@ -136,21 +135,10 @@ export const useCanvasStore = create<CanvasStore>()(
                     viewport: source.viewport || initialViewport,
                     directorScenes: source.directorScenes || [],
                 };
-                const migratedProject = removeRetiredCanvasProjectContent(project);
-                set((state) => ({ projects: [migratedProject, ...state.projects] }));
-                return migratedProject.id;
+                set((state) => ({ projects: [project, ...state.projects] }));
+                return project.id;
             },
-            openProject: (id) => {
-                const project = get().projects.find((item) => item.id === id);
-                if (!project) return null;
-                const migratedProject = removeRetiredCanvasProjectContent(project);
-                if (migratedProject !== project) {
-                    set((state) => ({
-                        projects: state.projects.map((item) => item.id === id ? migratedProject : item),
-                    }));
-                }
-                return migratedProject;
-            },
+            openProject: (id) => get().projects.find((item) => item.id === id) || null,
             renameProject: (id, title) =>
                 set((state) => ({
                     projects: state.projects.map((project) => (project.id === id ? { ...project, title: title.trim() || project.title, updatedAt: new Date().toISOString() } : project)),
@@ -167,7 +155,7 @@ export const useCanvasStore = create<CanvasStore>()(
                     pendingDeletionIds: state.pendingDeletionIds.filter((id) => !finishedIds.has(id)),
                 }));
             },
-            replaceProjects: (projects) => set({ projects: projects.map((project) => removeRetiredCanvasProjectContent(project)) }),
+            replaceProjects: (projects) => set({ projects }),
             updateProject: (id, patch) =>
                 set((state) => ({
                     projects: state.projects.map((project) => (project.id === id ? { ...project, ...patch, updatedAt: new Date().toISOString() } : project)),
@@ -182,7 +170,7 @@ export const useCanvasStore = create<CanvasStore>()(
                     pendingDeletionIds: state.pendingDeletionIds,
                 }) as StorageValue<CanvasStore>["state"],
             onRehydrateStorage: () => () => {
-                const projects = useCanvasStore.getState().projects.map((project) => removeRetiredCanvasProjectContent(project));
+                const projects = useCanvasStore.getState().projects;
                 const pendingDeletionIds = useCanvasStore.getState().pendingDeletionIds || [];
                 useCanvasStore.setState({ projects, pendingDeletionIds, hydrated: true });
             },

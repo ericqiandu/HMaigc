@@ -134,6 +134,61 @@ func TestAgentCanvasCapabilityAppliesApprovedProposalToStandaloneCanvas(t *testi
 	}
 }
 
+func TestAgentCanvasCapabilityMergesMediaMetadataWithoutLosingGenerationPrompt(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	now := time.Now().UTC()
+	if err := db.Create(&model.Resource{
+		ID: "resource-1", UserID: "runtime-user", Kind: "image", Status: model.ResourceStatusReady,
+		Provider: "local", ObjectKey: "agent/resource-1.png", MimeType: "image/png", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	setAgentCanvasCapabilityDocument(t, db, 7, `{"nodes":[{"id":"image-1","type":"image","title":"主视觉","position":{"x":0,"y":0},"width":512,"height":512,"metadata":{"status":"loading","prompt":"雨夜纸船","composerContent":"雨夜纸船","agentRunId":"runtime-run","errorDetails":"旧错误"}}],"connections":[],"viewport":{"x":0,"y":0,"k":1}}`)
+	call := agentCanvasApplyOpsCall(`{"canvasId":"runtime-canvas","baseRevision":7,"clientMutationId":"bind-generated-image","operations":[{"operationId":"bind-image","type":"update_node","nodeId":"image-1","patch":{"metadata":{"content":"/api/resources/resource-1/file","storageKey":"resource:resource-1","status":"success","errorDetails":null}}}]}`)
+	seedApprovedAgentCanvasProposal(t, svc, db, call)
+	registry, err := newAgentCapabilityRegistry(svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Execute(context.Background(), agentRuntimeServiceScope(), call); err != nil {
+		t.Fatal(err)
+	}
+
+	var canvas model.CanvasProject
+	if err := db.First(&canvas, "id = ?", "runtime-canvas").Error; err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Nodes []struct {
+			Metadata map[string]json.RawMessage `json:"metadata"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(canvas.PayloadJSON), &document); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Nodes) != 1 {
+		t.Fatalf("canvas nodes = %#v", document.Nodes)
+	}
+	for key, want := range map[string]string{
+		"prompt": "雨夜纸船", "composerContent": "雨夜纸船", "agentRunId": "runtime-run",
+		"content": "/api/resources/resource-1/file", "storageKey": "resource:resource-1", "status": "success",
+	} {
+		var got string
+		if err := json.Unmarshal(document.Nodes[0].Metadata[key], &got); err != nil || got != want {
+			t.Fatalf("metadata[%s] = %q, %v; want %q", key, got, err, want)
+		}
+	}
+	if _, exists := document.Nodes[0].Metadata["errorDetails"]; exists {
+		t.Fatal("metadata.errorDetails was not removed by the explicit null patch")
+	}
+}
+
+func TestMergeAgentCanvasMetadataRejectsNullCurrentMetadata(t *testing.T) {
+	if _, err := mergeAgentCanvasMetadata(json.RawMessage(`null`), json.RawMessage(`{"status":"success"}`)); err == nil {
+		t.Fatal("expected null stored metadata to fail instead of being mutated")
+	}
+}
+
 func TestAgentCanvasCapabilityRejectsStaleRevisionWithoutPartialMutation(t *testing.T) {
 	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
 	call := agentCanvasApplyOpsCall(`{"canvasId":"runtime-canvas","baseRevision":6,"clientMutationId":"stale-mutation","operations":[{"operationId":"op-add","type":"add_node","node":{"id":"node-stale","type":"text","title":"不应写入","position":{"x":0,"y":0},"width":200,"height":100,"metadata":{}}}]}`)

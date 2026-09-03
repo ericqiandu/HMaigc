@@ -603,7 +603,9 @@ func TestAgentRuntimeSystemPromptDeclaresFinalDeliveryAndMediaCanvasLifecycle(t 
 		"targetCanvasNodeId 必须是画布中已存在的非空媒体节点 ID",
 		"先通过 canvas.apply_ops 创建目标媒体占位节点",
 		`metadata.agentRunId 必须使用本轮 scope.runId`,
+		`metadata.prompt 与 metadata.composerContent 必须逐字使用随后 media.generate 的 parameters.prompt`,
 		"再通过 canvas.apply_ops 把返回的资源事实写入同一目标节点",
+		"当前节点 metadata.prompt 与 metadata.composerContent 均与已批准生成提示逐字一致",
 	} {
 		if !strings.Contains(agentRuntimeCloudSystemPrompt, required) {
 			t.Fatalf("agent runtime system prompt is missing %q", required)

@@ -87,6 +87,7 @@ node canvas-agent/dist/index.js serve
 - `canvas.apply_ops`、`assets.publish` 和 `media.generate` 的每一个不可变提案都必须单独确认。
 - 人工审批有效期为 15 分钟；回环 MCP 连接会发送心跳，并额外保留 1 分钟结果交付余量，避免网页审批仍有效而本机 Codex 已提前超时。
 - `media.generate` 仍由 HMaigc 后端冻结模型、价格和积分报价，并负责预留、结算、释放、退款与审计；批准前不会创建付费媒体任务。
+- 图片、视频或音频生成前，Codex 必须先通过 `canvas.apply_ops` 把本次 `parameters.prompt` 逐字写入目标媒体节点的 `metadata.prompt` 与初始 `metadata.composerContent`；生成成功后的资源回填使用字段级 metadata 补丁并保留提示词。当前画布缺失或改变该权威提示词时，`canvas_bound_resource` 不成立；Codex 必须修复同一节点，或在用户确实要求改提示词时完成一次新的媒体生成后才能结束。
 - 媒体请求必须在断线重试时复用原 `clientRequestId` 与 `targetCanvasNodeId`，并保持全部生成参数完全一致。后端会重读原始 Task、账单与 Resource：已成功则直接回放结果且不再次审批/扣费，仍在执行则明确返回“正在运行”，同一请求身份参数不一致则明确报冲突。客户端不得通过生成新请求 ID 绕过这些结果。
 - 六种 MCP 工具分别发布与后端规范契约一致的闭合输入 Schema；媒体身份、画布操作联合类型与 Skill 校验字段必须由 Codex 按 Schema 提交，未知字段和缺失字段都会显式失败。
 - 网站 Agent 专属的 `vision.analyze` 不在本机 MCP 能力面中；本机 Run 不依赖管理员默认视觉模型配置。

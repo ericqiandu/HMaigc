@@ -308,6 +308,7 @@ func TestSubmitExternalAgentDecisionReplaysCompletedMediaAcrossRunsWithoutApprov
 	}
 	originalCall := agentMediaCapabilityCall("external-media-original", "stable-media-request")
 	originalCall.ExpectedDelivery = agentRuntimeTestImageDelivery()
+	seedAgentMediaTargetCanvasNode(t, db, originalCall)
 	waiting, err := svc.SubmitExternalAgentDecision(actor, first.Run.ID, SubmitExternalAgentDecisionInput{
 		ClientRequestID: "codex-decision-media-original", ExpectedStateVersion: first.State.StateVersion,
 		Decision: agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &originalCall},
@@ -422,6 +423,7 @@ func TestSubmitExternalAgentDecisionRejectsDuplicatePaidMediaWhileOriginalIsRunn
 	}
 	originalCall := agentMediaCapabilityCall("external-media-in-flight-original", "stable-media-in-flight-request")
 	originalCall.ExpectedDelivery = agentRuntimeTestImageDelivery()
+	seedAgentMediaTargetCanvasNode(t, db, originalCall)
 	waiting, err := svc.SubmitExternalAgentDecision(actor, first.Run.ID, SubmitExternalAgentDecisionInput{
 		ClientRequestID: "codex-decision-media-in-flight-original", ExpectedStateVersion: first.State.StateVersion,
 		Decision: agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &originalCall},
@@ -495,6 +497,7 @@ func TestSubmitExternalAgentDecisionRejectsChangedArgumentsForExistingMediaReque
 	}
 	originalCall := agentMediaCapabilityCall("external-media-conflict-original", "stable-media-conflict-request")
 	originalCall.ExpectedDelivery = agentRuntimeTestImageDelivery()
+	seedAgentMediaTargetCanvasNode(t, db, originalCall)
 	waiting, err := svc.SubmitExternalAgentDecision(actor, first.Run.ID, SubmitExternalAgentDecisionInput{
 		ClientRequestID: "codex-decision-media-conflict-original", ExpectedStateVersion: first.State.StateVersion,
 		Decision: agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &originalCall},

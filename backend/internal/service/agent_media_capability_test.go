@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ func TestAgentRuntimeFreezesMediaQuoteBeforeApproval(t *testing.T) {
 	defer server.Close()
 	svc, db, fixture := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeImageModel(t, db, fixture)
+	seedAgentMediaTargetCanvasNode(t, db, agentMediaCapabilityCall("quote-target-fixture", "quote-target-fixture-request"))
 	scope := agentRuntimeServiceScope()
 	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
 		Scope: scope, ClientRequestID: "runtime-media-quote", UserMessage: "生成一张鲜橙产品图", MaxSteps: 4,
@@ -68,6 +70,58 @@ func TestAgentRuntimeFreezesMediaQuoteBeforeApproval(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeRejectsMediaQuoteWithoutTargetNodeBeforeCommercialSideEffects(t *testing.T) {
+	decision := agentRuntimeToolDecisionWithDelivery(t,
+		`{"kind":"tool_call","toolCall":{"toolCallId":"media-runtime-missing-target","toolName":"media.generate","actionVersion":1,"arguments":{"mediaKind":"image","modelRecordId":"runtime-image-model","modelKey":"kz_gpt_image2","parameters":{"prompt":"鲜橙产品特写","aspectRatio":"1:1","resolution":"1K","quality":"medium","count":1},"sourceResourceIds":[],"targetCanvasNodeId":"missing-image-node","clientRequestId":"runtime-image-missing-target"}}}`,
+		agentRuntimeTestImageDelivery(),
+	)
+	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestImageDelivery())
+	defer server.Close()
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, server.URL)
+	createAgentRuntimeImageModel(t, db, fixture)
+	seedAgentMediaTargetCanvasNode(t, db, agentMediaCapabilityCall("invalid-quote-target-fixture", "invalid-quote-target-fixture-request"))
+	scope := agentRuntimeServiceScope()
+	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: scope, ClientRequestID: "runtime-media-missing-target", UserMessage: "生成一张鲜橙产品图", MaxSteps: 4,
+		Configuration: guidedAgentRuntimeConfigurationInput(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := svc.ResumeAgentRuntime(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.State.Status != agentruntime.RunRunning || progress.State.DecisionFeedback == nil ||
+		progress.State.DecisionFeedback.Code != "model_decision_invalid" || progress.ModelTask == nil ||
+		(started.ModelTask != nil && progress.ModelTask.ID == started.ModelTask.ID) {
+		t.Fatalf("missing target repair state = %#v; task=%#v", progress.State, progress.ModelTask)
+	}
+	var taskCount, orderCount int64
+	if err := db.Model(&model.Task{}).Where("operation = ?", agentMediaGenerationOperationForRun(scope.RunID)).Count(&taskCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.BillingOrder{}).Where("scene = ?", agentMediaGenerationOperationForRun(scope.RunID)).Count(&orderCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if taskCount != 0 || orderCount != 0 {
+		t.Fatalf("missing target created commercial side effects: tasks=%d orders=%d", taskCount, orderCount)
+	}
+}
+
+func TestAgentMediaTargetValidationRejectsWrongNodeKind(t *testing.T) {
+	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
+	seedAgentMediaTargetCanvasNode(t, db, agentMediaCapabilityCall("image-target-kind", "image-target-kind-request"))
+
+	err := svc.validateAgentMediaTargetCanvasNode(agentRuntimeServiceScope(), "image-node-1", agentruntime.MediaKindVideo)
+	if !errors.Is(err, errAgentMediaTargetInvalid) {
+		t.Fatalf("wrong target kind error = %v", err)
+	}
+}
+
 func TestAgentRuntimeRejectsInvalidMediaQuoteAndSchedulesRepair(t *testing.T) {
 	decision := agentRuntimeToolDecisionWithDelivery(t,
 		`{"kind":"tool_call","toolCall":{"toolCallId":"media-runtime-invalid-quote","toolName":"media.generate","actionVersion":1,"arguments":{"mediaKind":"image","modelRecordId":"runtime-image-model","modelKey":"kz_gpt_image2","parameters":{"prompt":"鲜橙产品特写","aspectRatio":"1:1","resolution":"1K","quality":"standard","count":1,"transparentBackground":false},"sourceResourceIds":[],"targetCanvasNodeId":"image-node-1","clientRequestId":"runtime-image-invalid-quote"}}}`,
@@ -77,6 +131,7 @@ func TestAgentRuntimeRejectsInvalidMediaQuoteAndSchedulesRepair(t *testing.T) {
 	defer server.Close()
 	svc, db, fixture := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeImageModel(t, db, fixture)
+	seedAgentMediaTargetCanvasNode(t, db, agentMediaCapabilityCall("outbox-target-fixture", "outbox-target-fixture-request"))
 	scope := agentRuntimeServiceScope()
 	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
 		Scope: scope, ClientRequestID: "runtime-media-invalid-quote", UserMessage: "生成一张鲜橙产品图", MaxSteps: 4,
@@ -114,6 +169,7 @@ func TestAgentMediaCapabilityTerminalOutboxResumesWaitingRuntimeOnce(t *testing.
 	defer server.Close()
 	svc, db, fixture := newAgentRuntimeServiceFixture(t, server.URL)
 	createAgentRuntimeImageModel(t, db, fixture)
+	seedAgentMediaTargetCanvasNode(t, db, agentMediaCapabilityCall("outbox-target-fixture", "outbox-target-fixture-request"))
 	scope := agentRuntimeServiceScope()
 	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
 		Scope: scope, ClientRequestID: "runtime-media-outbox", UserMessage: "生成一张鲜橙产品图", MaxSteps: 4,
@@ -190,6 +246,7 @@ func TestAgentMediaCapabilityFreezesAuthoritativeQuoteWithoutCommercialSideEffec
 	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
 	createAgentRuntimeImageModel(t, db, fixture)
 	call := agentMediaCapabilityCall("media-quote-1", "request-image-1")
+	seedAgentMediaTargetCanvasNode(t, db, call)
 
 	quote, err := svc.freezeAgentMediaCapabilityQuote(agentRuntimeServiceScope(), call, time.Now().UTC())
 	if err != nil {
@@ -279,6 +336,102 @@ func TestAgentMediaCapabilityApprovedRetriesCreateOneTaskAndReservation(t *testi
 	}
 	if taskCount != 1 || orderCount != 1 || reserveCount != 1 {
 		t.Fatalf("media facts tasks=%d orders=%d reserves=%d", taskCount, orderCount, reserveCount)
+	}
+}
+
+func TestAgentMediaCapabilityPersistsApprovedPromptOnTargetCanvasNode(t *testing.T) {
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
+	createAgentRuntimeImageModel(t, db, fixture)
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", "runtime-canvas").Update(
+		"payload_json",
+		`{"nodes":[{"id":"image-node-1","type":"image","title":"Agent image","position":{"x":0,"y":0},"width":320,"height":180,"metadata":{"prompt":"stale prompt","composerContent":"stale prompt","status":"loading"}}],"connections":[]}`,
+	).Error; err != nil {
+		t.Fatal(err)
+	}
+	call := agentMediaCapabilityCall("media-prompt-binding", "request-prompt-binding")
+	seedApprovedAgentCapabilityProposal(t, svc, db, call)
+	registry, err := newAgentCapabilityRegistry(svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, err := registry.Execute(context.Background(), agentRuntimeServiceScope(), call)
+	if err != nil || !queued.Pending {
+		t.Fatalf("queued media prompt binding = %#v, err = %v", queued, err)
+	}
+	task := loadAgentMediaCapabilityTask(t, db)
+	if err := finalizeAgentMediaCapabilityTask(t, svc, db, task, "generated-prompt-image", "image"); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := registry.Execute(context.Background(), agentRuntimeServiceScope(), call)
+	if err != nil || completed.Pending {
+		t.Fatalf("completed media prompt binding = %#v, err = %v", completed, err)
+	}
+
+	canvas, err := svc.repo.CanvasProject("runtime-canvas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Nodes []struct {
+			ID       string `json:"id"`
+			Metadata struct {
+				Prompt          string `json:"prompt"`
+				ComposerContent string `json:"composerContent"`
+			} `json:"metadata"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(canvas.PayloadJSON), &document); err != nil {
+		t.Fatal(err)
+	}
+	if canvas.Revision != 8 || len(document.Nodes) != 1 || document.Nodes[0].ID != "image-node-1" ||
+		document.Nodes[0].Metadata.Prompt != "鲜橙产品特写" ||
+		document.Nodes[0].Metadata.ComposerContent != "鲜橙产品特写" {
+		t.Fatalf("authoritative media prompt was not persisted on the target node: revision=%d payload=%s", canvas.Revision, canvas.PayloadJSON)
+	}
+}
+
+func TestAgentMediaPromptBindingSkipsCanvasMutationWhenPromptIsAlreadyExact(t *testing.T) {
+	payload := `{"nodes":[{"id":"image-node-1","type":"image","title":"Agent image","position":{"x":0,"y":0},"width":320,"height":180,"metadata":{"prompt":"鲜橙产品特写","composerContent":"鲜橙产品特写","content":"/api/resources/image/file"}}],"connections":[]}`
+	updated, changed, err := agentMediaPromptBoundNode(payload, "image-node-1", agentruntime.MediaKindImage, "鲜橙产品特写")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed || len(updated) != 0 {
+		t.Fatalf("exact media prompt unexpectedly requested another canvas mutation: changed=%v node=%s", changed, updated)
+	}
+}
+
+func TestAgentMediaPromptBindingSupportsEveryMediaKind(t *testing.T) {
+	for _, mediaKind := range []agentruntime.MediaKind{
+		agentruntime.MediaKindImage,
+		agentruntime.MediaKindVideo,
+		agentruntime.MediaKindAudio,
+	} {
+		t.Run(string(mediaKind), func(t *testing.T) {
+			payload := fmt.Sprintf(
+				`{"nodes":[{"id":"target-node","type":%q,"title":"Agent media","position":{"x":0,"y":0},"width":320,"height":180,"metadata":{"prompt":"旧提示词","composerContent":"旧提示词","status":"loading"}}],"connections":[]}`,
+				mediaKind,
+			)
+			updated, changed, err := agentMediaPromptBoundNode(payload, "target-node", mediaKind, "权威生成提示词")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !changed {
+				t.Fatal("media prompt binding did not request a canvas mutation")
+			}
+			var node struct {
+				Metadata struct {
+					Prompt          string `json:"prompt"`
+					ComposerContent string `json:"composerContent"`
+				} `json:"metadata"`
+			}
+			if err := json.Unmarshal(updated, &node); err != nil {
+				t.Fatal(err)
+			}
+			if node.Metadata.Prompt != "权威生成提示词" || node.Metadata.ComposerContent != "权威生成提示词" {
+				t.Fatalf("bound %s prompt facts = %#v", mediaKind, node.Metadata)
+			}
+		})
 	}
 }
 
@@ -547,6 +700,7 @@ func TestAgentMediaCapabilityRejectsForeignSourceBeforeApprovalOrBilling(t *test
 		json.RawMessage(`{"prompt":"使用参考图生成产品图","aspectRatio":"1:1","resolution":"1K","quality":"medium","count":1}`),
 		[]string{"foreign-source"},
 	)
+	seedAgentMediaTargetCanvasNode(t, db, call)
 	if _, err := svc.freezeAgentMediaCapabilityQuote(agentRuntimeServiceScope(), call, time.Now().UTC()); !errors.Is(err, errAgentMediaInputChanged) {
 		t.Fatalf("foreign source quote error = %v", err)
 	}
@@ -900,8 +1054,9 @@ func createAgentRuntimeAudioModel(t *testing.T, db *gorm.DB, fixture agentRuntim
 	}
 }
 
-func seedApprovedAgentCapabilityProposal(t *testing.T, svc *Service, _ *gorm.DB, call agentruntime.ToolCallDecision) string {
+func seedApprovedAgentCapabilityProposal(t *testing.T, svc *Service, db *gorm.DB, call agentruntime.ToolCallDecision) string {
 	t.Helper()
+	seedAgentMediaTargetCanvasNode(t, db, call)
 	scope := agentRuntimeServiceScope()
 	now := time.Now().UTC()
 	configuration, err := svc.resolveAgentRuntimeConfiguration(context.Background(), scope, guidedAgentRuntimeConfigurationInput())
@@ -979,6 +1134,61 @@ func seedApprovedAgentCapabilityProposal(t *testing.T, svc *Service, _ *gorm.DB,
 		t.Fatal(err)
 	}
 	return record.ApprovalProposalHash
+}
+
+func seedAgentMediaTargetCanvasNode(t *testing.T, db *gorm.DB, call agentruntime.ToolCallDecision) {
+	t.Helper()
+	if call.ToolName != agentruntime.ToolMediaGenerate {
+		return
+	}
+	decoded, err := agentruntime.DecodeCapabilityArguments(call.ToolName, call.Arguments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments, ok := decoded.(agentruntime.MediaGenerateArguments)
+	if !ok {
+		t.Fatal("media.generate test arguments have an invalid type")
+	}
+	var canvas model.CanvasProject
+	if err := db.First(&canvas, "id = ?", agentRuntimeServiceScope().CanvasID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(canvas.PayloadJSON), &document); err != nil {
+		t.Fatal(err)
+	}
+	var nodes []json.RawMessage
+	if err := json.Unmarshal(document["nodes"], &nodes); err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range nodes {
+		var identity struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(node, &identity) == nil && identity.ID == arguments.TargetCanvasNodeID {
+			return
+		}
+	}
+	node, err := json.Marshal(agentruntime.CanvasNodeInput{
+		ID: arguments.TargetCanvasNodeID, Type: agentruntime.CanvasNodeType(arguments.MediaKind), Title: "Agent media target",
+		Position: agentruntime.CanvasPoint{X: 0, Y: 0}, Width: 320, Height: 180,
+		Metadata: json.RawMessage(`{"status":"loading"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes = append(nodes, node)
+	document["nodes"], err = json.Marshal(nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", canvas.ID).Update("payload_json", string(payload)).Error; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func resolveSuccessfulAgentCapabilityForTest(

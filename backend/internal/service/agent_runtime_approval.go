@@ -150,6 +150,8 @@ func agentRuntimeMediaDecisionFeedback(err error) (agentruntime.ModelDecisionFee
 		reason = "media.generate arguments do not match the selected callable model capabilities"
 	case errors.Is(err, errAgentMediaModelUnavailable):
 		reason = "media.generate selected model identity is not callable in the current runtime context"
+	case errors.Is(err, errAgentMediaTargetInvalid):
+		reason = "media.generate targetCanvasNodeId must identify an existing canvas node with the same media kind"
 	case errors.Is(err, errAgentNativeAudioUnavailable):
 		reason = "media.generate requested native audio is unavailable for the selected model facts"
 	default:

@@ -49,7 +49,7 @@ export function createCanvasMcpServer(
     "canvas_apply_ops",
     {
       description:
-        "基于刚读取的 baseRevision 原子提交闭合画布操作；每项 operationId 与 clientMutationId 必须唯一且稳定。",
+        "基于刚读取的 baseRevision 原子提交闭合画布操作；每项 operationId 与 clientMutationId 必须唯一且稳定。媒体占位节点的 metadata.prompt 与 metadata.composerContent 必须逐字保存随后 media_generate 的 parameters.prompt；update_node.metadata 是字段级补丁，不得清空生成提示词。",
       inputSchema: canvasApplyOpsToolInputSchema,
     },
     async (input) => executeCanvasTool(options, "canvas.apply_ops", input),
@@ -76,7 +76,7 @@ export function createCanvasMcpServer(
     "media_generate",
     {
       description:
-        "使用 canvas_get_state 返回的可调用模型事实生成图片、视频或音频；parameters 必须符合所选 modelRecordId 的动态参数契约，生成前需要用户审批并可能计费。",
+        "使用 canvas_get_state 返回的可调用模型事实生成图片、视频或音频；parameters 必须符合所选 modelRecordId 的动态参数契约，parameters.prompt 必须已逐字保存到目标节点 metadata.prompt，生成前需要用户审批并可能计费。成功后用 canvas_apply_ops 回填资源并保留提示词。",
       inputSchema: mediaGenerateToolInputSchema,
     },
     async (input) => executeCanvasTool(options, "media.generate", input),

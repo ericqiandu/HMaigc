@@ -102,6 +102,8 @@ test("MCP 只暴露六种纯映射能力并通过 CanvasSession 等待权威结�
     assert.match(JSON.stringify(mediaGenerate?.inputSchema), /"modelRecordId"/);
     assert.match(JSON.stringify(canvasApplyOps?.inputSchema), /"operations"/);
     assert.match(JSON.stringify(canvasApplyOps?.inputSchema), /"add_node"/);
+    assert.match(canvasApplyOps?.description ?? "", /metadata\.prompt/);
+    assert.match(mediaGenerate?.description ?? "", /parameters\.prompt/);
     assert.match(JSON.stringify(skillsLoad?.inputSchema), /"checksum"/);
 
     const call = client.callTool({

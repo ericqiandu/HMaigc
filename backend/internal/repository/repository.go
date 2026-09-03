@@ -952,7 +952,7 @@ func (r *Repository) AdminSystemChannels(keyword string, interfaceType string, s
 
 func (r *Repository) AdminSystemChannelReferences() ([]model.ModelChannel, error) {
 	var channels []model.ModelChannel
-	err := r.db.Select("id", "name").Where("scope = ?", model.ChannelScopeSystem).Order("created_at asc").Find(&channels).Error
+	err := r.db.Select("id", "name", "interface_type").Where("scope = ?", model.ChannelScopeSystem).Order("created_at asc").Find(&channels).Error
 	return channels, err
 }
 
@@ -1157,6 +1157,15 @@ func (r *Repository) Resource(id string) (*model.Resource, error) {
 	return &resource, nil
 }
 
+func (r *Repository) ResourcesForUserByIDs(userID string, ids []string) ([]model.Resource, error) {
+	if len(ids) == 0 {
+		return []model.Resource{}, nil
+	}
+	var resources []model.Resource
+	err := r.db.Where("user_id = ? AND id IN ?", userID, ids).Find(&resources).Error
+	return resources, err
+}
+
 func (r *Repository) Resources(userID string, limit int) ([]model.Resource, error) {
 	var resources []model.Resource
 	if limit <= 0 || limit > 500 {
@@ -1185,7 +1194,7 @@ func (r *Repository) Assets(userID string) ([]model.Asset, error) {
 
 func (r *Repository) AssetSummaries(userID string) ([]model.Asset, error) {
 	var assets []model.Asset
-	err := r.db.Select("id", "kind", "category", "status", "primary_version_id", "title", "created_at", "updated_at").Order("updated_at desc").Find(&assets, "user_id = ?", userID).Error
+	err := r.db.Select("id", "kind", "category", "status", "primary_version_id", "title", "payload_json", "created_at", "updated_at").Order("updated_at desc").Find(&assets, "user_id = ?", userID).Error
 	return assets, err
 }
 
