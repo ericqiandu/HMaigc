@@ -1163,9 +1163,7 @@
         border: 1px solid var(--border);
         border-radius: 12px;
         background: var(--popover);
-        box-shadow: var(--component-floating-shadow,
-            0 8px 32px rgba(0, 0, 0, 0.15),
-            0 2px 8px rgba(0, 0, 0, 0.1)) !important;
+        box-shadow: var(--component-floating-shadow, 0 8px 32px rgba(0, 0, 0, 0.15), 0 2px 8px rgba(0, 0, 0, 0.1)) !important;
     }
 
     :where(.ant-modal-title, .ant-drawer-title) {
@@ -1182,9 +1180,7 @@
     }
 
     .dark :where(.ant-select-dropdown, .ant-dropdown-menu, .ant-popover-container, .ant-popover-inner) {
-        box-shadow: var(--component-floating-shadow,
-            0 8px 32px rgba(0, 0, 0, 0.36),
-            0 2px 8px rgba(0, 0, 0, 0.24)) !important;
+        box-shadow: var(--component-floating-shadow, 0 8px 32px rgba(0, 0, 0, 0.36), 0 2px 8px rgba(0, 0, 0, 0.24)) !important;
     }
 
     :where(.ant-tooltip) {
@@ -2052,12 +2048,11 @@
         overflow-y: auto;
     }
 
-    .canvas-node-shell,
-    .canvas-frame-shell,
+    .canvas-node-surface,
     .canvas-node-prompt-panel,
     .canvas-node-toolbar,
     .canvas-image-settings-popover {
-        --canvas-node-text-title-size: 14px;
+        --canvas-node-text-title-size: 13px;
         --canvas-node-text-body-size: 12px;
         --canvas-node-text-meta-size: 11px;
         font-family:
@@ -2073,14 +2068,14 @@
         font-variant-numeric: tabular-nums;
     }
 
-    :where(.canvas-node-shell, .canvas-frame-shell, .canvas-node-prompt-panel, .canvas-node-toolbar, .canvas-image-settings-popover) :where(button, input, textarea, select) {
+    :where(.canvas-node-surface, .canvas-node-prompt-panel, .canvas-node-toolbar, .canvas-image-settings-popover) :where(button, input, textarea, select) {
         font-family: inherit;
         letter-spacing: inherit;
     }
 
     .canvas-node-title {
         font-size: var(--canvas-node-text-title-size);
-        font-weight: 600;
+        font-weight: 500;
         line-height: 20px;
         letter-spacing: 0;
     }
@@ -2101,7 +2096,7 @@
     .canvas-node-meta {
         font-size: var(--canvas-node-text-meta-size);
         font-weight: 500;
-        line-height: 14px;
+        line-height: 16px;
         letter-spacing: 0;
     }
 
@@ -2393,44 +2388,20 @@
         transition: transform 160ms cubic-bezier(0.2, 0.85, 0.18, 1);
     }
 
-    .canvas-node-shell {
+    .canvas-node-surface {
+        box-shadow: none;
+        transform: none;
         transition:
-            border-color 160ms ease,
             box-shadow 160ms ease,
             background-color 160ms ease;
     }
 
-    .canvas-node-shell.aceternity-comet-card {
-        box-shadow:
-            0 18px 48px rgba(15, 23, 42, 0.1),
-            0 2px 6px rgba(15, 23, 42, 0.06);
+    .canvas-node-surface:hover {
+        box-shadow: var(--shadow-sm);
     }
 
-    .canvas-node-shell.aceternity-comet-card:hover {
-        box-shadow:
-            0 30px 80px rgba(15, 23, 42, 0.18),
-            0 6px 20px rgba(15, 23, 42, 0.1);
-    }
-
-    .dark .canvas-node-shell.aceternity-comet-card {
-        box-shadow:
-            0 22px 60px rgba(0, 0, 0, 0.34),
-            0 2px 8px rgba(0, 0, 0, 0.3);
-    }
-
-    .dark .canvas-node-shell.aceternity-comet-card:hover {
-        box-shadow:
-            0 34px 90px rgba(0, 0, 0, 0.52),
-            0 8px 26px rgba(0, 0, 0, 0.36);
-    }
-
-    [data-canvas-viewport-interacting="true"] .canvas-node-shell,
-    [data-canvas-viewport-interacting="true"] .aceternity-comet-card {
+    [data-canvas-viewport-interacting="true"] .canvas-node-surface {
         transition: none !important;
-    }
-
-    [data-canvas-viewport-interacting="true"] .canvas-node-shell.aceternity-comet-card,
-    [data-canvas-viewport-interacting="true"] .canvas-node-shell.aceternity-comet-card:hover {
         box-shadow: none !important;
     }
 
@@ -2441,9 +2412,9 @@
     .canvas-node-shell-generating::before {
         position: absolute;
         z-index: 45;
-        inset: -1.5px;
+        inset: 0;
         padding: 1px;
-        border-radius: 19px;
+        border-radius: inherit;
         background: linear-gradient(110deg, rgba(91, 110, 225, 0.66), rgba(96, 165, 250, 0.62), rgba(167, 139, 250, 0.58), rgba(244, 114, 182, 0.54), rgba(250, 204, 21, 0.5), rgba(52, 211, 153, 0.58), rgba(91, 110, 225, 0.66));
         background-size: 300% 100%;
         content: "";
@@ -2704,7 +2675,7 @@
     mix-blend-mode: normal;
 }
 
-html[data-theme-switching="true"] :where(.canvas-node-shell, .aceternity-comet-card, .aceternity-floating-panel, .canvas-connection-flow, .canvas-connection-draft) {
+html[data-theme-switching="true"] :where(.canvas-node-surface, .aceternity-comet-card, .aceternity-floating-panel, .canvas-connection-flow, .canvas-connection-draft) {
     animation: none !important;
     transition: none !important;
 }

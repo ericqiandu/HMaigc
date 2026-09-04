@@ -2,11 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { ChevronDown, ChevronRight, Video } from "lucide-react";
 
-import { CometCard } from "@/components/ui/aceternity/comet-card";
 import { FRAME_HEADER_HEIGHT, FRAME_PADDING } from "@/lib/canvas/canvas-frame";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
+import { CanvasNodeSurface, type CanvasNodeVisualState } from "./canvas-node-surface";
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 
@@ -78,31 +78,28 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
         return { left, top, right, bottom };
     }, [childNodes]);
 
-    const handleResizeMove = useCallback(
-        (event: MouseEvent) => {
-            const state = resizeRef.current;
-            if (!state.active) return;
-            const dx = (event.clientX - state.startX) / state.scale;
-            const dy = (event.clientY - state.startY) / state.scale;
-            const fromLeft = state.corner.includes("left");
-            const fromTop = state.corner.includes("top");
-            const startRight = state.startLeft + state.startWidth;
-            const startBottom = state.startTop + state.startHeight;
-            let left = fromLeft ? Math.min(state.startLeft + dx, startRight - 360) : state.startLeft;
-            let top = fromTop ? Math.min(state.startTop + dy, startBottom - 240) : state.startTop;
-            let right = fromLeft ? startRight : Math.max(state.startLeft + 360, startRight + dx);
-            let bottom = fromTop ? startBottom : Math.max(state.startTop + 240, startBottom + dy);
+    const handleResizeMove = useCallback((event: MouseEvent) => {
+        const state = resizeRef.current;
+        if (!state.active) return;
+        const dx = (event.clientX - state.startX) / state.scale;
+        const dy = (event.clientY - state.startY) / state.scale;
+        const fromLeft = state.corner.includes("left");
+        const fromTop = state.corner.includes("top");
+        const startRight = state.startLeft + state.startWidth;
+        const startBottom = state.startTop + state.startHeight;
+        let left = fromLeft ? Math.min(state.startLeft + dx, startRight - 360) : state.startLeft;
+        let top = fromTop ? Math.min(state.startTop + dy, startBottom - 240) : state.startTop;
+        let right = fromLeft ? startRight : Math.max(state.startLeft + 360, startRight + dx);
+        let bottom = fromTop ? startBottom : Math.max(state.startTop + 240, startBottom + dy);
 
-            if (state.childBounds) {
-                if (fromLeft) left = Math.min(left, state.childBounds.left - FRAME_PADDING);
-                else right = Math.max(right, state.childBounds.right + FRAME_PADDING);
-                if (fromTop) top = Math.min(top, state.childBounds.top - FRAME_HEADER_HEIGHT - FRAME_PADDING);
-                else bottom = Math.max(bottom, state.childBounds.bottom + FRAME_PADDING);
-            }
-            state.onResize(state.nodeId, right - left, bottom - top, { x: left, y: top });
-        },
-        [],
-    );
+        if (state.childBounds) {
+            if (fromLeft) left = Math.min(left, state.childBounds.left - FRAME_PADDING);
+            else right = Math.max(right, state.childBounds.right + FRAME_PADDING);
+            if (fromTop) top = Math.min(top, state.childBounds.top - FRAME_HEADER_HEIGHT - FRAME_PADDING);
+            else bottom = Math.max(bottom, state.childBounds.bottom + FRAME_PADDING);
+        }
+        state.onResize(state.nodeId, right - left, bottom - top, { x: left, y: top });
+    }, []);
 
     const handleResizeUp = useCallback(() => {
         resizeRef.current.active = false;
@@ -140,19 +137,22 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
     };
 
     const active = isSelected || isDropTarget;
+    const visualState: CanvasNodeVisualState = isDropTarget ? "target" : isSelected ? "selected" : "idle";
 
     return (
         <div
             data-node-id={data.id}
             className={`absolute z-0 select-none ${dragOffset ? "cursor-grabbing" : "cursor-default"}`}
-            style={{
-                transform: dragOffset
-                    ? `translate(calc(${data.position.x}px + var(--canvas-live-drag-x, 0px)), calc(${data.position.y}px + var(--canvas-live-drag-y, 0px)))`
-                    : `translate(${data.position.x}px, ${data.position.y}px)`,
-                width: data.width,
-                height: data.height,
-                contain: "layout style",
-            }}
+            style={
+                {
+                    transform: dragOffset ? `translate(calc(${data.position.x}px + var(--canvas-live-drag-x, 0px)), calc(${data.position.y}px + var(--canvas-live-drag-y, 0px)))` : `translate(${data.position.x}px, ${data.position.y}px)`,
+                    width: data.width,
+                    height: data.height,
+                    contain: "layout style",
+                    "--canvas-node-surface-fill": active ? theme.frame.activeFill : theme.frame.fill,
+                    "--canvas-node-outline-shadow": `inset 0 0 0 ${active ? 2 : 1}px ${active ? theme.frame.activeStroke : theme.frame.stroke}`,
+                } as React.CSSProperties
+            }
             onMouseDown={(event) => onMouseDown(event, data.id)}
             onDoubleClick={(event) => {
                 if (!collapsed || (event.target instanceof Element && event.target.closest("button,input"))) return;
@@ -163,21 +163,7 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
             onMouseEnter={() => onHoverStart?.(data.id)}
             onMouseLeave={() => onHoverEnd?.(data.id)}
         >
-            <CometCard
-                containerClassName="h-full w-full"
-                className="canvas-frame-shell overflow-hidden rounded-[14px] border"
-                rotateDepth={2.4}
-                translateDepth={2}
-                disabled={Boolean(dragOffset) || !collapsed || editing || scale < 0.32}
-                glare={collapsed}
-                style={{
-                    background: active ? theme.frame.activeFill : theme.frame.fill,
-                    borderColor: active ? theme.frame.activeStroke : theme.frame.stroke,
-                    borderWidth: 1 / Math.max(scale, 0.05),
-                    boxShadow: isSelected ? `0 0 0 ${1 / Math.max(scale, 0.05)}px ${theme.frame.activeStroke}33, 0 24px 72px ${theme.spatial.shadow}` : `0 18px 54px ${theme.spatial.shadow}`,
-                    transition: "background-color 120ms ease-out, border-color 120ms ease-out",
-                }}
-            >
+            <CanvasNodeSurface className="canvas-frame-shell" state={visualState} theme={theme}>
                 <div className="pointer-events-auto absolute inset-x-0 top-0 z-10 flex items-center gap-1.5 px-1.5" style={{ height: FRAME_HEADER_HEIGHT, color: theme.node.text }}>
                     <button
                         type="button"
@@ -229,7 +215,7 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
                 </div>
 
                 {collapsed ? <FramePreview nodes={childNodes} frame={data} theme={theme} /> : null}
-            </CometCard>
+            </CanvasNodeSurface>
             {!readOnly && !collapsed && isSelected && !data.metadata?.locked ? (
                 <>
                     <ResizeHandle corner="top-left" scale={scale} theme={theme} onMouseDown={startResize} />
@@ -274,12 +260,22 @@ function FramePreview({ nodes, frame, theme }: { nodes: CanvasNodeData[]; frame:
                         {node.type === CanvasNodeType.Image && node.metadata?.content ? <img src={node.metadata.content} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" draggable={false} /> : null}
                         {node.type === CanvasNodeType.Video && node.metadata?.content ? <video src={node.metadata.content} className="h-full w-full object-cover" muted playsInline preload="metadata" /> : null}
                         {node.type === CanvasNodeType.Video && !node.metadata?.content ? <Video className="m-auto size-4 h-full opacity-40" /> : null}
-                        {node.type === CanvasNodeType.Text ? <div className="line-clamp-3 p-1 text-[7px] leading-[9px]" style={{ color: theme.node.text }}>{node.metadata?.content || node.title}</div> : null}
-                        {node.type === CanvasNodeType.Script ? <div className="p-1 text-[7px] leading-[9px]" style={{ color: theme.node.text }}>分镜脚本 · {node.metadata?.storyboard?.rows.length || 0} 镜</div> : null}
+                        {node.type === CanvasNodeType.Text ? (
+                            <div className="line-clamp-3 p-1 text-[7px] leading-[9px]" style={{ color: theme.node.text }}>
+                                {node.metadata?.content || node.title}
+                            </div>
+                        ) : null}
+                        {node.type === CanvasNodeType.Script ? (
+                            <div className="p-1 text-[7px] leading-[9px]" style={{ color: theme.node.text }}>
+                                分镜脚本 · {node.metadata?.storyboard?.rows.length || 0} 镜
+                            </div>
+                        ) : null}
                     </div>
                 ))
             ) : (
-                <div className="grid h-full place-items-center text-[11px]" style={{ color: theme.node.faint }}>空背板</div>
+                <div className="grid h-full place-items-center text-[11px]" style={{ color: theme.node.faint }}>
+                    空背板
+                </div>
             )}
         </div>
     );

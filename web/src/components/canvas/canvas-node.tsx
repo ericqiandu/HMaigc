@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import { BookOpenCheck, ChevronRight, Clock3, FileText, Image as ImageIcon, LoaderCircle, Lock, Maximize2, RefreshCw, Replace, Square, Star, TriangleAlert } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { CometCard } from "@/components/ui/aceternity/comet-card";
 import { useSharedSecondNow } from "@/hooks/use-shared-second-clock";
 import { resourceStorageLabel, resourceStorageLocation, resourceStorageTitle } from "@/lib/canvas/resource-storage-status";
 import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
@@ -13,6 +12,7 @@ import { canvasResourceDisplayUrl } from "@/lib/canvas-media-playback";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasTextDraftEditor, type CanvasTextDraftEditorHandle } from "./canvas-text-draft-editor";
 import { CanvasMediaNodeContent } from "./canvas-media-node-content";
+import { CanvasNodeSurface, type CanvasNodeVisualState } from "./canvas-node-surface";
 import { CanvasNodeAction, CanvasNodeEmptyState, CanvasNodeStatusLayout } from "./canvas-node-ui";
 import { storyboardMinNodeHeight } from "./canvas-script-node";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
@@ -136,12 +136,9 @@ export const CanvasNode = React.memo(function CanvasNode({
     const showStatusTrack = Boolean(data.metadata?.locked || (!isVideoComposition && (resourceLabel || isBatchRoot || (isBatchChild && !readOnly) || (hasMediaContent && !readOnly))));
     const isActive = isConnectionTarget || isSelected || isFocusRelated;
     const flushMediaContent = hasImageContent || hasVideoContent;
-    const mediaBorderColor = isActive ? theme.accent.primary : isRelated && !isBatchChild ? theme.accent.primary : "transparent";
+    const visualState: CanvasNodeVisualState = data.metadata?.status === "error" ? "error" : data.metadata?.status === "loading" ? "loading" : isConnectionTarget ? "target" : isActive ? "selected" : isRelated && !isBatchChild ? "related" : "idle";
     const assetTags = data.metadata?.assetTags?.filter((tag) => tag.trim()) || [];
     const scriptMinHeight = data.type === CanvasNodeType.Script ? storyboardMinNodeHeight(data.metadata?.storyboardComposerHeight) : null;
-    const cometDepth = hasMediaContent ? 6.8 : data.type === CanvasNodeType.Script ? 2.8 : 4.6;
-    const cometTranslate = hasMediaContent ? 6 : data.type === CanvasNodeType.Script ? 2.5 : 4;
-    const cometDisabled = reduceMediaEffects || Boolean(dragOffset) || isEditingContent || isGeneratingNode || scale < 0.32 || batchClosing || batchOpening;
     const textareaRef = useRef<CanvasTextDraftEditorHandle>(null);
     const resizeRef = useRef({
         isResizing: false,
@@ -281,19 +278,11 @@ export const CanvasNode = React.memo(function CanvasNode({
             }}
             onContextMenu={(event) => onContextMenu(event, data.id)}
         >
-            <CometCard
-                containerClassName="overflow-visible"
-                className={`canvas-node-shell relative h-full w-full overflow-visible rounded-[18px] ${flushMediaContent ? "border-0" : "border"} ${isGeneratingNode ? "canvas-node-shell-generating" : ""}`}
-                rotateDepth={cometDepth}
-                translateDepth={cometTranslate}
-                disabled={cometDisabled}
-                glare={!isGeneratingNode}
-                data-state={data.metadata?.status || (isActive ? "active" : isRelated ? "related" : "idle")}
-                style={{
-                    background: hasImageContent || hasVideoContent ? "transparent" : theme.node.fill,
-                    borderColor: flushMediaContent ? undefined : isActive ? theme.accent.primary : isRelated ? theme.accent.primary : theme.node.stroke,
-                    boxShadow: isActive ? `0 0 0 1px ${theme.accent.primary}66, 0 28px 80px ${theme.spatial.shadow}` : isRelated && !isBatchChild ? `0 0 0 1px ${theme.accent.primary}35, 0 22px 60px ${theme.spatial.shadow}` : undefined,
-                }}
+            <CanvasNodeSurface
+                className={`canvas-node-shell ${isGeneratingNode ? "canvas-node-shell-generating" : ""}`}
+                state={visualState}
+                theme={theme}
+                flushContent={flushMediaContent}
                 onMouseDown={(event) => onMouseDown(event, data.id)}
                 onDoubleClick={(event) => {
                     if (isBatchRoot) {
@@ -356,8 +345,6 @@ export const CanvasNode = React.memo(function CanvasNode({
                     />
                 </div>
 
-                {flushMediaContent ? <div aria-hidden className="pointer-events-none absolute inset-0 z-30 rounded-[inherit]" style={{ boxShadow: `inset 0 0 0 1px ${mediaBorderColor}` }} /> : null}
-
                 {(hasImageContent || hasVideoContent) && !readOnly ? (
                     <div
                         className={`absolute bottom-[10%] left-1/2 z-40 -translate-x-1/2 motion-safe:transition motion-safe:duration-200 ${hovered || isSelected ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-3 opacity-0"}`}
@@ -411,16 +398,16 @@ export const CanvasNode = React.memo(function CanvasNode({
                 ) : null}
 
                 {!hasImageContent && !hasVideoContent && !hasAudioContent ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} /> : null}
+            </CanvasNodeSurface>
 
-                {!readOnly && !data.metadata?.locked ? (
-                    <>
-                        <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} />
-                        <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} />
-                        <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} />
-                        <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} />
-                    </>
-                ) : null}
-            </CometCard>
+            {!readOnly && !data.metadata?.locked ? (
+                <div className="canvas-node-handles pointer-events-none absolute inset-0 z-50 overflow-visible">
+                    <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} />
+                    <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} />
+                    <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} />
+                    <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} />
+                </div>
+            ) : null}
 
             {!readOnly && data.type !== CanvasNodeType.Script ? <ConnectionHandleDot side="left" scale={scale} visible={hovered || isSelected || isConnecting} theme={theme} onPointerDown={(event) => onConnectStart(event, data.id, "target")} /> : null}
             {!readOnly && data.type !== CanvasNodeType.Script ? (
@@ -907,7 +894,7 @@ function ResizeHandle({ corner, onMouseDown }: { corner: ResizeCorner; onMouseDo
         "bottom-right": "-bottom-[14px] -right-[14px] cursor-nwse-resize",
     }[corner];
 
-    return <div className={`absolute z-50 size-7 ${positionClass}`} onMouseDown={(event) => onMouseDown(event, corner)} />;
+    return <div className={`pointer-events-auto absolute z-50 size-7 ${positionClass}`} onMouseDown={(event) => onMouseDown(event, corner)} />;
 }
 
 function ConnectionHandleDot({ side, scale, visible, theme, onPointerDown }: { side: "left" | "right"; scale: number; visible: boolean; theme: CanvasTheme; onPointerDown: (event: React.PointerEvent) => void }) {

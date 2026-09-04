@@ -96,4 +96,17 @@ describe("画布节点统一 UI", () => {
         expect(composerCSS).not.toContain("background: color-mix(in srgb, var(--background) 94%, var(--foreground) 6%) !important;");
         expect(composerCSS).not.toContain("background: #ffffff !important;");
     });
+
+    test("画布节点与背板不再进入 3D Comet 渲染路径", () => {
+        const nodeSource = readFileSync(new URL("../src/components/canvas/canvas-node.tsx", import.meta.url), "utf8");
+        const frameSource = readFileSync(new URL("../src/components/canvas/canvas-frame-node.tsx", import.meta.url), "utf8");
+        const globalsCSS = readFileSync(new URL("../src/styles/globals.css", import.meta.url), "utf8");
+
+        expect(nodeSource).not.toContain("CometCard");
+        expect(frameSource).not.toContain("CometCard");
+        expect(nodeSource).not.toContain("rotateDepth");
+        expect(frameSource).not.toContain("translateDepth");
+        expect(globalsCSS).not.toContain(".canvas-node-shell.aceternity-comet-card");
+        expect(globalsCSS).not.toContain("0 34px 90px");
+    });
 });

@@ -1,6 +1,6 @@
 .app-product-content [data-canvas-world-layer],
 .app-product-content .node-element,
-.app-product-content .canvas-node-shell {
+.app-product-content .canvas-node-surface {
     /* Canvas nodes are rendered beneath Ant's application root. Set the
        product typeface at the world layer so ordinary nodes do not inherit
        Ant Design's separate Segoe/Roboto stack. Explicit monospace fields
