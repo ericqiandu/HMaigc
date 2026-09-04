@@ -88,10 +88,15 @@ describe("CanvasVideoPlayer", () => {
         installMediaMethods();
         const errors: CanvasVideoPlaybackError[] = [];
         await renderPlayer((error) => errors.push(error));
+        const player = requiredPlayer();
         const video = requiredVideo();
-        Object.defineProperty(video, "requestFullscreen", {
+        Object.defineProperty(player, "requestFullscreen", {
             configurable: true,
             value: () => Promise.reject(new Error("fullscreen denied")),
+        });
+        Object.defineProperty(video, "requestFullscreen", {
+            configurable: true,
+            value: () => Promise.reject(new Error("video element must not own fullscreen")),
         });
 
         await click(requiredButton("全屏播放"));

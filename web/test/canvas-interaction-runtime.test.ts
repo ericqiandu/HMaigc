@@ -6,7 +6,8 @@ import { createRoot, type Root } from "react-dom/client";
 
 import { CanvasNode } from "../src/components/canvas/canvas-node";
 import * as interactionRuntime from "../src/lib/canvas/canvas-interaction-runtime";
-import { applyCanvasLiveResize, calculateCanvasResizePreview, clearCanvasLiveResize } from "../src/lib/canvas/canvas-interaction-runtime";
+import { applyCanvasLiveResize, calculateCanvasResizePreview, clearCanvasLiveResize, createCanvasSelectionIndex } from "../src/lib/canvas/canvas-interaction-runtime";
+import { calculateNodeAlignment, createNodeAlignmentContext } from "../src/lib/canvas/canvas-project-domain";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "../src/types/canvas";
 
 let root: Root | null = null;
@@ -105,6 +106,35 @@ describe("canvas interaction runtime", () => {
         await act(async () => window.dispatchEvent(new MouseEvent("mouseup")));
         expect(commits).toEqual([{ nodeId: "resize-node", width: 340, height: 260, position: { x: 10, y: 20 } }]);
         expect(nodeElement?.style.getPropertyValue("--canvas-live-resize-width")).toBe("");
+    });
+
+    test("queries selection candidates through a spatial index", () => {
+        const candidates = [
+            { id: "inside", left: 20, top: 20, right: 120, bottom: 120 },
+            { id: "boundary", left: 190, top: 190, right: 260, bottom: 260 },
+            ...Array.from({ length: 10_000 }, (_, index) => ({ id: `far-${index}`, left: 10_000 + index * 200, top: 10_000, right: 10_100 + index * 200, bottom: 10_100 })),
+        ];
+        const index = createCanvasSelectionIndex(candidates);
+
+        expect(index.query({ left: 0, top: 0, right: 200, bottom: 200 })).toEqual(["inside", "boundary"]);
+        expect(index.query({ left: 500, top: 500, right: 700, bottom: 700 })).toEqual([]);
+    });
+
+    test("finds the nearest alignment guide from sorted drag-start targets", () => {
+        const moving = textNode();
+        const context = createNodeAlignmentContext(
+            [
+                moving,
+                { ...textNode(), id: "guide-far", position: { x: 600, y: 400 } },
+                { ...textNode(), id: "guide-near", position: { x: 217, y: 20 } },
+            ],
+            [{ id: moving.id, x: moving.position.x, y: moving.position.y }],
+        );
+
+        expect(calculateNodeAlignment(context, { x: 204, y: 0 }, 7)).toEqual({
+            offset: { x: 207, y: 0 },
+            guides: { vertical: 217, horizontal: 20 },
+        });
     });
 });
 

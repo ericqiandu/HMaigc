@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { CanvasMediaNodeContent } from "../src/components/canvas/canvas-media-node-content";
+import { CanvasFrameNode } from "../src/components/canvas/canvas-frame-node";
 import { CanvasNode } from "../src/components/canvas/canvas-node";
 import { canvasThemes } from "../src/lib/canvas-theme";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
@@ -126,6 +127,38 @@ describe("画布媒体流式预览", () => {
 
         expect(markup).toContain('loading="lazy"');
         expect(markup).toContain('decoding="async"');
+    });
+
+    test("近区折叠背板不通过缩略预览重新挂载视频", () => {
+        const frame: CanvasNodeData = {
+            id: "near-frame",
+            type: CanvasNodeType.Frame,
+            title: "近区背板",
+            position: { x: 0, y: 0 },
+            width: 800,
+            height: 500,
+            metadata: { frame: { collapsed: true } },
+        };
+        const child = { ...mediaNode(CanvasNodeType.Video, "frame-video"), parentId: frame.id };
+        const markup = renderToStaticMarkup(
+            createElement(CanvasFrameNode, {
+                data: frame,
+                childNodes: [child],
+                scale: 1,
+                isSelected: false,
+                isDropTarget: false,
+                mediaVisibilityTier: "near",
+                readOnly: true,
+                onMouseDown: () => undefined,
+                onResizeCommit: () => undefined,
+                onToggleCollapsed: () => undefined,
+                onTitleChange: () => undefined,
+                onContextMenu: () => undefined,
+            }),
+        );
+
+        expect(markup).not.toContain("<video");
+        expect(markup).toContain('data-canvas-deferred-media="video"');
     });
 });
 

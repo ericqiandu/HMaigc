@@ -70,15 +70,15 @@ export function CanvasVideoPlayer({ nodeId, src, title, preload, onPlaybackError
     }, []);
 
     const openFullscreen = useCallback(async () => {
-        const video = videoRef.current;
-        if (!video) return;
+        const player = playerRef.current;
+        if (!player) return;
         setErrorMessage(null);
-        if (!video.requestFullscreen) {
+        if (!player.requestFullscreen) {
             reportError("fullscreen", new Error("浏览器不支持视频全屏"), "浏览器不支持视频全屏");
             return;
         }
         try {
-            await video.requestFullscreen();
+            await player.requestFullscreen();
         } catch (error: unknown) {
             reportError("fullscreen", error, "无法进入视频全屏");
         }

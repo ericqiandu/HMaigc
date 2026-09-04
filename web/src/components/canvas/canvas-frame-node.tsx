@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight, Video } from "lucide-react";
 
 import { FRAME_HEADER_HEIGHT, FRAME_PADDING } from "@/lib/canvas/canvas-frame";
 import { applyCanvasLiveResize, calculateCanvasResizePreview, clearCanvasLiveResize, type CanvasResizeCorner, type CanvasResizePreview } from "@/lib/canvas/canvas-interaction-runtime";
+import type { CanvasMediaVisibilityTier } from "@/lib/canvas/canvas-render-index";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
@@ -29,6 +30,7 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
     scale,
     isSelected,
     isDropTarget,
+    mediaVisibilityTier,
     onMouseDown,
     onResizeCommit,
     onToggleCollapsed,
@@ -44,6 +46,7 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
     scale: number;
     isSelected: boolean;
     isDropTarget: boolean;
+    mediaVisibilityTier: CanvasMediaVisibilityTier;
     onMouseDown: (event: ReactMouseEvent, nodeId: string) => void;
     onResizeCommit: (nodeId: string, width: number, height: number, position?: Position) => void;
     onToggleCollapsed: (nodeId: string) => void;
@@ -251,7 +254,7 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
                     </span>
                 </div>
 
-                {collapsed ? <FramePreview nodes={childNodes} frame={data} theme={theme} /> : null}
+                {collapsed ? <FramePreview nodes={childNodes} frame={data} theme={theme} mediaVisibilityTier={mediaVisibilityTier} /> : null}
             </CanvasNodeSurface>
             {!readOnly && !collapsed && isSelected && !data.metadata?.locked ? (
                 <>
@@ -265,7 +268,7 @@ export const CanvasFrameNode = React.memo(function CanvasFrameNode({
     );
 });
 
-function FramePreview({ nodes, frame, theme }: { nodes: CanvasNodeData[]; frame: CanvasNodeData; theme: CanvasTheme }) {
+function FramePreview({ nodes, frame, theme, mediaVisibilityTier }: { nodes: CanvasNodeData[]; frame: CanvasNodeData; theme: CanvasTheme; mediaVisibilityTier: CanvasMediaVisibilityTier }) {
     const layout = useMemo(() => {
         if (!nodes.length) return [];
         const previewNodes = nodes.slice(0, 24);
@@ -295,7 +298,12 @@ function FramePreview({ nodes, frame, theme }: { nodes: CanvasNodeData[]; frame:
                 layout.map(({ node, ...style }) => (
                     <div key={node.id} className="absolute overflow-hidden rounded-[3px] border" style={{ ...style, background: theme.node.fill, borderColor: theme.node.stroke }}>
                         {node.type === CanvasNodeType.Image && node.metadata?.content ? <img src={node.metadata.content} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" draggable={false} /> : null}
-                        {node.type === CanvasNodeType.Video && node.metadata?.content ? <video src={node.metadata.content} className="h-full w-full object-cover" muted playsInline preload="metadata" /> : null}
+                        {node.type === CanvasNodeType.Video && node.metadata?.content && mediaVisibilityTier === "visible" ? <video src={node.metadata.content} className="h-full w-full object-cover" muted playsInline preload="metadata" /> : null}
+                        {node.type === CanvasNodeType.Video && node.metadata?.content && mediaVisibilityTier === "near" ? (
+                            <div className="canvas-frame-deferred-video grid size-full place-items-center" data-canvas-deferred-media="video" role="status" aria-label={`${node.title || "视频"}位于预加载区域`}>
+                                <Video className="canvas-frame-deferred-video-icon size-4 opacity-40" />
+                            </div>
+                        ) : null}
                         {node.type === CanvasNodeType.Video && !node.metadata?.content ? <Video className="m-auto size-4 h-full opacity-40" /> : null}
                         {node.type === CanvasNodeType.Text ? (
                             <div className="line-clamp-3 p-1 text-[7px] leading-[9px]" style={{ color: theme.node.text }}>

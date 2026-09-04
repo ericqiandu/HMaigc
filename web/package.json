@@ -9,7 +9,7 @@
         "check:bundle": "node ./scripts/check-bundle-budget.mjs",
         "verify:membership-checkout-browser": "node ./scripts/verify-membership-checkout-browser.mjs",
         "verify:agent-dual-mode-browser": "node ./scripts/verify-agent-dual-mode-browser.mjs",
-        "verify:canvas-media-rendering": "playwright test e2e/canvas-media-rendering.spec.ts",
+        "verify:canvas-media-rendering": "playwright test e2e/canvas-media-rendering.e2e.ts",
         "lighthouse": "node ./scripts/run-lighthouse-gate.mjs",
         "benchmark:canvas": "node ./scripts/run-canvas-performance-benchmark.mjs",
         "test": "bun test --isolate",

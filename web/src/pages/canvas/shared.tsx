@@ -313,6 +313,7 @@ export default function SharedCanvasPage() {
                             scale={viewport.k}
                             isSelected={selectedNodeId === node.id}
                             isDropTarget={false}
+                            mediaVisibilityTier="visible"
                             readOnly
                             onMouseDown={(event, nodeId) => {
                                 event.stopPropagation();

@@ -39,7 +39,7 @@ import { CanvasStylePickerModal } from "@/components/canvas/canvas-style-picker-
 import { CanvasFileDropOverlay } from "@/components/canvas/canvas-file-drop-overlay";
 import { InfiniteCanvas } from "@/components/canvas/infinite-canvas";
 import { Minimap } from "@/components/canvas/canvas-mini-map";
-import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
+import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
 import { getProject } from "@/services/api/projects";
 import { ensureRemoteCanvasProjectReady } from "@/services/user-data-sync";
@@ -115,6 +115,7 @@ const CanvasVersionCompareModal = lazy(() => import("@/components/canvas/canvas-
 const CanvasProjectContextMenu = lazy(() => import("./canvas-project-context-menu").then((module) => ({ default: module.CanvasProjectContextMenu })));
 const CanvasProjectMediaDialogs = lazy(() => import("./canvas-project-media-dialogs").then((module) => ({ default: module.CanvasProjectMediaDialogs })));
 const CanvasProjectStatusDialogs = lazy(() => import("./canvas-project-status-dialogs").then((module) => ({ default: module.CanvasProjectStatusDialogs })));
+const CanvasNodePromptPanel = lazy(() => import("@/components/canvas/canvas-node-prompt-panel").then((module) => ({ default: module.CanvasNodePromptPanel })));
 
 const NODE_STATUS_SUCCESS = "success" as const;
 const EMPTY_RESOURCE_REFERENCES: CanvasResourceReference[] = [];
@@ -1196,24 +1197,26 @@ function InfiniteCanvasPage() {
                     onClose={() => setDialogNodeId(null)}
                 />
             ) : (
-                <CanvasNodePromptPanel
-                    projectId={projectId}
-                    node={panelNode}
-                    isRunning={runningNodeId === panelNode.id}
-                    availableReferences={canvasResourceReferences}
-                    mentionReferences={mentionReferencesByNodeId.get(panelNode.id) || EMPTY_RESOURCE_REFERENCES}
-                    onReferenceConnect={connectExistingNodes}
-                    canReferenceConnect={canConnectExistingNodes}
-                    onPromptChange={handleNodePromptChange}
-                    onConfigChange={handleConfigNodeChange}
-                    onGenerate={(nodeId, mode, prompt, expectedQuote) => void handleGenerateNode(nodeId, mode, prompt, { expectedQuote })}
-                    onStop={stopNodeGeneration}
-                    workspaceMode={workspaceMode}
-                    onImageSettingsOpenChange={(open) => {
-                        setNodeImageSettingsOpen(open);
-                        if (open) setToolbarNodeId(null);
-                    }}
-                />
+                <Suspense fallback={null}>
+                    <CanvasNodePromptPanel
+                        projectId={projectId}
+                        node={panelNode}
+                        isRunning={runningNodeId === panelNode.id}
+                        availableReferences={canvasResourceReferences}
+                        mentionReferences={mentionReferencesByNodeId.get(panelNode.id) || EMPTY_RESOURCE_REFERENCES}
+                        onReferenceConnect={connectExistingNodes}
+                        canReferenceConnect={canConnectExistingNodes}
+                        onPromptChange={handleNodePromptChange}
+                        onConfigChange={handleConfigNodeChange}
+                        onGenerate={(nodeId, mode, prompt, expectedQuote) => void handleGenerateNode(nodeId, mode, prompt, { expectedQuote })}
+                        onStop={stopNodeGeneration}
+                        workspaceMode={workspaceMode}
+                        onImageSettingsOpenChange={(open) => {
+                            setNodeImageSettingsOpen(open);
+                            if (open) setToolbarNodeId(null);
+                        }}
+                    />
+                </Suspense>
             );
         },
         [

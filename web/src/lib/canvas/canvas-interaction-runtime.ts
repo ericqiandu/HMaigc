@@ -34,6 +34,32 @@ export type FrameDropContext = {
     frames: Array<{ id: string; left: number; top: number; right: number; bottom: number }>;
 };
 
+export type CanvasSelectionCandidate = {
+    id: string;
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+};
+
+export type CanvasSelectionIndex = {
+    query: (bounds: Omit<CanvasSelectionCandidate, "id">) => string[];
+};
+
+type IndexedSelectionCandidate = CanvasSelectionCandidate & { sourceIndex: number };
+
+type CanvasSelectionTree = {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+    entries?: IndexedSelectionCandidate[];
+    first?: CanvasSelectionTree;
+    second?: CanvasSelectionTree;
+};
+
+const SELECTION_TREE_LEAF_SIZE = 16;
+
 export function calculateCanvasResizePreview(input: CanvasResizeInput): CanvasResizePreview {
     const numericValues = [input.initial.x, input.initial.y, input.initial.width, input.initial.height, input.delta.x, input.delta.y, input.minWidth, input.minHeight];
     if (!numericValues.every(Number.isFinite)) throw new Error("画布 resize 输入必须是有限数字");
@@ -63,6 +89,71 @@ export function calculateCanvasResizePreview(input: CanvasResizeInput): CanvasRe
         width,
         height,
     };
+}
+
+export function createCanvasSelectionIndex(candidates: readonly CanvasSelectionCandidate[]): CanvasSelectionIndex {
+    const entries = candidates.map((candidate, sourceIndex) => {
+        if (!candidate.id.trim()) throw new Error("画布框选候选节点必须包含 id");
+        if (![candidate.left, candidate.top, candidate.right, candidate.bottom].every(Number.isFinite)) throw new Error("画布框选候选节点边界必须是有限数字");
+        if (candidate.right <= candidate.left || candidate.bottom <= candidate.top) throw new Error("画布框选候选节点边界无效");
+        return { ...candidate, sourceIndex };
+    });
+    const tree = buildCanvasSelectionTree(entries);
+    return {
+        query: (bounds) => {
+            if (![bounds.left, bounds.top, bounds.right, bounds.bottom].every(Number.isFinite)) throw new Error("画布框选查询边界必须是有限数字");
+            if (bounds.right <= bounds.left || bounds.bottom <= bounds.top || !tree) return [];
+            const matches: IndexedSelectionCandidate[] = [];
+            queryCanvasSelectionTree(tree, bounds, matches);
+            matches.sort((left, right) => left.sourceIndex - right.sourceIndex);
+            return matches.map((entry) => entry.id);
+        },
+    };
+}
+
+function buildCanvasSelectionTree(entries: IndexedSelectionCandidate[]): CanvasSelectionTree | null {
+    if (!entries.length) return null;
+    const bounds = selectionBounds(entries);
+    if (entries.length <= SELECTION_TREE_LEAF_SIZE) return { ...bounds, entries };
+    const splitOnX = bounds.right - bounds.left >= bounds.bottom - bounds.top;
+    const sorted = [...entries].sort((left, right) => {
+        const leftCenter = splitOnX ? left.left + left.right : left.top + left.bottom;
+        const rightCenter = splitOnX ? right.left + right.right : right.top + right.bottom;
+        return leftCenter - rightCenter || left.sourceIndex - right.sourceIndex;
+    });
+    const midpoint = Math.floor(sorted.length / 2);
+    const first = buildCanvasSelectionTree(sorted.slice(0, midpoint));
+    const second = buildCanvasSelectionTree(sorted.slice(midpoint));
+    if (!first || !second) throw new Error("画布框选空间索引构建失败");
+    return { ...bounds, first, second };
+}
+
+function selectionBounds(entries: readonly IndexedSelectionCandidate[]) {
+    let left = Number.POSITIVE_INFINITY;
+    let top = Number.POSITIVE_INFINITY;
+    let right = Number.NEGATIVE_INFINITY;
+    let bottom = Number.NEGATIVE_INFINITY;
+    for (const entry of entries) {
+        left = Math.min(left, entry.left);
+        top = Math.min(top, entry.top);
+        right = Math.max(right, entry.right);
+        bottom = Math.max(bottom, entry.bottom);
+    }
+    return { left, top, right, bottom };
+}
+
+function queryCanvasSelectionTree(tree: CanvasSelectionTree, bounds: Omit<CanvasSelectionCandidate, "id">, matches: IndexedSelectionCandidate[]) {
+    if (!selectionBoundsIntersect(tree, bounds)) return;
+    if (tree.entries) {
+        for (const entry of tree.entries) if (selectionBoundsIntersect(entry, bounds)) matches.push(entry);
+        return;
+    }
+    if (tree.first) queryCanvasSelectionTree(tree.first, bounds, matches);
+    if (tree.second) queryCanvasSelectionTree(tree.second, bounds, matches);
+}
+
+function selectionBoundsIntersect(left: Omit<CanvasSelectionCandidate, "id">, right: Omit<CanvasSelectionCandidate, "id">) {
+    return left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top;
 }
 
 export function applyCanvasLiveResize(target: HTMLElement, preview: CanvasResizePreview) {

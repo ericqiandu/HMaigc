@@ -165,6 +165,7 @@ describe("canvas performance hot paths", () => {
 
     test("queries the render index on viewport changes without scanning the full graph", async () => {
         const source = await Bun.file(new URL("../src/pages/canvas/use-canvas-render-model.ts", import.meta.url)).text();
+        const renderIndexSource = await Bun.file(new URL("../src/lib/canvas/canvas-render-index.ts", import.meta.url)).text();
         const queryStart = source.indexOf("const renderQuery = useMemo");
         const queryEnd = source.indexOf("const imageAssets", queryStart);
         const viewportProjection = source.slice(queryStart, queryEnd);
@@ -176,5 +177,39 @@ describe("canvas performance hot paths", () => {
         expect(viewportProjection).not.toContain("nodes.forEach");
         expect(viewportProjection).not.toContain("connections.flatMap");
         expect(viewportProjection).not.toContain("JSON.stringify");
+        expect(renderIndexSource).toContain("queryOversizedNodeTree");
+        expect(renderIndexSource).not.toContain("for (const entry of oversizedNodes)");
+    });
+
+    test("benchmarks every commercial canvas scale and gesture against mixed graphs", async () => {
+        const fixtureSource = await Bun.file(new URL("../perf/canvas-performance-fixture.tsx", import.meta.url)).text();
+        const runnerSource = await Bun.file(new URL("../scripts/run-canvas-performance-benchmark.mjs", import.meta.url)).text();
+
+        expect(fixtureSource).toContain("window.runCanvasBenchmarkScenario");
+        expect(fixtureSource).toContain("createCanvasRenderIndex");
+        expect(fixtureSource).toContain("projectSerialization");
+        expect(fixtureSource).toContain("networkRequest");
+        expect(fixtureSource).toContain("fullGraphScan");
+        expect(fixtureSource).not.toContain("Math.random");
+        expect(runnerSource).toContain("const RUNS_PER_SCALE = 3");
+        expect(runnerSource).toContain("const NODE_COUNTS = [50, 200, 500]");
+        expect(runnerSource).toContain("CANVAS_BENCHMARK_SCENARIOS");
+        expect(runnerSource).not.toContain("writeFileSync(BASELINE");
+    });
+
+    test("keeps alignment and selection-box pointer moves off full-canvas scans", async () => {
+        const domainSource = await Bun.file(new URL("../src/lib/canvas/canvas-project-domain.ts", import.meta.url)).text();
+        const selectionSource = await Bun.file(new URL("../src/pages/canvas/use-canvas-selection-controller.ts", import.meta.url)).text();
+
+        expect(domainSource).not.toContain("context.targets.forEach");
+        expect(selectionSource).toContain("selectionIndexRef.current?.query");
+        expect(selectionSource).not.toContain("selectionCandidatesRef.current.forEach");
+    });
+
+    test("keeps the optional node prompt editor outside the initial canvas dependency closure", async () => {
+        const source = await Bun.file(new URL("../src/pages/canvas/project.tsx", import.meta.url)).text();
+
+        expect(source).toContain('const CanvasNodePromptPanel = lazy(() => import("@/components/canvas/canvas-node-prompt-panel")');
+        expect(source).not.toContain('import { CanvasNodePromptPanel');
     });
 });

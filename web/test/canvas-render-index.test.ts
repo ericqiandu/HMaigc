@@ -75,6 +75,16 @@ describe("canvas render index", () => {
         expect(new Set(result.connectionIds).size).toBe(result.connectionIds.length);
     });
 
+    test("indexes a long diagonal connection along its path instead of its entire bounding rectangle", () => {
+        const start = node("diagonal-start", 0, 0);
+        const end = node("diagonal-end", 10_000, 10_000);
+        const connection: CanvasConnection = { id: "diagonal-edge", fromNodeId: start.id, toNodeId: end.id };
+        const index = createCanvasRenderIndex([start, end], [connection], new Set());
+
+        expect(index.query({ visible: { left: 4_800, top: 4_800, right: 5_300, bottom: 5_300 }, nearPadding: 0 }).connectionIds).toEqual([connection.id]);
+        expect(index.query({ visible: { left: 4_800, top: 0, right: 5_300, bottom: 300 }, nearPadding: 0 }).connectionIds).toEqual([]);
+    });
+
     test("rejects invalid query geometry instead of returning misleading results", () => {
         const index = createCanvasRenderIndex([], [], new Set());
         expect(() => index.query({ visible: { left: 0, top: 0, right: Number.NaN, bottom: 900 }, nearPadding: 0 })).toThrow("画布可见区域必须是有限矩形");

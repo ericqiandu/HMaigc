@@ -126,6 +126,7 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                         scale={viewportScale}
                         isSelected={props.selectedNodeIds.has(node.id)}
                         isDropTarget={props.frameDropTargetId === node.id}
+                        mediaVisibilityTier={props.mediaTierByNodeId.get(node.id) ?? "visible"}
                         readOnly={props.readOnly}
                         onMouseDown={props.onNodeMouseDown}
                         onResizeCommit={props.onNodeResizeCommit}
