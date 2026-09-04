@@ -31,7 +31,6 @@ const mediaContractNode: CanvasNodeData = {
     width: 1280,
     height: 720,
     metadata: { content: "/videos/hero.mp4", status: "success" },
-    createdAt: "2026-01-01T00:00:00.000Z",
 };
 
 function readScenario() {
