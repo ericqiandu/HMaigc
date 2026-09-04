@@ -1,23 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Maximize2, Pause, Play, Volume2, VolumeX } from "lucide-react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Camera, Pause, Play, Volume2, VolumeX } from "lucide-react";
+
+import { captureVideoFrameAtTime } from "@/lib/canvas/canvas-video-frame";
 
 import "./canvas-video-player.css";
 
 export type CanvasVideoPlayerProps = {
     nodeId: string;
     src: string;
+    captureSource: Blob | string;
     title: string;
     preload: "none" | "metadata";
     onPlaybackError: (error: CanvasVideoPlaybackError) => void;
 };
 
 export type CanvasVideoPlaybackError = {
-    kind: "media" | "fullscreen";
+    kind: "media" | "fullscreen" | "capture";
     message: string;
 };
 
-export function CanvasVideoPlayer({ nodeId, src, title, preload, onPlaybackError }: CanvasVideoPlayerProps) {
+type CanvasVideoProgressStyle = CSSProperties & {
+    "--canvas-video-progress-ratio": string;
+};
+
+export function CanvasVideoPlayer({ nodeId, src, captureSource, title, preload, onPlaybackError }: CanvasVideoPlayerProps) {
     const playerRef = useRef<HTMLDivElement>(null);
     const videoRef = useRef<HTMLVideoElement>(null);
     const [isPlaying, setIsPlaying] = useState(false);
@@ -84,6 +91,19 @@ export function CanvasVideoPlayer({ nodeId, src, title, preload, onPlaybackError
         }
     }, [reportError]);
 
+    const saveCurrentFrame = useCallback(async () => {
+        const video = videoRef.current;
+        if (!video) return;
+        setErrorMessage(null);
+        try {
+            const captureTime = video.currentTime;
+            const frameBlob = await captureVideoFrameAtTime(captureSource, captureTime);
+            downloadFrame(frameBlob, captureTime);
+        } catch (error: unknown) {
+            reportError("capture", error, "无法保存当前视频帧");
+        }
+    }, [captureSource, reportError]);
+
     const handleKeyDown = useCallback(
         (event: ReactKeyboardEvent<HTMLDivElement>) => {
             if (event.target instanceof HTMLInputElement) return;
@@ -104,10 +124,19 @@ export function CanvasVideoPlayer({ nodeId, src, title, preload, onPlaybackError
                 event.preventDefault();
                 event.stopPropagation();
                 toggleMuted();
+                return;
+            }
+            if (key === "f") {
+                event.preventDefault();
+                event.stopPropagation();
+                void openFullscreen();
             }
         },
-        [currentTime, seekTo, toggleMuted, togglePlayback],
+        [currentTime, openFullscreen, seekTo, toggleMuted, togglePlayback],
     );
+
+    const progressRatio = duration > 0 ? `${Math.max(0, Math.min(100, (currentTime / duration) * 100))}%` : "0%";
+    const progressStyle: CanvasVideoProgressStyle = { "--canvas-video-progress-ratio": progressRatio };
 
     return (
         <div ref={playerRef} data-canvas-video-player="true" data-canvas-no-zoom="true" data-video-node-id={nodeId} className="canvas-video-player" role="group" aria-label={`${title} 播放器`} tabIndex={0} onKeyDown={handleKeyDown}>
@@ -119,6 +148,11 @@ export function CanvasVideoPlayer({ nodeId, src, title, preload, onPlaybackError
                 className="canvas-video-player-media"
                 draggable={false}
                 onDragStart={(event) => event.preventDefault()}
+                onDoubleClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void openFullscreen();
+                }}
                 onPlay={() => setIsPlaying(true)}
                 onPause={() => setIsPlaying(false)}
                 onEnded={() => setIsPlaying(false)}
@@ -150,25 +184,34 @@ export function CanvasVideoPlayer({ nodeId, src, title, preload, onPlaybackError
                 <button type="button" className="canvas-video-control-button" aria-label={isPlaying ? "暂停视频" : "播放视频"} onClick={() => void togglePlayback()}>
                     {isPlaying ? <Pause className="canvas-video-control-icon" /> : <Play className="canvas-video-control-icon" />}
                 </button>
-                <input
-                    className="canvas-video-progress"
-                    type="range"
-                    min="0"
-                    max={duration || 0}
-                    step="0.1"
-                    value={Math.min(currentTime, duration || 0)}
-                    disabled={!duration}
-                    aria-label="视频进度"
-                    onInput={(event) => seekTo(Number(event.currentTarget.value))}
-                />
-                <output className="canvas-video-time" aria-label="视频时间">
-                    {formatVideoTime(currentTime)} / {formatVideoTime(duration)}
+                <output data-canvas-video-current-time="true" className="canvas-video-time canvas-video-time-current" aria-label="当前播放时间">
+                    {formatVideoTime(currentTime)}
+                </output>
+                <div data-canvas-video-progress-track="true" data-disabled={duration > 0 ? undefined : "true"} className="canvas-video-progress-shell" style={progressStyle}>
+                    <span className="canvas-video-progress-track" aria-hidden="true">
+                        <span data-canvas-video-progress-fill="true" className="canvas-video-progress-fill" />
+                        <span data-canvas-video-progress-thumb="true" className="canvas-video-progress-thumb" />
+                    </span>
+                    <input
+                        className="canvas-video-progress-input"
+                        type="range"
+                        min="0"
+                        max={duration || 0}
+                        step="0.1"
+                        value={Math.min(currentTime, duration || 0)}
+                        disabled={!duration}
+                        aria-label="视频进度"
+                        onInput={(event) => seekTo(Number(event.currentTarget.value))}
+                    />
+                </div>
+                <output data-canvas-video-duration="true" className="canvas-video-time canvas-video-time-duration" aria-label="视频总时长">
+                    {formatVideoTime(duration)}
                 </output>
                 <button type="button" className="canvas-video-control-button" aria-label={isMuted ? "取消静音" : "静音"} onClick={toggleMuted}>
                     {isMuted ? <VolumeX className="canvas-video-control-icon" /> : <Volume2 className="canvas-video-control-icon" />}
                 </button>
-                <button type="button" className="canvas-video-control-button" aria-label="全屏播放" onClick={() => void openFullscreen()}>
-                    <Maximize2 className="canvas-video-control-icon" />
+                <button type="button" className="canvas-video-control-button" aria-label="保存当前视频帧" onClick={() => void saveCurrentFrame()}>
+                    <Camera className="canvas-video-control-icon" />
                 </button>
             </div>
         </div>
@@ -180,9 +223,25 @@ function stopCanvasEvent(event: { stopPropagation: () => void }) {
 }
 
 function formatVideoTime(seconds: number) {
-    if (!Number.isFinite(seconds) || seconds <= 0) return "00:00";
+    if (!Number.isFinite(seconds) || seconds <= 0) return "0:00";
     const wholeSeconds = Math.floor(seconds);
     const minutes = Math.floor(wholeSeconds / 60);
     const remainingSeconds = wholeSeconds % 60;
-    return `${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+    return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
+}
+
+function downloadFrame(frameBlob: Blob, currentTime: number) {
+    const objectUrl = URL.createObjectURL(frameBlob);
+    const link = document.createElement("a");
+    const frameTime = Number.isFinite(currentTime) && currentTime > 0 ? Math.floor(currentTime * 1_000) : 0;
+    link.href = objectUrl;
+    link.download = `video-frame-${frameTime}.png`;
+    link.hidden = true;
+    document.body.append(link);
+    try {
+        link.click();
+    } finally {
+        link.remove();
+        URL.revokeObjectURL(objectUrl);
+    }
 }

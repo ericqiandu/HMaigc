@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Music2, RefreshCw, Video } from "lucide-react";
 
-import { canvasMediaPlaybackUrl } from "@/lib/canvas-media-playback";
+import { canvasMediaPlaybackUrl, canvasResourceCaptureUrl } from "@/lib/canvas-media-playback";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import type { CanvasMediaVisibilityTier } from "@/lib/canvas/canvas-render-index";
 import { CanvasNodeAction, CanvasNodeEmptyState, CanvasNodeStatusLayout } from "./canvas-node-ui";
@@ -107,9 +107,12 @@ export function CanvasMediaNodeContent({ node, theme, reduceMediaEffects, mediaV
             key={playbackAttempt}
             nodeId={node.id}
             src={playbackUrl}
+            captureSource={canvasResourceCaptureUrl(node.metadata?.storageKey, playbackUrl)}
             title={node.title || "视频"}
             preload={reduceMediaEffects ? "none" : "metadata"}
-            onPlaybackError={(error) => setPlaybackFailure(createPlaybackFailure(node.id, playbackUrl, error))}
+            onPlaybackError={(error) => {
+                if (error.kind === "media") setPlaybackFailure(createPlaybackFailure(node.id, playbackUrl, error));
+            }}
         />
     );
 }
