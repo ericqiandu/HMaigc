@@ -6,13 +6,14 @@ import type { CanvasTheme } from "@/lib/canvas-theme";
 import type { CanvasMediaVisibilityTier } from "@/lib/canvas/canvas-render-index";
 import { CanvasNodeAction, CanvasNodeEmptyState, CanvasNodeStatusLayout } from "./canvas-node-ui";
 import { CanvasVideoPlayer, type CanvasVideoPlaybackError } from "./canvas-video-player";
-import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+import { CanvasNodeType, type CanvasMediaIntrinsicSize, type CanvasNodeData } from "@/types/canvas";
 
 type CanvasMediaNodeContentProps = {
     node: CanvasNodeData;
     theme: CanvasTheme;
     reduceMediaEffects: boolean;
     mediaVisibilityTier: CanvasMediaVisibilityTier;
+    onVideoIntrinsicSize?: (nodeId: string, size: CanvasMediaIntrinsicSize) => void;
 };
 
 type CanvasMediaPlaybackFailure = CanvasVideoPlaybackError & {
@@ -20,7 +21,7 @@ type CanvasMediaPlaybackFailure = CanvasVideoPlaybackError & {
     resourceUrl: string;
 };
 
-export function CanvasMediaNodeContent({ node, theme, reduceMediaEffects, mediaVisibilityTier }: CanvasMediaNodeContentProps) {
+export function CanvasMediaNodeContent({ node, theme, reduceMediaEffects, mediaVisibilityTier, onVideoIntrinsicSize }: CanvasMediaNodeContentProps) {
     const [playbackAttempt, setPlaybackAttempt] = useState(0);
     const [playbackFailure, setPlaybackFailure] = useState<CanvasMediaPlaybackFailure | null>(null);
     const playbackUrl = canvasMediaPlaybackUrl(node);
@@ -109,7 +110,8 @@ export function CanvasMediaNodeContent({ node, theme, reduceMediaEffects, mediaV
             src={playbackUrl}
             captureSource={canvasResourceCaptureUrl(node.metadata?.storageKey, playbackUrl)}
             title={node.title || "视频"}
-            preload={reduceMediaEffects ? "none" : "metadata"}
+            preload={onVideoIntrinsicSize || !reduceMediaEffects ? "metadata" : "none"}
+            onIntrinsicSize={(size) => onVideoIntrinsicSize?.(node.id, size)}
             onPlaybackError={(error) => {
                 if (error.kind === "media") setPlaybackFailure(createPlaybackFailure(node.id, playbackUrl, error));
             }}

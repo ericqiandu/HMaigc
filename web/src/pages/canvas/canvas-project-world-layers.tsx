@@ -8,7 +8,7 @@ import type { CanvasTheme } from "@/lib/canvas-theme";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { isFrameNode } from "@/lib/canvas/canvas-frame";
 import type { CanvasMediaVisibilityTier } from "@/lib/canvas/canvas-render-index";
-import type { CanvasConnection, CanvasNodeData, ConnectionHandle, Position, SelectionBox } from "@/types/canvas";
+import type { CanvasConnection, CanvasMediaIntrinsicSize, CanvasNodeData, ConnectionHandle, Position, SelectionBox } from "@/types/canvas";
 
 type DisplayConnection = { connection: CanvasConnection; from: CanvasNodeData; to: CanvasNodeData };
 type SelectedConnectionAction = { connectionId: string; position: Position };
@@ -61,6 +61,7 @@ type CanvasProjectWorldLayersProps = {
     onNodeHoverEnd: (nodeId: string) => void;
     onConnectStart: (event: ReactPointerEvent, nodeId: string, handleType: "source" | "target", handleId?: string) => void;
     onNodeResizeCommit: (nodeId: string, width: number, height: number, position?: Position) => void;
+    onVideoIntrinsicSize: (nodeId: string, size: CanvasMediaIntrinsicSize) => void;
     onToggleFrame: (nodeId: string) => void;
     onNodeTitleChange: (nodeId: string, title: string) => void;
     onNodeContextMenu: (event: ReactMouseEvent, nodeId: string) => void;
@@ -163,6 +164,7 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                         onHoverEnd={props.onNodeHoverEnd}
                         onConnectStart={props.onConnectStart}
                         onResizeCommit={props.onNodeResizeCommit}
+                        onVideoIntrinsicSize={props.readOnly ? undefined : props.onVideoIntrinsicSize}
                         onContentChange={props.onNodeContentChange}
                         onToggleBatch={props.onToggleBatch}
                         onSetBatchPrimary={props.onSetBatchPrimary}

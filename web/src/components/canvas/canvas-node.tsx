@@ -17,7 +17,7 @@ import { CanvasMediaNodeContent } from "./canvas-media-node-content";
 import { CanvasNodeSurface, type CanvasNodeVisualState } from "./canvas-node-surface";
 import { CanvasNodeAction, CanvasNodeEmptyState, CanvasNodeStatusLayout } from "./canvas-node-ui";
 import { storyboardMinNodeHeight } from "./canvas-script-node";
-import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
+import { CanvasNodeType, type CanvasMediaIntrinsicSize, type CanvasNodeData, type Position } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import "./canvas-audio-node.css";
 
@@ -66,6 +66,7 @@ type CanvasNodeProps = {
     onConnectStart: (event: React.PointerEvent, nodeId: string, handleType: "source" | "target", handleId?: string) => void;
     onResizeCommit: (nodeId: string, width: number, height: number, position?: Position) => void;
     onContentChange: (nodeId: string, content: string) => void;
+    onVideoIntrinsicSize?: (nodeId: string, size: CanvasMediaIntrinsicSize) => void;
     onToggleBatch?: (nodeId: string) => void;
     onSetBatchPrimary?: (node: CanvasNodeData) => void;
     onRetry?: (node: CanvasNodeData) => void;
@@ -91,6 +92,7 @@ type NodeContentRendererProps = {
     batchRecovering: boolean;
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
     onContentChange: (nodeId: string, content: string) => void;
+    onVideoIntrinsicSize?: (nodeId: string, size: CanvasMediaIntrinsicSize) => void;
     onStopEditing: () => void;
     mentionReferences: CanvasResourceReference[];
     onRetry?: (node: CanvasNodeData) => void;
@@ -129,6 +131,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     onConnectStart,
     onResizeCommit,
     onContentChange,
+    onVideoIntrinsicSize,
     onToggleBatch,
     onSetBatchPrimary,
     onRetry,
@@ -361,6 +364,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         renderNodeContent={renderNodeContent}
                         mentionReferences={mentionReferences}
                         onContentChange={onContentChange}
+                        onVideoIntrinsicSize={onVideoIntrinsicSize}
                         onStopEditing={() => setIsEditingContent(false)}
                         onRetry={onRetry}
                         onCancelTask={onCancelTask}
@@ -795,8 +799,8 @@ function EmptyImageContent({ node, theme, isBatchRoot, batchCount, batchExpanded
     return content;
 }
 
-function VideoNodeContent({ node, theme, reduceMediaEffects, mediaVisibilityTier }: NodeContentRendererProps) {
-    return <CanvasMediaNodeContent node={node} theme={theme} reduceMediaEffects={Boolean(reduceMediaEffects)} mediaVisibilityTier={mediaVisibilityTier} />;
+function VideoNodeContent({ node, theme, reduceMediaEffects, mediaVisibilityTier, onVideoIntrinsicSize }: NodeContentRendererProps) {
+    return <CanvasMediaNodeContent node={node} theme={theme} reduceMediaEffects={Boolean(reduceMediaEffects)} mediaVisibilityTier={mediaVisibilityTier} onVideoIntrinsicSize={onVideoIntrinsicSize} />;
 }
 
 function AudioNodeContent({ node, theme, mediaVisibilityTier }: NodeContentRendererProps) {

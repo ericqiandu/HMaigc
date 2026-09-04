@@ -83,6 +83,21 @@ describe("CanvasVideoPlayer", () => {
         expect(requiredButton("播放视频")).not.toBeNull();
     });
 
+    test("reports valid intrinsic dimensions once when video metadata loads", async () => {
+        const intrinsicSizes: Array<{ width: number; height: number }> = [];
+        await renderPlayer(undefined, (size) => intrinsicSizes.push(size));
+        const video = requiredVideo();
+        Object.defineProperty(video, "videoWidth", { configurable: true, value: 864 });
+        Object.defineProperty(video, "videoHeight", { configurable: true, value: 496 });
+
+        await act(async () => {
+            video.dispatchEvent(new Event("loadedmetadata"));
+            video.dispatchEvent(new Event("loadedmetadata"));
+        });
+
+        expect(intrinsicSizes).toEqual([{ width: 864, height: 496 }]);
+    });
+
     test("supports keyboard playback, seeking, mute, and fullscreen shortcuts", async () => {
         installMediaMethods();
         await renderPlayer();
@@ -221,7 +236,7 @@ describe("CanvasVideoPlayer", () => {
     });
 });
 
-async function renderPlayer(onPlaybackError: (error: CanvasVideoPlaybackError) => void = () => undefined) {
+async function renderPlayer(onPlaybackError: (error: CanvasVideoPlaybackError) => void = () => undefined, onIntrinsicSize?: (size: { width: number; height: number }) => void) {
     const host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -234,6 +249,7 @@ async function renderPlayer(onPlaybackError: (error: CanvasVideoPlaybackError) =
                 title: "测试视频",
                 preload: "metadata",
                 onPlaybackError,
+                onIntrinsicSize,
             }),
         );
     });

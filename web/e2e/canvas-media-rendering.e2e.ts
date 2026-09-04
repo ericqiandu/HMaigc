@@ -26,6 +26,7 @@ for (const scale of [0.18, 0.25, 0.55, 1, 2]) {
         ]);
 
         expect(nodeBox?.width).toBeCloseTo(1280 * scale, 0);
+        expect(nodeBox?.height).toBeCloseTo(720 * scale, 0);
         expect(surfaceBox).toEqual(nodeBox);
         expect(videoBox).toEqual(nodeBox);
         expect(controlsBox?.width).toBeCloseTo(nodeBox?.width ?? 0, 0);

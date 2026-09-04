@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "antd/dist/reset.css";
 
@@ -15,6 +15,7 @@ import {
     resolveCanvasLiveNodeDragTargets,
 } from "@/lib/canvas/canvas-interaction-runtime";
 import { createCanvasRenderIndex } from "@/lib/canvas/canvas-render-index";
+import { fitVideoNodeToIntrinsicSize } from "@/lib/canvas/canvas-video-geometry";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 import "@/styles/globals.css";
 import "@/styles/canvas-chrome.css";
@@ -75,7 +76,7 @@ const mediaContractNode: CanvasNodeData = {
     title: "视频渲染契约",
     position: { x: 320, y: 180 },
     width: 1280,
-    height: 720,
+    height: 640,
     metadata: { content: VIDEO_ASSET_URL, status: "success" },
 };
 
@@ -200,7 +201,8 @@ function CanvasPerformanceFixture() {
     const canvasScale = useMemo(() => readCanvasScale(isMediaContract), [isMediaContract]);
     const nodeCount = useMemo(() => (isMediaContract ? 1 : readNodeCount()), [isMediaContract]);
     const fixtureCount = isMediaContract ? { mediaCount: 1, connectionCount: 0 } : BENCHMARK_FIXTURE_COUNTS[nodeCount];
-    const nodes = useMemo(() => (isMediaContract ? [mediaContractNode] : createBenchmarkNodes(nodeCount, fixtureCount.mediaCount)), [fixtureCount.mediaCount, isMediaContract, nodeCount]);
+    const [videoContractNode, setVideoContractNode] = useState(mediaContractNode);
+    const nodes = useMemo(() => (isMediaContract ? [videoContractNode] : createBenchmarkNodes(nodeCount, fixtureCount.mediaCount)), [fixtureCount.mediaCount, isMediaContract, nodeCount, videoContractNode]);
     const connections = useMemo(() => (isMediaContract ? [] : createBenchmarkConnections(nodeCount, fixtureCount.connectionCount)), [fixtureCount.connectionCount, isMediaContract, nodeCount]);
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
     const connectionById = useMemo(() => new Map(connections.map((connection) => [connection.id, connection])), [connections]);
@@ -349,6 +351,10 @@ function CanvasPerformanceFixture() {
                             onHoverEnd={noOp}
                             onConnectStart={noOp}
                             onResizeCommit={noOp}
+                            onVideoIntrinsicSize={(nodeId, size) => {
+                                if (!isMediaContract || nodeId !== videoContractNode.id) return;
+                                setVideoContractNode((current) => fitVideoNodeToIntrinsicSize(current, size));
+                            }}
                             onContentChange={noOp}
                             onContextMenu={noOp}
                         />

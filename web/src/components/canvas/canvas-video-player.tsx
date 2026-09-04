@@ -3,6 +3,7 @@ import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Camera, Pause, Play, Volume2, VolumeX } from "lucide-react";
 
 import { captureVideoFrameAtTime } from "@/lib/canvas/canvas-video-frame";
+import type { CanvasMediaIntrinsicSize } from "@/types/canvas";
 
 import "./canvas-video-player.css";
 
@@ -13,6 +14,7 @@ export type CanvasVideoPlayerProps = {
     title: string;
     preload: "none" | "metadata";
     onPlaybackError: (error: CanvasVideoPlaybackError) => void;
+    onIntrinsicSize?: (size: CanvasMediaIntrinsicSize) => void;
 };
 
 export type CanvasVideoPlaybackError = {
@@ -24,9 +26,10 @@ type CanvasVideoProgressStyle = CSSProperties & {
     "--canvas-video-progress-ratio": string;
 };
 
-export function CanvasVideoPlayer({ nodeId, src, captureSource, title, preload, onPlaybackError }: CanvasVideoPlayerProps) {
+export function CanvasVideoPlayer({ nodeId, src, captureSource, title, preload, onPlaybackError, onIntrinsicSize }: CanvasVideoPlayerProps) {
     const playerRef = useRef<HTMLDivElement>(null);
     const videoRef = useRef<HTMLVideoElement>(null);
+    const reportedIntrinsicSizeRef = useRef<CanvasMediaIntrinsicSize | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [isMuted, setIsMuted] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
@@ -37,6 +40,10 @@ export function CanvasVideoPlayer({ nodeId, src, captureSource, title, preload, 
         const video = videoRef.current;
         return () => video?.pause();
     }, []);
+
+    useEffect(() => {
+        reportedIntrinsicSizeRef.current = null;
+    }, [src]);
 
     const reportError = useCallback(
         (kind: CanvasVideoPlaybackError["kind"], error: unknown, fallbackMessage: string) => {
@@ -157,6 +164,14 @@ export function CanvasVideoPlayer({ nodeId, src, captureSource, title, preload, 
                 onPause={() => setIsPlaying(false)}
                 onEnded={() => setIsPlaying(false)}
                 onLoadedMetadata={(event) => {
+                    const videoWidth = event.currentTarget.videoWidth;
+                    const videoHeight = event.currentTarget.videoHeight;
+                    const reported = reportedIntrinsicSizeRef.current;
+                    if (Number.isFinite(videoWidth) && videoWidth > 0 && Number.isFinite(videoHeight) && videoHeight > 0 && (reported?.width !== videoWidth || reported.height !== videoHeight)) {
+                        const intrinsicSize = { width: videoWidth, height: videoHeight };
+                        reportedIntrinsicSizeRef.current = intrinsicSize;
+                        onIntrinsicSize?.(intrinsicSize);
+                    }
                     const nextDuration = event.currentTarget.duration;
                     setDuration(Number.isFinite(nextDuration) && nextDuration > 0 ? nextDuration : 0);
                     const nextTime = event.currentTarget.currentTime;

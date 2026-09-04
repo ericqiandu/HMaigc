@@ -790,6 +790,7 @@ function InfiniteCanvasPage() {
         handleNodeContentChange,
         handleNodePromptChange,
         handleNodeResizeCommit,
+        handleVideoIntrinsicSize,
         handleNodeTitleChange,
         openingBatchIds,
         saveNodeAsset,
@@ -1589,6 +1590,7 @@ function InfiniteCanvasPage() {
                         onNodeHoverEnd={handleCanvasNodeHoverEnd}
                         onConnectStart={handleConnectStart}
                         onNodeResizeCommit={handleNodeResizeCommit}
+                        onVideoIntrinsicSize={handleVideoIntrinsicSize}
                         onToggleFrame={toggleFrameCollapsed}
                         onNodeTitleChange={handleNodeTitleChange}
                         onNodeContextMenu={handleNodeContextMenu}

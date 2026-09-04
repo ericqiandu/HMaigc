@@ -86,12 +86,13 @@ describe("画布媒体流式预览", () => {
 
     test("近区视频只渲染轻量占位且不挂载媒体元素", () => {
         const nearMarkup = renderToStaticMarkup(createElement(CanvasMediaNodeContent, { node: mediaNode(CanvasNodeType.Video, "near-video"), theme: canvasThemes.dark, reduceMediaEffects: true, mediaVisibilityTier: "near" }));
-        const visibleMarkup = renderToStaticMarkup(createElement(CanvasMediaNodeContent, { node: mediaNode(CanvasNodeType.Video, "visible-video"), theme: canvasThemes.dark, reduceMediaEffects: true, mediaVisibilityTier: "visible" }));
+        const visibleMarkup = renderToStaticMarkup(createElement(CanvasMediaNodeContent, { node: mediaNode(CanvasNodeType.Video, "visible-video"), theme: canvasThemes.dark, reduceMediaEffects: true, mediaVisibilityTier: "visible", onVideoIntrinsicSize: () => undefined }));
 
         expect(nearMarkup).not.toContain("<video");
         expect(nearMarkup).toContain("data-canvas-deferred-media");
         expect(nearMarkup).not.toContain("data-canvas-video-controls");
         expect(visibleMarkup).toContain("data-canvas-video-player");
+        expect(visibleMarkup).toContain('preload="metadata"');
     });
 
     test("近区图片继续使用浏览器懒加载和异步解码", () => {

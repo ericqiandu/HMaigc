@@ -118,6 +118,11 @@ export type CanvasSkillSnapshot = {
     tags: string[];
 };
 
+export type CanvasMediaIntrinsicSize = {
+    width: number;
+    height: number;
+};
+
 export type CanvasNodeMetadata = {
     content?: string;
     richText?: Record<string, unknown>;
