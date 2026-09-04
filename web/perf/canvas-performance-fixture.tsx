@@ -23,6 +23,21 @@ const SUPPORTED_NODE_COUNTS = new Set([500, 1_000]);
 const LIVE_DRAG_OFFSET = Object.freeze({ x: 0, y: 0 });
 const noOp = () => undefined;
 
+const mediaContractNode: CanvasNodeData = {
+    id: "benchmark-video-contract",
+    type: CanvasNodeType.Video,
+    title: "视频渲染契约",
+    position: { x: 320, y: 180 },
+    width: 1280,
+    height: 720,
+    metadata: { content: "/videos/hero.mp4", status: "success" },
+    createdAt: "2026-01-01T00:00:00.000Z",
+};
+
+function readScenario() {
+    return new URLSearchParams(window.location.search).get("scenario");
+}
+
 function readNodeCount() {
     const requested = Number(new URLSearchParams(window.location.search).get("nodes"));
     if (!SUPPORTED_NODE_COUNTS.has(requested)) throw new Error(`画布性能基准仅支持 500 或 1000 节点，收到: ${requested}`);
@@ -55,8 +70,10 @@ function observeLongTasks(samples: LongTaskSample[]) {
 }
 
 function CanvasPerformanceFixture() {
-    const nodeCount = useMemo(readNodeCount, []);
-    const nodes = useMemo(() => createBenchmarkNodes(nodeCount), [nodeCount]);
+    const scenario = useMemo(readScenario, []);
+    const isMediaContract = scenario === "media-contract";
+    const nodeCount = useMemo(() => (isMediaContract ? 1 : readNodeCount()), [isMediaContract]);
+    const nodes = useMemo(() => (isMediaContract ? [mediaContractNode] : createBenchmarkNodes(nodeCount)), [isMediaContract, nodeCount]);
     const worldRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -129,20 +146,20 @@ function CanvasPerformanceFixture() {
             <output className="canvas-performance-status" aria-live="polite">
                 HMaigc 真实节点基准 · {nodeCount} 节点
             </output>
-            <div ref={worldRef} className="canvas-performance-world">
+            <div ref={worldRef} className="canvas-performance-world" style={isMediaContract ? { transform: "scale(0.55)" } : undefined}>
                 {nodes.map((node, index) => (
                     <CanvasNode
                         key={node.id}
                         data={node}
                         dragOffset={index === 0 ? LIVE_DRAG_OFFSET : undefined}
-                        scale={0.18}
+                        scale={isMediaContract ? 0.55 : 0.18}
                         isSelected={index === 0}
                         isRelated={false}
                         isFocusRelated={false}
                         isConnectionTarget={false}
                         isConnecting={false}
                         showImageInfo={false}
-                        reduceMediaEffects
+                        reduceMediaEffects={!isMediaContract}
                         readOnly
                         onMouseDown={noOp}
                         onHoverStart={noOp}
