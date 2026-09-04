@@ -162,4 +162,19 @@ describe("canvas performance hot paths", () => {
         expect(setItemAdapter).not.toContain("JSON.stringify");
         expect(setItemAdapter).not.toContain("localForageStorage.setItem");
     });
+
+    test("queries the render index on viewport changes without scanning the full graph", async () => {
+        const source = await Bun.file(new URL("../src/pages/canvas/use-canvas-render-model.ts", import.meta.url)).text();
+        const queryStart = source.indexOf("const renderQuery = useMemo");
+        const queryEnd = source.indexOf("const imageAssets", queryStart);
+        const viewportProjection = source.slice(queryStart, queryEnd);
+
+        expect(source).toContain("createCanvasRenderIndex(nodes, connections, renderHiddenNodeIds)");
+        expect(queryStart).toBeGreaterThan(-1);
+        expect(viewportProjection).toContain("renderIndex.query");
+        expect(viewportProjection).not.toContain("nodes.filter");
+        expect(viewportProjection).not.toContain("nodes.forEach");
+        expect(viewportProjection).not.toContain("connections.flatMap");
+        expect(viewportProjection).not.toContain("JSON.stringify");
+    });
 });

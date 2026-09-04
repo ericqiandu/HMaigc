@@ -7,6 +7,7 @@ import { CanvasNode } from "@/components/canvas/canvas-node";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { isFrameNode } from "@/lib/canvas/canvas-frame";
+import type { CanvasMediaVisibilityTier } from "@/lib/canvas/canvas-render-index";
 import type { CanvasConnection, CanvasNodeData, ConnectionHandle, Position, SelectionBox } from "@/types/canvas";
 
 type DisplayConnection = { connection: CanvasConnection; from: CanvasNodeData; to: CanvasNodeData };
@@ -30,6 +31,7 @@ type CanvasProjectWorldLayersProps = {
     connectionTargetNodeId: string | null;
     nodeById: Map<string, CanvasNodeData>;
     visibleNodes: CanvasNodeData[];
+    mediaTierByNodeId: ReadonlyMap<string, CanvasMediaVisibilityTier>;
     frameChildrenById: Map<string, CanvasNodeData[]>;
     dragPreview: DragPreview;
     selectedNodeIds: Set<string>;

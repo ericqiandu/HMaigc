@@ -829,6 +829,7 @@ function InfiniteCanvasPage() {
         imageAssets,
         infoNode,
         maskEditNode,
+        mediaTierByNodeId,
         mentionReferencesByNodeId,
         nodeById,
         previewNode,
@@ -1541,6 +1542,7 @@ function InfiniteCanvasPage() {
                         connectionTargetNodeId={connectionTargetNodeId}
                         nodeById={nodeById}
                         visibleNodes={visibleNodes}
+                        mediaTierByNodeId={mediaTierByNodeId}
                         frameChildrenById={frameChildrenById}
                         dragPreview={dragPreview}
                         selectedNodeIds={selectedNodeIds}
