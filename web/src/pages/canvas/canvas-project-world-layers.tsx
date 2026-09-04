@@ -58,7 +58,7 @@ type CanvasProjectWorldLayersProps = {
     onNodeHoverStart: (nodeId: string) => void;
     onNodeHoverEnd: (nodeId: string) => void;
     onConnectStart: (event: ReactPointerEvent, nodeId: string, handleType: "source" | "target", handleId?: string) => void;
-    onNodeResize: (nodeId: string, width: number, height: number, position?: Position) => void;
+    onNodeResizeCommit: (nodeId: string, width: number, height: number, position?: Position) => void;
     onToggleFrame: (nodeId: string) => void;
     onNodeTitleChange: (nodeId: string, title: string) => void;
     onNodeContextMenu: (event: ReactMouseEvent, nodeId: string) => void;
@@ -126,7 +126,7 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                         isDropTarget={props.frameDropTargetId === node.id}
                         readOnly={props.readOnly}
                         onMouseDown={props.onNodeMouseDown}
-                        onResize={props.onNodeResize}
+                        onResizeCommit={props.onNodeResizeCommit}
                         onToggleCollapsed={props.onToggleFrame}
                         onTitleChange={props.onNodeTitleChange}
                         onContextMenu={props.onNodeContextMenu}
@@ -158,7 +158,7 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                         onHoverStart={props.onNodeHoverStart}
                         onHoverEnd={props.onNodeHoverEnd}
                         onConnectStart={props.onConnectStart}
-                        onResize={props.onNodeResize}
+                        onResizeCommit={props.onNodeResizeCommit}
                         onContentChange={props.onNodeContentChange}
                         onToggleBatch={props.onToggleBatch}
                         onSetBatchPrimary={props.onSetBatchPrimary}

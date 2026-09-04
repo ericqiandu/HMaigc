@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
 
 import { calculateNodeAlignment, createNodeAlignmentContext, isHiddenBatchChild, sameStringSet, type NodeAlignmentContext } from "@/lib/canvas/canvas-project-domain";
-import { applyCanvasLiveConnectionDrag, applyCanvasLiveNodeDrag, clearCanvasLiveConnectionDrag, clearCanvasLiveNodeDrag, createFrameDropContext, findFrameDropTargetFromContext, resolveCanvasLiveConnectionDragTargets, resolveCanvasLiveNodeDragTargets, type CanvasLiveConnectionDragTarget, type FrameDropContext } from "@/lib/canvas/canvas-drag-performance";
+import { applyCanvasLiveConnectionDrag, applyCanvasLiveNodeDrag, clearCanvasLiveConnectionDrag, clearCanvasLiveNodeDrag, createFrameDropContext, findFrameDropTargetFromContext, resolveCanvasLiveConnectionDragTargets, resolveCanvasLiveNodeDragTargets, type CanvasLiveConnectionDragTarget, type FrameDropContext } from "@/lib/canvas/canvas-interaction-runtime";
 import { applyFrameDrop, findFrameDropTarget, getFrameChildIds, isFrameNode, isNodeHiddenByCollapsedFrame } from "@/lib/canvas/canvas-frame";
 import type { CanvasNodeData, Position, SelectionBox, ViewportTransform } from "@/types/canvas";
 

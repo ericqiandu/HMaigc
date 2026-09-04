@@ -788,7 +788,7 @@ function InfiniteCanvasPage() {
         handleFontSizeChange,
         handleNodeContentChange,
         handleNodePromptChange,
-        handleNodeResize,
+        handleNodeResizeCommit,
         handleNodeTitleChange,
         openingBatchIds,
         saveNodeAsset,
@@ -1287,7 +1287,7 @@ function InfiniteCanvasPage() {
                             if (contentNode.metadata?.storyboardComposerHeight === height) return;
                             handleConfigNodeChange(contentNode.id, { storyboardComposerHeight: height });
                             const minHeight = storyboardMinNodeHeight(height);
-                            if (contentNode.height < minHeight) handleNodeResize(contentNode.id, contentNode.width, minHeight);
+                            if (contentNode.height < minHeight) handleNodeResizeCommit(contentNode.id, contentNode.width, minHeight);
                         }}
                         onConnectStart={(event, rowId, handleType) => handleConnectStart(event, contentNode.id, handleType, rowId === "context" ? "storyboard:context" : `row:${rowId}`)}
                         onScrollTopChange={(scrollTop) => setScriptScrollTopById((current) => (current[contentNode.id] === scrollTop ? current : { ...current, [contentNode.id]: scrollTop }))}
@@ -1337,7 +1337,7 @@ function InfiniteCanvasPage() {
             handleConfigNodeChange,
             handleConnectStart,
             handleGenerateNode,
-            handleNodeResize,
+            handleNodeResizeCommit,
             mentionReferencesByNodeId,
             mergeVideosByIds,
             mergeVideoProgress,
@@ -1583,7 +1583,7 @@ function InfiniteCanvasPage() {
                         onNodeHoverStart={handleCanvasNodeHoverStart}
                         onNodeHoverEnd={handleCanvasNodeHoverEnd}
                         onConnectStart={handleConnectStart}
-                        onNodeResize={handleNodeResize}
+                        onNodeResizeCommit={handleNodeResizeCommit}
                         onToggleFrame={toggleFrameCollapsed}
                         onNodeTitleChange={handleNodeTitleChange}
                         onNodeContextMenu={handleNodeContextMenu}

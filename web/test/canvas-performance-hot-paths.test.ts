@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
 
-import { applyCanvasLiveConnectionDrag, applyCanvasLiveNodeDrag, clearCanvasLiveConnectionDrag, clearCanvasLiveNodeDrag, createFrameDropContext, findFrameDropTargetFromContext, resolveCanvasLiveConnectionDragTargets, resolveCanvasLiveNodeDragTargets } from "../src/lib/canvas/canvas-drag-performance";
+import {
+    applyCanvasLiveConnectionDrag,
+    applyCanvasLiveNodeDrag,
+    clearCanvasLiveConnectionDrag,
+    clearCanvasLiveNodeDrag,
+    createFrameDropContext,
+    findFrameDropTargetFromContext,
+    resolveCanvasLiveConnectionDragTargets,
+    resolveCanvasLiveNodeDragTargets,
+} from "../src/lib/canvas/canvas-interaction-runtime";
 import { buildCanvasResourceReferencesFromGraph, buildNodeMentionReferencesByNodeId, createCanvasResourceGraph } from "../src/lib/canvas/canvas-resource-references";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../src/types/canvas";
 
@@ -87,10 +96,7 @@ describe("canvas performance hot paths", () => {
 
         applyCanvasLiveConnectionDrag(targets, { x: 20, y: -10 });
         const incidentPaths = surface.querySelectorAll<SVGPathElement>("[data-canvas-connection-id='incident'] path");
-        expect(Array.from(incidentPaths).map((path) => path.getAttribute("d"))).toEqual([
-            "M 120 40 C 210 40, 210 90, 300 90",
-            "M 120 40 C 210 40, 210 90, 300 90",
-        ]);
+        expect(Array.from(incidentPaths).map((path) => path.getAttribute("d"))).toEqual(["M 120 40 C 210 40, 210 90, 300 90", "M 120 40 C 210 40, 210 90, 300 90"]);
         expect(surface.querySelector("[data-canvas-connection-id='untouched'] path")?.getAttribute("d")).toBe("original-untouched");
         expect(surface.querySelector("[data-canvas-connection-id='incident'] linearGradient")?.getAttribute("x1")).toBe("120");
 
@@ -127,5 +133,21 @@ describe("canvas performance hot paths", () => {
 
         expect(source).toContain("connectionHitIndexRef.current = createCanvasConnectionHitIndex(nodesRef.current)");
         expect(source).not.toContain("[...nodesRef.current]");
+    });
+
+    test("keeps node and frame resize mousemove handlers on CSS preview only", async () => {
+        const nodeSource = await Bun.file(new URL("../src/components/canvas/canvas-node.tsx", import.meta.url)).text();
+        const frameSource = await Bun.file(new URL("../src/components/canvas/canvas-frame-node.tsx", import.meta.url)).text();
+
+        for (const source of [nodeSource, frameSource]) {
+            const moveStart = source.indexOf("const handleResizeMove");
+            const moveEnd = source.indexOf("const handleResizeUp", moveStart);
+            const moveHandler = source.slice(moveStart, moveEnd);
+            expect(moveHandler).toContain("applyCanvasLiveResize");
+            expect(moveHandler).not.toContain("onResizeCommit");
+            expect(moveHandler).not.toContain("setNodes");
+            expect(moveHandler).not.toContain("JSON.stringify");
+            expect(moveHandler).not.toContain("fetch(");
+        }
     });
 });

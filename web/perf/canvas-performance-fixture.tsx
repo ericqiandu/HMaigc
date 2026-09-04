@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import "antd/dist/reset.css";
 
 import { CanvasNode } from "@/components/canvas/canvas-node";
-import { applyCanvasLiveNodeDrag, clearCanvasLiveNodeDrag, resolveCanvasLiveNodeDragTargets } from "@/lib/canvas/canvas-drag-performance";
+import { applyCanvasLiveNodeDrag, clearCanvasLiveNodeDrag, resolveCanvasLiveNodeDragTargets } from "@/lib/canvas/canvas-interaction-runtime";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import "@/styles/globals.css";
 import "@/styles/canvas-chrome.css";
@@ -164,7 +164,7 @@ function CanvasPerformanceFixture() {
                         onHoverStart={noOp}
                         onHoverEnd={noOp}
                         onConnectStart={noOp}
-                        onResize={noOp}
+                        onResizeCommit={noOp}
                         onContentChange={noOp}
                         onContextMenu={noOp}
                     />

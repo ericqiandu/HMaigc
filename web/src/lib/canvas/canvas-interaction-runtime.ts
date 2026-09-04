@@ -1,6 +1,24 @@
 import { FRAME_HEADER_HEIGHT, canFrameContain, isFrameNode } from "@/lib/canvas/canvas-frame";
 import type { CanvasNodeData, Position } from "@/types/canvas";
 
+export type CanvasResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+
+export type CanvasResizePreview = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+};
+
+export type CanvasResizeInput = {
+    initial: CanvasResizePreview;
+    delta: Position;
+    corner: CanvasResizeCorner;
+    minWidth: number;
+    minHeight: number;
+    aspectRatio?: number;
+};
+
 export type CanvasLiveConnectionDragTarget = {
     paths: Array<{ element: SVGPathElement; initialPath: string }>;
     gradient: SVGLinearGradientElement | null;
@@ -15,6 +33,54 @@ export type FrameDropContext = {
     draggedNodes: Array<{ centerX: number; centerY: number }>;
     frames: Array<{ id: string; left: number; top: number; right: number; bottom: number }>;
 };
+
+export function calculateCanvasResizePreview(input: CanvasResizeInput): CanvasResizePreview {
+    const numericValues = [input.initial.x, input.initial.y, input.initial.width, input.initial.height, input.delta.x, input.delta.y, input.minWidth, input.minHeight];
+    if (!numericValues.every(Number.isFinite)) throw new Error("画布 resize 输入必须是有限数字");
+    if (input.initial.width <= 0 || input.initial.height <= 0 || input.minWidth <= 0 || input.minHeight <= 0) throw new Error("画布 resize 尺寸必须大于 0");
+    if (input.aspectRatio !== undefined && (!Number.isFinite(input.aspectRatio) || input.aspectRatio <= 0)) throw new Error("画布 resize 宽高比必须是正有限数字");
+
+    let width = Math.max(input.minWidth, input.initial.width + input.delta.x);
+    let height = Math.max(input.minHeight, input.initial.height + input.delta.y);
+    if (input.aspectRatio !== undefined) {
+        if (Math.abs(input.delta.x) >= Math.abs(input.delta.y)) height = width / input.aspectRatio;
+        else width = height * input.aspectRatio;
+        if (height < input.minHeight) {
+            height = input.minHeight;
+            width = height * input.aspectRatio;
+        }
+        if (width < input.minWidth) {
+            width = input.minWidth;
+            height = width / input.aspectRatio;
+        }
+    }
+
+    const fromLeft = input.corner.includes("left");
+    const fromTop = input.corner.includes("top");
+    return {
+        x: fromLeft ? input.initial.x + input.initial.width - width : input.initial.x,
+        y: fromTop ? input.initial.y + input.initial.height - height : input.initial.y,
+        width,
+        height,
+    };
+}
+
+export function applyCanvasLiveResize(target: HTMLElement, preview: CanvasResizePreview) {
+    if (![preview.x, preview.y, preview.width, preview.height].every(Number.isFinite) || preview.width <= 0 || preview.height <= 0) throw new Error("画布 resize 预览几何无效");
+    target.dataset.canvasNodeResizing = "true";
+    target.style.setProperty("--canvas-live-resize-x", `${preview.x}px`);
+    target.style.setProperty("--canvas-live-resize-y", `${preview.y}px`);
+    target.style.setProperty("--canvas-live-resize-width", `${preview.width}px`);
+    target.style.setProperty("--canvas-live-resize-height", `${preview.height}px`);
+}
+
+export function clearCanvasLiveResize(target: HTMLElement) {
+    delete target.dataset.canvasNodeResizing;
+    target.style.removeProperty("--canvas-live-resize-x");
+    target.style.removeProperty("--canvas-live-resize-y");
+    target.style.removeProperty("--canvas-live-resize-width");
+    target.style.removeProperty("--canvas-live-resize-height");
+}
 
 export function createFrameDropContext(nodes: CanvasNodeData[], draggedNodeIds: Set<string>): FrameDropContext | null {
     const draggedNodes = nodes.filter((node) => draggedNodeIds.has(node.id) && canFrameContain(node)).map((node) => ({ centerX: node.position.x + node.width / 2, centerY: node.position.y + node.height / 2 }));
@@ -67,29 +133,28 @@ export function createCanvasConnectionPathD(start: Position, end: Position) {
 
 export function resolveCanvasLiveConnectionDragTargets(surface: HTMLElement | null, draggedNodeIds: ReadonlySet<string>): CanvasLiveConnectionDragTarget[] {
     if (!surface || draggedNodeIds.size === 0) return [];
-    return Array.from(surface.querySelectorAll<SVGGElement>("[data-canvas-connection-id]"))
-        .flatMap((group) => {
-            const fromNodeId = group.dataset.fromNodeId || "";
-            const toNodeId = group.dataset.toNodeId || "";
-            const movesStart = draggedNodeIds.has(fromNodeId);
-            const movesEnd = draggedNodeIds.has(toNodeId);
-            if (!movesStart && !movesEnd) return [];
-            const start = { x: Number(group.dataset.startX), y: Number(group.dataset.startY) };
-            const end = { x: Number(group.dataset.endX), y: Number(group.dataset.endY) };
-            if (![start.x, start.y, end.x, end.y].every(Number.isFinite)) return [];
-            const gradient = group.querySelector<SVGLinearGradientElement>("linearGradient");
-            return [{
+    return Array.from(surface.querySelectorAll<SVGGElement>("[data-canvas-connection-id]")).flatMap((group) => {
+        const fromNodeId = group.dataset.fromNodeId || "";
+        const toNodeId = group.dataset.toNodeId || "";
+        const movesStart = draggedNodeIds.has(fromNodeId);
+        const movesEnd = draggedNodeIds.has(toNodeId);
+        if (!movesStart && !movesEnd) return [];
+        const start = { x: Number(group.dataset.startX), y: Number(group.dataset.startY) };
+        const end = { x: Number(group.dataset.endX), y: Number(group.dataset.endY) };
+        if (![start.x, start.y, end.x, end.y].every(Number.isFinite)) return [];
+        const gradient = group.querySelector<SVGLinearGradientElement>("linearGradient");
+        return [
+            {
                 paths: Array.from(group.querySelectorAll<SVGPathElement>("path")).map((element) => ({ element, initialPath: element.getAttribute("d") || "" })),
                 gradient,
-                initialGradient: gradient
-                    ? { x1: gradient.getAttribute("x1"), y1: gradient.getAttribute("y1"), x2: gradient.getAttribute("x2"), y2: gradient.getAttribute("y2") }
-                    : null,
+                initialGradient: gradient ? { x1: gradient.getAttribute("x1"), y1: gradient.getAttribute("y1"), x2: gradient.getAttribute("x2"), y2: gradient.getAttribute("y2") } : null,
                 start,
                 end,
                 movesStart,
                 movesEnd,
-            }];
-        });
+            },
+        ];
+    });
 }
 
 export function applyCanvasLiveConnectionDrag(targets: readonly CanvasLiveConnectionDragTarget[], offset: Position) {

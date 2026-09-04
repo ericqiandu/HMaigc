@@ -323,7 +323,7 @@ export default function SharedCanvasPage() {
                                 dragRef.current = { primaryId: nodeId, nodeIds: dragged.map((item) => item.id), startX: event.clientX, startY: event.clientY, origins: new Map(dragged.map((item) => [item.id, item.position])), moved: false };
                                 document.body.style.cursor = "grabbing";
                             }}
-                            onResize={() => undefined}
+                            onResizeCommit={() => undefined}
                             onToggleCollapsed={toggleFrame}
                             onTitleChange={unauthorized}
                             onHoverStart={keepToolbar}
@@ -357,7 +357,7 @@ export default function SharedCanvasPage() {
                             onHoverStart={keepToolbar}
                             onHoverEnd={hideToolbar}
                             onConnectStart={unauthorized}
-                            onResize={() => undefined}
+                            onResizeCommit={() => undefined}
                             onContentChange={unauthorized}
                             onRetry={unauthorized}
                             onCancelTask={unauthorized}

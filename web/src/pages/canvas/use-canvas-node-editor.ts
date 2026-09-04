@@ -39,7 +39,7 @@ export function useCanvasNodeEditor({
     const [collapsingBatchIds, setCollapsingBatchIds] = useState<Set<string>>(new Set());
     const [openingBatchIds, setOpeningBatchIds] = useState<Set<string>>(new Set());
 
-    const handleNodeResize = useCallback((nodeId: string, width: number, height: number, position?: Position) => {
+    const handleNodeResizeCommit = useCallback((nodeId: string, width: number, height: number, position?: Position) => {
         setNodes((current) => {
             let changed = false;
             const next = current.map((node) => {
@@ -180,7 +180,7 @@ export function useCanvasNodeEditor({
         handleFontSizeChange,
         handleNodeContentChange,
         handleNodePromptChange,
-        handleNodeResize,
+        handleNodeResizeCommit,
         handleNodeTitleChange,
         openingBatchIds,
         saveNodeAsset,

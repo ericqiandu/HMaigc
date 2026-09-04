@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { createCanvasConnectionPathD } from "@/lib/canvas/canvas-drag-performance";
+import { createCanvasConnectionPathD } from "@/lib/canvas/canvas-interaction-runtime";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardTableHeight } from "@/components/canvas/canvas-script-node";
 import type { CanvasConnection, CanvasNodeData, ConnectionHandle, Position } from "@/types/canvas";
