@@ -24,6 +24,9 @@ describe("画布媒体流式预览", () => {
         expect(markup).toContain("<video");
         expect(markup).toContain('src="/api/resources/video-resource/file?direct=1"');
         expect(markup).toContain('preload="metadata"');
+        expect(markup).toContain("data-canvas-video-player");
+        expect(markup).toContain("data-canvas-video-controls");
+        expect(markup).not.toContain('controls=""');
         expect(markup).not.toContain("加载并缓存视频");
     });
 
@@ -50,6 +53,33 @@ describe("画布媒体流式预览", () => {
 
         expect(document.body.textContent).not.toContain("媒体加载失败");
         expect(requiredVideo().getAttribute("src")).toBe("/api/resources/replacement-resource/file?direct=1");
+    });
+
+    test("播放失败只保留无凭据资源摘要和结构化原因", async () => {
+        const host = document.createElement("div");
+        document.body.append(host);
+        root = createRoot(host);
+        const node = mediaNode(CanvasNodeType.Video, "private-resource");
+        node.metadata = {
+            ...node.metadata,
+            content: "https://viewer:secret@provider.example/private-resource.mp4?token=access-token-4821#frame",
+            storageKey: undefined,
+        };
+        await renderMediaNode(node);
+        await act(async () => {
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        });
+
+        const video = document.querySelector("video");
+        if (video) await act(async () => video.dispatchEvent(new Event("error")));
+
+        const failure = document.querySelector<HTMLElement>("[data-canvas-media-error-kind]");
+        expect(failure?.dataset.canvasMediaErrorKind).toBe("media");
+        expect(failure?.dataset.canvasMediaErrorNode).toBe("video-node");
+        expect(failure?.dataset.canvasMediaErrorResource).toBe("https://provider.example/private-resource.mp4");
+        expect(failure?.dataset.canvasMediaErrorMessage).toBe("视频加载失败");
+        expect(failure?.outerHTML).not.toContain("secret");
+        expect(failure?.outerHTML).not.toContain("access-token-4821");
     });
 });
 
