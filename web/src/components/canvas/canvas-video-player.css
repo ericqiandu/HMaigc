@@ -23,10 +23,10 @@
 
 .canvas-video-controls {
     position: absolute;
-    right: 0;
     bottom: 0;
     left: 0;
     display: grid;
+    width: calc(100% * var(--canvas-live-scale, 1));
     height: 36px;
     padding: 0 var(--space-3);
     align-items: center;
@@ -34,6 +34,8 @@
     gap: var(--space-1);
     background: color-mix(in srgb, var(--qr-foreground) 56%, transparent);
     color: var(--qr-background);
+    transform: scale(var(--canvas-live-inverse-scale, 1));
+    transform-origin: bottom left;
 }
 
 .canvas-video-control-button {

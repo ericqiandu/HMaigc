@@ -8,6 +8,7 @@ export function applyCanvasLiveViewport(container: HTMLDivElement | null, viewpo
     container.style.setProperty("--canvas-live-x", `${viewport.x}px`);
     container.style.setProperty("--canvas-live-y", `${viewport.y}px`);
     container.style.setProperty("--canvas-live-scale", String(viewport.k));
+    container.style.setProperty("--canvas-live-inverse-scale", String(1 / viewport.k));
     container.style.setProperty("--canvas-grid-size", `${gridSize}px`);
     container.style.setProperty("--canvas-grid-x", `${viewport.x % gridSize}px`);
     container.style.setProperty("--canvas-grid-y", `${viewport.y % gridSize}px`);

@@ -58,7 +58,7 @@ const BENCHMARK_FIXTURE_COUNTS: Readonly<Record<number, BenchmarkFixtureCount>> 
     500: Object.freeze({ mediaCount: 200, connectionCount: 3_000 }),
 });
 const DEFAULT_CANVAS_SCALE = 0.55;
-const MEDIA_CONTRACT_SCALES = new Set([0.25, 0.55, 1, 2]);
+const MEDIA_CONTRACT_SCALES = new Set([0.18, 0.25, 0.55, 1, 2]);
 const CANVAS_TOP = 80;
 const CANVAS_LEFT = 40;
 const NEAR_PADDING = 600;
@@ -312,7 +312,13 @@ function CanvasPerformanceFixture() {
     }, [canvasScale, isMediaContract]);
 
     return (
-        <main className="canvas-performance-page">
+        <main
+            className="canvas-performance-page"
+            style={{
+                "--canvas-live-scale": canvasScale,
+                "--canvas-live-inverse-scale": 1 / canvasScale,
+            } as React.CSSProperties}
+        >
             <output className="canvas-performance-status" aria-live="polite">
                 HMaigc 真实混合图基准 · {nodeCount} 节点 · {fixtureCount.mediaCount} 媒体 · {fixtureCount.connectionCount} 连线
             </output>
