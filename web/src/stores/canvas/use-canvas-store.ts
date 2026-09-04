@@ -3,6 +3,7 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 
 import { nanoid } from "nanoid";
 import { localForageStorage } from "@/lib/localforage-storage";
+import { createCanvasPersistenceScheduler } from "@/stores/canvas/canvas-persistence-scheduler";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import type { CanvasAgentLaunchRequest, CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 import type { DirectorScene } from "@/types/director";
@@ -50,44 +51,51 @@ type CanvasStore = {
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
 export const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
 type PersistedCanvasState = Pick<CanvasStore, "projects" | "pendingDeletionIds">;
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
-let queuedPersistState: PersistedCanvasState | null = null;
-let queuedPersistName = CANVAS_STORE_KEY;
-let queuedPersistValue: string | null = null;
+let lastPersistedState: PersistedCanvasState | null = null;
+
+const canvasStorePersistenceScheduler = createCanvasPersistenceScheduler<StorageValue<CanvasStore>>({
+    delayMs: 400,
+    serialize: (value) => {
+        const payload = JSON.stringify(value);
+        if (payload === undefined) throw new Error("画布本地状态无法序列化");
+        return payload;
+    },
+    write: async (name, payload) => {
+        await localForageStorage.setItem(name, payload);
+    },
+});
 
 const canvasStorage: PersistStorage<CanvasStore> = {
     getItem: async (name) => {
         const value = await localForageStorage.getItem(name);
         if (!value) return null;
         const parsed = JSON.parse(value) as StorageValue<CanvasStore>;
-        queuedPersistState = parsed.state as PersistedCanvasState;
+        lastPersistedState = parsed.state as PersistedCanvasState;
         return parsed;
     },
     setItem: (name, value) => {
         const nextState = value.state as PersistedCanvasState;
-        if (queuedPersistState && queuedPersistState.projects === nextState.projects && queuedPersistState.pendingDeletionIds === nextState.pendingDeletionIds) return;
-        queuedPersistState = nextState;
-        queuedPersistName = name;
-        queuedPersistValue = JSON.stringify(value);
-        if (saveTimer) clearTimeout(saveTimer);
-        saveTimer = setTimeout(() => {
-            saveTimer = null;
-            const payload = queuedPersistValue;
-            queuedPersistValue = null;
-            if (payload) void localForageStorage.setItem(queuedPersistName, payload);
-        }, 400);
+        if (lastPersistedState && lastPersistedState.projects === nextState.projects && lastPersistedState.pendingDeletionIds === nextState.pendingDeletionIds) return;
+        lastPersistedState = nextState;
+        canvasStorePersistenceScheduler.schedule(name, value);
     },
-    removeItem: (name) => localForageStorage.removeItem(name),
+    removeItem: async (name) => {
+        await canvasStorePersistenceScheduler.flush();
+        lastPersistedState = null;
+        await localForageStorage.removeItem(name);
+    },
 };
 
 export async function flushCanvasStorePersistence() {
-    if (saveTimer) {
-        clearTimeout(saveTimer);
-        saveTimer = null;
-    }
-    const payload = queuedPersistValue;
-    queuedPersistValue = null;
-    if (payload) await localForageStorage.setItem(queuedPersistName, payload);
+    await canvasStorePersistenceScheduler.flush();
+}
+
+export function getCanvasStorePersistenceSnapshot() {
+    return canvasStorePersistenceScheduler.getSnapshot();
+}
+
+export async function retryCanvasStorePersistence() {
+    await canvasStorePersistenceScheduler.retry();
 }
 
 export const useCanvasStore = create<CanvasStore>()(

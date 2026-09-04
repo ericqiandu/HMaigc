@@ -150,4 +150,16 @@ describe("canvas performance hot paths", () => {
             expect(moveHandler).not.toContain("fetch(");
         }
     });
+
+    test("defers canvas-store serialization outside the Zustand setItem adapter", async () => {
+        const source = await Bun.file(new URL("../src/stores/canvas/use-canvas-store.ts", import.meta.url)).text();
+        const setItemStart = source.indexOf("setItem: (name, value) =>");
+        const setItemEnd = source.indexOf("removeItem:", setItemStart);
+        const setItemAdapter = source.slice(setItemStart, setItemEnd);
+
+        expect(setItemStart).toBeGreaterThan(-1);
+        expect(setItemAdapter).toContain("schedule(name, value)");
+        expect(setItemAdapter).not.toContain("JSON.stringify");
+        expect(setItemAdapter).not.toContain("localForageStorage.setItem");
+    });
 });
