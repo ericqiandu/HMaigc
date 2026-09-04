@@ -151,6 +151,7 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                         batchRecovering={props.collapsingBatchIds.has(node.id)}
                         batchMotion={props.batchMotionById.get(node.id)}
                         showImageInfo={props.showImageInfo}
+                        mediaVisibilityTier={props.mediaTierByNodeId.get(node.id) ?? "visible"}
                         reduceMediaEffects={props.reduceMediaEffects || props.isNodeDragging || props.mediaEffectsDisabledNodeId === node.id}
                         readOnly={props.readOnly}
                         resourceLabel={props.resourceReferenceByNodeId.get(node.id)}

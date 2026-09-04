@@ -4,7 +4,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
+import { CanvasMediaNodeContent } from "../src/components/canvas/canvas-media-node-content";
 import { useDeferredMedia } from "../src/hooks/use-deferred-media";
+import { canvasThemes } from "../src/lib/canvas-theme";
+import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
 let root: Root | null = null;
 let idleCallback: IdleRequestCallback | null = null;
@@ -16,6 +19,7 @@ const originalRequestIdleCallback = window.requestIdleCallback;
 const originalCancelIdleCallback = window.cancelIdleCallback;
 const originalSetTimeout = window.setTimeout;
 const originalClearTimeout = window.clearTimeout;
+const originalPause = window.HTMLMediaElement.prototype.pause;
 
 afterEach(async () => {
     if (root) await act(async () => root?.unmount());
@@ -28,6 +32,7 @@ afterEach(async () => {
     window.cancelIdleCallback = originalCancelIdleCallback;
     window.setTimeout = originalSetTimeout;
     window.clearTimeout = originalClearTimeout;
+    Object.defineProperty(window.HTMLMediaElement.prototype, "pause", { configurable: true, value: originalPause });
     document.body.replaceChildren();
 });
 
@@ -101,4 +106,39 @@ describe("useDeferredMedia", () => {
         expect(idleCallback).toBeNull();
         expect(host.querySelector(".deferred-media-probe")?.getAttribute("data-enabled")).toBe("false");
     });
+
+    test("pauses a visible video before replacing it with a near-tier marker", async () => {
+        let pauseCount = 0;
+        Object.defineProperty(window.HTMLMediaElement.prototype, "pause", {
+            configurable: true,
+            value: () => {
+                pauseCount += 1;
+            },
+        });
+        const host = document.createElement("div");
+        document.body.append(host);
+        root = createRoot(host);
+        const node = videoNode();
+
+        await act(async () => root?.render(createElement(CanvasMediaNodeContent, { node, theme: canvasThemes.dark, reduceMediaEffects: false, mediaVisibilityTier: "visible" })));
+        expect(host.querySelector("video")).not.toBeNull();
+
+        await act(async () => root?.render(createElement(CanvasMediaNodeContent, { node, theme: canvasThemes.dark, reduceMediaEffects: false, mediaVisibilityTier: "near" })));
+
+        expect(pauseCount).toBe(1);
+        expect(host.querySelector("video")).toBeNull();
+        expect(host.querySelector("[data-canvas-deferred-media]")).not.toBeNull();
+    });
 });
+
+function videoNode(): CanvasNodeData {
+    return {
+        id: "tiered-video",
+        type: CanvasNodeType.Video,
+        title: "分层视频",
+        position: { x: 0, y: 0 },
+        width: 420,
+        height: 236,
+        metadata: { content: "https://provider.example/tiered-video.mp4" },
+    };
+}

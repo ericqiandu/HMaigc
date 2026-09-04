@@ -3,6 +3,7 @@ import { Music2, RefreshCw, Video } from "lucide-react";
 
 import { canvasMediaPlaybackUrl } from "@/lib/canvas-media-playback";
 import type { CanvasTheme } from "@/lib/canvas-theme";
+import type { CanvasMediaVisibilityTier } from "@/lib/canvas/canvas-render-index";
 import { CanvasNodeAction, CanvasNodeEmptyState, CanvasNodeStatusLayout } from "./canvas-node-ui";
 import { CanvasVideoPlayer, type CanvasVideoPlaybackError } from "./canvas-video-player";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -11,6 +12,7 @@ type CanvasMediaNodeContentProps = {
     node: CanvasNodeData;
     theme: CanvasTheme;
     reduceMediaEffects: boolean;
+    mediaVisibilityTier: CanvasMediaVisibilityTier;
 };
 
 type CanvasMediaPlaybackFailure = CanvasVideoPlaybackError & {
@@ -18,7 +20,7 @@ type CanvasMediaPlaybackFailure = CanvasVideoPlaybackError & {
     resourceUrl: string;
 };
 
-export function CanvasMediaNodeContent({ node, theme, reduceMediaEffects }: CanvasMediaNodeContentProps) {
+export function CanvasMediaNodeContent({ node, theme, reduceMediaEffects, mediaVisibilityTier }: CanvasMediaNodeContentProps) {
     const [playbackAttempt, setPlaybackAttempt] = useState(0);
     const [playbackFailure, setPlaybackFailure] = useState<CanvasMediaPlaybackFailure | null>(null);
     const playbackUrl = canvasMediaPlaybackUrl(node);
@@ -38,6 +40,14 @@ export function CanvasMediaNodeContent({ node, theme, reduceMediaEffects }: Canv
 
     if (!playbackUrl) {
         return <CanvasNodeStatusLayout icon={<Video className="size-5" />} title="媒体地址无效" detail="资源缺少可播放地址" tone="danger" theme={theme} />;
+    }
+
+    if (node.type === CanvasNodeType.Video && mediaVisibilityTier === "near") {
+        return (
+            <div className="canvas-deferred-media grid size-full place-items-center" data-canvas-deferred-media="video" role="status" aria-label={`${node.title || "视频"}位于预加载区域`}>
+                <Video className="canvas-deferred-media-icon size-5 opacity-45" />
+            </div>
+        );
     }
 
     if (playbackFailure) {

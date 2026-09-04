@@ -342,6 +342,7 @@ export default function SharedCanvasPage() {
                             isConnectionTarget={false}
                             isConnecting={false}
                             showImageInfo={false}
+                            mediaVisibilityTier="visible"
                             readOnly
                             renderNodeContent={renderSharedNode}
                             onMouseDown={(event, nodeId) => {

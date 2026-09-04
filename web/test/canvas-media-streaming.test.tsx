@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { CanvasMediaNodeContent } from "../src/components/canvas/canvas-media-node-content";
+import { CanvasNode } from "../src/components/canvas/canvas-node";
 import { canvasThemes } from "../src/lib/canvas-theme";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 
@@ -19,7 +20,7 @@ afterEach(async () => {
 
 describe("画布媒体流式预览", () => {
     test("远程视频立即使用鉴权资源地址播放，不等待整段 Blob 缓存", () => {
-        const markup = renderToStaticMarkup(createElement(CanvasMediaNodeContent, { node: mediaNode(CanvasNodeType.Video, "video-resource"), theme: canvasThemes.dark, reduceMediaEffects: false }));
+        const markup = renderToStaticMarkup(createElement(CanvasMediaNodeContent, { node: mediaNode(CanvasNodeType.Video, "video-resource"), theme: canvasThemes.dark, reduceMediaEffects: false, mediaVisibilityTier: "visible" }));
 
         expect(markup).toContain("<video");
         expect(markup).toContain('src="/api/resources/video-resource/file?direct=1"');
@@ -31,7 +32,7 @@ describe("画布媒体流式预览", () => {
     });
 
     test("远程音频立即使用鉴权资源地址播放，不等待整段 Blob 缓存", () => {
-        const markup = renderToStaticMarkup(createElement(CanvasMediaNodeContent, { node: mediaNode(CanvasNodeType.Audio, "audio-resource"), theme: canvasThemes.dark, reduceMediaEffects: false }));
+        const markup = renderToStaticMarkup(createElement(CanvasMediaNodeContent, { node: mediaNode(CanvasNodeType.Audio, "audio-resource"), theme: canvasThemes.dark, reduceMediaEffects: false, mediaVisibilityTier: "visible" }));
 
         expect(markup).toContain("<audio");
         expect(markup).toContain('src="/api/resources/audio-resource/file?direct=1"');
@@ -81,11 +82,56 @@ describe("画布媒体流式预览", () => {
         expect(failure?.outerHTML).not.toContain("secret");
         expect(failure?.outerHTML).not.toContain("access-token-4821");
     });
+
+    test("近区视频只渲染轻量占位且不挂载媒体元素", () => {
+        const nearMarkup = renderToStaticMarkup(createElement(CanvasMediaNodeContent, { node: mediaNode(CanvasNodeType.Video, "near-video"), theme: canvasThemes.dark, reduceMediaEffects: true, mediaVisibilityTier: "near" }));
+        const visibleMarkup = renderToStaticMarkup(createElement(CanvasMediaNodeContent, { node: mediaNode(CanvasNodeType.Video, "visible-video"), theme: canvasThemes.dark, reduceMediaEffects: true, mediaVisibilityTier: "visible" }));
+
+        expect(nearMarkup).not.toContain("<video");
+        expect(nearMarkup).toContain("data-canvas-deferred-media");
+        expect(nearMarkup).not.toContain("data-canvas-video-controls");
+        expect(visibleMarkup).toContain("data-canvas-video-player");
+    });
+
+    test("近区图片继续使用浏览器懒加载和异步解码", () => {
+        const imageNode: CanvasNodeData = {
+            id: "near-image",
+            type: CanvasNodeType.Image,
+            title: "近区图片",
+            position: { x: 0, y: 0 },
+            width: 420,
+            height: 236,
+            metadata: { content: "https://provider.example/near-image.webp" },
+        };
+        const markup = renderToStaticMarkup(
+            createElement(CanvasNode, {
+                data: imageNode,
+                scale: 1,
+                isSelected: false,
+                isRelated: false,
+                isFocusRelated: false,
+                isConnectionTarget: false,
+                isConnecting: false,
+                showImageInfo: false,
+                mediaVisibilityTier: "near",
+                onMouseDown: () => undefined,
+                onHoverStart: () => undefined,
+                onHoverEnd: () => undefined,
+                onConnectStart: () => undefined,
+                onResizeCommit: () => undefined,
+                onContentChange: () => undefined,
+                onContextMenu: () => undefined,
+            }),
+        );
+
+        expect(markup).toContain('loading="lazy"');
+        expect(markup).toContain('decoding="async"');
+    });
 });
 
 async function renderMediaNode(node: CanvasNodeData) {
     await act(async () => {
-        root?.render(createElement(CanvasMediaNodeContent, { node, theme: canvasThemes.dark, reduceMediaEffects: false }));
+        root?.render(createElement(CanvasMediaNodeContent, { node, theme: canvasThemes.dark, reduceMediaEffects: false, mediaVisibilityTier: "visible" }));
     });
 }
 

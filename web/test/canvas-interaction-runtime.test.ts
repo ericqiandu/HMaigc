@@ -78,6 +78,7 @@ describe("canvas interaction runtime", () => {
                     isConnectionTarget: false,
                     isConnecting: false,
                     showImageInfo: false,
+                    mediaVisibilityTier: "visible",
                     onMouseDown: () => undefined,
                     onHoverStart: () => undefined,
                     onHoverEnd: () => undefined,

@@ -7,6 +7,7 @@ import { useSharedSecondNow } from "@/hooks/use-shared-second-clock";
 import { resourceStorageLabel, resourceStorageLocation, resourceStorageTitle } from "@/lib/canvas/resource-storage-status";
 import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
 import { applyCanvasLiveResize, calculateCanvasResizePreview, clearCanvasLiveResize, type CanvasResizeCorner, type CanvasResizePreview } from "@/lib/canvas/canvas-interaction-runtime";
+import type { CanvasMediaVisibilityTier } from "@/lib/canvas/canvas-render-index";
 import { formatBytes } from "@/lib/image-utils";
 import { CONTENT_MODERATION_ERROR_CODE, isContentModerationError } from "@/lib/generation-error";
 import { canvasResourceDisplayUrl } from "@/lib/canvas-media-playback";
@@ -47,6 +48,7 @@ type CanvasNodeProps = {
     isConnectionTarget: boolean;
     isConnecting: boolean;
     showImageInfo: boolean;
+    mediaVisibilityTier: CanvasMediaVisibilityTier;
     reduceMediaEffects?: boolean;
     readOnly?: boolean;
     resourceLabel?: CanvasResourceReference;
@@ -95,6 +97,7 @@ type NodeContentRendererProps = {
     onCancelTask?: (node: CanvasNodeData) => void;
     onOpenTaskDetails?: (node: CanvasNodeData) => void;
     onToggleBatch?: () => void;
+    mediaVisibilityTier: CanvasMediaVisibilityTier;
     reduceMediaEffects?: boolean;
 };
 
@@ -108,6 +111,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     isConnectionTarget,
     isConnecting,
     showImageInfo,
+    mediaVisibilityTier,
     reduceMediaEffects = false,
     readOnly = false,
     resourceLabel,
@@ -362,6 +366,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onCancelTask={onCancelTask}
                         onOpenTaskDetails={onOpenTaskDetails}
                         onToggleBatch={() => onToggleBatch?.(data.id)}
+                        mediaVisibilityTier={mediaVisibilityTier}
                         reduceMediaEffects={reduceMediaEffects}
                     />
                 </div>
@@ -790,12 +795,12 @@ function EmptyImageContent({ node, theme, isBatchRoot, batchCount, batchExpanded
     return content;
 }
 
-function VideoNodeContent({ node, theme, reduceMediaEffects }: NodeContentRendererProps) {
-    return <CanvasMediaNodeContent node={node} theme={theme} reduceMediaEffects={Boolean(reduceMediaEffects)} />;
+function VideoNodeContent({ node, theme, reduceMediaEffects, mediaVisibilityTier }: NodeContentRendererProps) {
+    return <CanvasMediaNodeContent node={node} theme={theme} reduceMediaEffects={Boolean(reduceMediaEffects)} mediaVisibilityTier={mediaVisibilityTier} />;
 }
 
-function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
-    return <CanvasMediaNodeContent node={node} theme={theme} reduceMediaEffects={false} />;
+function AudioNodeContent({ node, theme, mediaVisibilityTier }: NodeContentRendererProps) {
+    return <CanvasMediaNodeContent node={node} theme={theme} reduceMediaEffects={false} mediaVisibilityTier={mediaVisibilityTier} />;
 }
 
 function ImageContent({

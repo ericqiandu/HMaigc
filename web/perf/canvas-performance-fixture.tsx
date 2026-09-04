@@ -158,6 +158,7 @@ function CanvasPerformanceFixture() {
                         isConnectionTarget={false}
                         isConnecting={false}
                         showImageInfo={false}
+                        mediaVisibilityTier="visible"
                         reduceMediaEffects={!isMediaContract}
                         readOnly
                         onMouseDown={noOp}

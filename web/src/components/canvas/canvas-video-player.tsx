@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Maximize2, Pause, Play, Volume2, VolumeX } from "lucide-react";
 
@@ -25,6 +25,11 @@ export function CanvasVideoPlayer({ nodeId, src, title, preload, onPlaybackError
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+    useEffect(() => {
+        const video = videoRef.current;
+        return () => video?.pause();
+    }, []);
 
     const reportError = useCallback(
         (kind: CanvasVideoPlaybackError["kind"], error: unknown, fallbackMessage: string) => {
