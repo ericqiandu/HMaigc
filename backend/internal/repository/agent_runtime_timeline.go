@@ -624,6 +624,13 @@ func agentTimelineMutationForEvent(
 				SourceEventSequence: sequence, ContentJSON: content,
 			}, nil
 		}
+		if previous.Status == agentruntime.RunCancelled && previous.PendingToolStarted {
+			return &TimelineMutation{
+				ItemID: agentFactID("timeline", runID, "interrupted-tool-result", state.LastToolResult.ToolCallID, strconv.Itoa(state.LastToolResult.ActionVersion)),
+				Kind:   model.AgentTimelineItemToolResult, ToStatus: itemStatus,
+				SourceEventSequence: sequence, ContentJSON: content,
+			}, nil
+		}
 		fromStatus := model.AgentTimelineItemInProgress
 		return &TimelineMutation{
 			ItemID: agentFactID("timeline", runID, "tool-call", state.LastToolResult.ToolCallID+":"+strconv.Itoa(state.LastToolResult.ActionVersion)),

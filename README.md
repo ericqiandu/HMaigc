@@ -76,9 +76,11 @@ Web 只提交用户目标、真实画布/选区事实和显式配置，展示服
 
 `canvas.apply_ops` 成功后由服务端权威 revision/CAS 和协作通道传播画布变化，浏览器不自行执行 Agent 写入。`media.generate` 与 `vision.analyze` 的终态都由耐久 Outbox 唤醒同一 Run；媒体成功必须能重读 succeeded Task、settled BillingOrder 与归属正确的 ready Resource，并在能力返回前以独立 CAS 画布变更保存真实生成提示词；若同时发生其他画布写入则使用最新 revision 有界重试，仍冲突时显式失败而不丢弃已生成资产。视觉成功必须能重读 succeeded Task、settled Token BillingOrder、严格结果和供应商响应 usage。调用前失败退款；供应商请求已发出但 usage 缺失、响应截断或本地结果事实不完整时进入 `uncertain`，保留预留款等待核对且禁止自动重发供应商请求。用户可见时间线只投影经过能力契约严格解码的结果和简洁状态；`vision.analyze` 成功时持久化可公开的分析文本、来源 Resource、细节等级与 Token usage，聊天面板只渲染分析和用量，不展示 Task、BillingOrder、toolCall 或供应商请求身份。管理员 Agent 运行诊断单列文本、图片理解和媒体 Task 状态，并聚合对应 BillingOrder 与供应商发送边界，管理员终止会在同一事务内处理仍活动的图片理解 Task，已发出的请求进入账务核对。这些内部关联事实不进入聊天面板。媒体预览地址只接受与同一 `resourceId` 精确匹配的稳定站内 `/api/resources/{resourceId}/file` 路径，外部地址、签名地址及资源身份错配均显式拒绝，刷新后仍可从持久化时间线恢复真实媒体预览。已经由供应商成功产出的 Resource 不因后续步骤失败被删除、覆盖或回滚。
 
-Agent 通过 `add_node` 创建或通过 `update_node` 转入 `loading` 的媒体节点，必须在冻结审批提案中携带服务端校准的 `metadata.agentRunId`，并把本次生成提示同时写入 `metadata.prompt` 与初始 `metadata.composerContent`；其生命周期只由对应 Agent Run 的后续 `canvas.apply_ops` 推进。浏览器任务中心恢复逻辑只接管浏览器自身创建的生成节点，不得查询、报错或改写带有 `agentRunId` 的 Agent 占位节点；这样页面刷新不会把 Agent 正在等待审批或等待媒体完成的占位节点误判为“找不到对应任务”。
+Agent 通过 `add_node` 创建或通过 `update_node` 转入 `loading` 的媒体节点，必须在冻结审批提案中携带服务端校准的 `metadata.agentRunId`，并把本次生成提示同时写入 `metadata.prompt` 与初始 `metadata.composerContent`；生成前状态由对应 Agent Run 推进，生成成功后的 Resource 与 Task 终态则由已批准的 `media.generate` 能力确定性收口到同一节点。浏览器任务中心恢复逻辑只接管浏览器自身创建的生成节点，不得查询、报错或改写带有 `agentRunId` 的 Agent 占位节点；这样页面刷新不会把 Agent 正在等待审批或等待媒体完成的占位节点误判为“找不到对应任务”。
 
 `media.generate.sourceResourceIds` 的授权事实由两类来源组成：当前项目已确认并链接的资产资源，或当前画布中以精确 `content + storageKey + success` 三元组绑定的租户自有 ready Resource。后一类使独立画布及尚未发布到资产库的 Agent 中间产物可以继续作为图生视频等下游输入，同时拒绝仅知道 ID、未落当前画布、跨租户或非 ready 的资源；媒体输入授权不要求用户把每个中间产物发布到资产库。
+
+运行中的付费工具遇到用户或管理员中止时，Run 保持 `cancelled`，检查点中已启动工具的身份与数据库状态保持一致。取消范围包含当前原子媒体任务：未提交的排队任务在同一事务内取消、退款并写入 Outbox；可能已提交的任务保留结果核对与未决账单，不提前退款。迟到通知只读取已批准提案、冻结 Task 与 BillingOrder，不重走报价或创建任务；模型后续停用不影响已完成结果收口。已结算成功结果完成资源与画布绑定，已退款的失败结果保留错误码，两者以独立 `tool.result` 关闭待处理工具，不恢复 Agent 推理。账单未决、作用域冲突或任务缺失均显式报错并保留待处理事实；重复通知不增加任务、扣费或重复结果。取消后上游才产出的资产继续保留在任务与资源记录中，费用未核对前不伪装成已结算交付。
 
 #### Skills 与模型事实
 

@@ -231,6 +231,32 @@ func TestAgentMediaCapabilityTerminalOutboxResumesWaitingRuntimeOnce(t *testing.
 	if record.Status != agentruntime.ToolCallSucceeded {
 		t.Fatalf("media tool status after outbox = %q", record.Status)
 	}
+	canvas, err := svc.repo.CanvasProject(scope.CanvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bound struct {
+		Nodes []struct {
+			ID       string `json:"id"`
+			Metadata struct {
+				Content            string `json:"content"`
+				Status             string `json:"status"`
+				TaskID             string `json:"taskId"`
+				GenerationEvidence struct {
+					ResourceID string `json:"resourceId"`
+				} `json:"generationEvidence"`
+			} `json:"metadata"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(canvas.PayloadJSON), &bound); err != nil {
+		t.Fatal(err)
+	}
+	if len(bound.Nodes) != 1 || bound.Nodes[0].ID != "image-node-1" ||
+		bound.Nodes[0].Metadata.Content != "/api/resources/generated-image-outbox/file" ||
+		bound.Nodes[0].Metadata.Status != "success" || bound.Nodes[0].Metadata.TaskID != task.ID ||
+		bound.Nodes[0].Metadata.GenerationEvidence.ResourceID != "generated-image-outbox" {
+		t.Fatalf("terminal media outbox did not bind the generated resource to the canvas: %s", canvas.PayloadJSON)
+	}
 	var delivered int64
 	if err := db.Model(&model.TaskOutbox{}).
 		Where("task_id = ? AND status = ?", task.ID, model.TaskOutboxDelivered).
@@ -339,7 +365,7 @@ func TestAgentMediaCapabilityApprovedRetriesCreateOneTaskAndReservation(t *testi
 	}
 }
 
-func TestAgentMediaCapabilityPersistsApprovedPromptOnTargetCanvasNode(t *testing.T) {
+func TestAgentMediaCapabilityPersistsSuccessfulResultOnTargetCanvasNode(t *testing.T) {
 	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
 	createAgentRuntimeImageModel(t, db, fixture)
 	if err := db.Model(&model.CanvasProject{}).Where("id = ?", "runtime-canvas").Update(
@@ -377,6 +403,11 @@ func TestAgentMediaCapabilityPersistsApprovedPromptOnTargetCanvasNode(t *testing
 			Metadata struct {
 				Prompt          string `json:"prompt"`
 				ComposerContent string `json:"composerContent"`
+				Content         string `json:"content"`
+				StorageKey      string `json:"storageKey"`
+				Status          string `json:"status"`
+				TaskID          string `json:"taskId"`
+				TaskStatus      string `json:"taskStatus"`
 			} `json:"metadata"`
 		} `json:"nodes"`
 	}
@@ -385,23 +416,53 @@ func TestAgentMediaCapabilityPersistsApprovedPromptOnTargetCanvasNode(t *testing
 	}
 	if canvas.Revision != 8 || len(document.Nodes) != 1 || document.Nodes[0].ID != "image-node-1" ||
 		document.Nodes[0].Metadata.Prompt != "鲜橙产品特写" ||
-		document.Nodes[0].Metadata.ComposerContent != "鲜橙产品特写" {
-		t.Fatalf("authoritative media prompt was not persisted on the target node: revision=%d payload=%s", canvas.Revision, canvas.PayloadJSON)
+		document.Nodes[0].Metadata.ComposerContent != "鲜橙产品特写" ||
+		document.Nodes[0].Metadata.Content != "/api/resources/generated-prompt-image/file" ||
+		document.Nodes[0].Metadata.StorageKey != "resource:generated-prompt-image" ||
+		document.Nodes[0].Metadata.Status != "success" || document.Nodes[0].Metadata.TaskID != task.ID ||
+		document.Nodes[0].Metadata.TaskStatus != string(model.TaskStatusSucceeded) {
+		t.Fatalf("successful media result was not persisted on the target node: revision=%d payload=%s", canvas.Revision, canvas.PayloadJSON)
 	}
-}
+	if result := db.Model(&model.AgentToolCall{}).
+		Where("run_id = ? AND tool_call_id = ? AND action_version = ?", agentRuntimeServiceScope().RunID, call.ToolCallID, call.ActionVersion).
+		Updates(model.AgentToolCall{Status: agentruntime.ToolCallSucceeded, OutputJSON: string(completed.Output), UpdatedAt: time.Now().UTC()}); result.Error != nil || result.RowsAffected != 1 {
+		t.Fatalf("persist successful media receipt: rows=%d err=%v", result.RowsAffected, result.Error)
+	}
 
-func TestAgentMediaPromptBindingSkipsCanvasMutationWhenPromptIsAlreadyExact(t *testing.T) {
-	payload := `{"nodes":[{"id":"image-node-1","type":"image","title":"Agent image","position":{"x":0,"y":0},"width":320,"height":180,"metadata":{"prompt":"鲜橙产品特写","composerContent":"鲜橙产品特写","content":"/api/resources/image/file"}}],"connections":[]}`
-	updated, changed, err := agentMediaPromptBoundNode(payload, "image-node-1", agentruntime.MediaKindImage, "鲜橙产品特写")
+	replayed, err := registry.Execute(context.Background(), agentRuntimeServiceScope(), call)
+	if err != nil || replayed.Pending {
+		t.Fatalf("replayed completed media binding = %#v, err = %v", replayed, err)
+	}
+	replayedCanvas, err := svc.repo.CanvasProject("runtime-canvas")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed || len(updated) != 0 {
-		t.Fatalf("exact media prompt unexpectedly requested another canvas mutation: changed=%v node=%s", changed, updated)
+	if replayedCanvas.Revision != canvas.Revision || replayedCanvas.PayloadJSON != canvas.PayloadJSON {
+		t.Fatalf("replayed media result mutated canvas again: before=%d after=%d", canvas.Revision, replayedCanvas.Revision)
 	}
 }
 
-func TestAgentMediaPromptBindingSupportsEveryMediaKind(t *testing.T) {
+func TestAgentMediaResultBindingSkipsCanvasMutationWhenResultIsAlreadyExact(t *testing.T) {
+	payload := `{"nodes":[{"id":"image-node-1","type":"image","title":"Agent image","position":{"x":0,"y":0},"width":320,"height":180,"metadata":{"status":"loading"}}],"connections":[]}`
+	task, primary, resource, call, arguments := agentMediaResultBindingFacts(agentruntime.MediaKindImage)
+	updated, changed, err := agentMediaResultBoundNode(payload, "image-node-1", agentruntime.MediaKindImage, "鲜橙产品特写", task, primary, resource, call, arguments, "runtime-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("initial media result did not request a canvas mutation")
+	}
+	document := fmt.Sprintf(`{"nodes":[%s],"connections":[]}`, updated)
+	replayed, changed, err := agentMediaResultBoundNode(document, "image-node-1", agentruntime.MediaKindImage, "鲜橙产品特写", task, primary, resource, call, arguments, "runtime-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed || len(replayed) != 0 {
+		t.Fatalf("exact media result unexpectedly requested another canvas mutation: changed=%v node=%s", changed, replayed)
+	}
+}
+
+func TestAgentMediaResultBindingSupportsEveryMediaKind(t *testing.T) {
 	for _, mediaKind := range []agentruntime.MediaKind{
 		agentruntime.MediaKindImage,
 		agentruntime.MediaKindVideo,
@@ -412,27 +473,66 @@ func TestAgentMediaPromptBindingSupportsEveryMediaKind(t *testing.T) {
 				`{"nodes":[{"id":"target-node","type":%q,"title":"Agent media","position":{"x":0,"y":0},"width":320,"height":180,"metadata":{"prompt":"旧提示词","composerContent":"旧提示词","status":"loading"}}],"connections":[]}`,
 				mediaKind,
 			)
-			updated, changed, err := agentMediaPromptBoundNode(payload, "target-node", mediaKind, "权威生成提示词")
+			task, primary, resource, call, arguments := agentMediaResultBindingFacts(mediaKind)
+			updated, changed, err := agentMediaResultBoundNode(payload, "target-node", mediaKind, "权威生成提示词", task, primary, resource, call, arguments, "runtime-run")
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !changed {
-				t.Fatal("media prompt binding did not request a canvas mutation")
+				t.Fatal("media result binding did not request a canvas mutation")
 			}
 			var node struct {
 				Metadata struct {
 					Prompt          string `json:"prompt"`
 					ComposerContent string `json:"composerContent"`
+					Content         string `json:"content"`
+					StorageKey      string `json:"storageKey"`
+					Status          string `json:"status"`
+					TaskID          string `json:"taskId"`
 				} `json:"metadata"`
 			}
 			if err := json.Unmarshal(updated, &node); err != nil {
 				t.Fatal(err)
 			}
-			if node.Metadata.Prompt != "权威生成提示词" || node.Metadata.ComposerContent != "权威生成提示词" {
+			if node.Metadata.Prompt != "权威生成提示词" || node.Metadata.ComposerContent != "权威生成提示词" ||
+				node.Metadata.Content != primary.URL || node.Metadata.StorageKey != "resource:"+primary.ResourceID ||
+				node.Metadata.Status != "success" || node.Metadata.TaskID != task.ID {
 				t.Fatalf("bound %s prompt facts = %#v", mediaKind, node.Metadata)
 			}
 		})
 	}
+}
+
+func agentMediaResultBindingFacts(mediaKind agentruntime.MediaKind) (
+	model.Task,
+	agentruntime.MediaGeneratedResourceResult,
+	model.Resource,
+	agentruntime.ToolCallDecision,
+	agentruntime.MediaGenerateArguments,
+) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	resourceID := "generated-" + string(mediaKind)
+	task := model.Task{
+		ID: "task-" + string(mediaKind), UserID: "runtime-user", ProjectID: "runtime-canvas",
+		Capability: string(mediaKind), Status: model.TaskStatusSucceeded, Stage: "任务完成",
+		BillingOrderID: "billing-" + string(mediaKind), CreatedAt: now, UpdatedAt: now,
+	}
+	primary := agentruntime.MediaGeneratedResourceResult{
+		ResourceID: resourceID, Kind: mediaKind, URL: "/api/resources/" + resourceID + "/file",
+	}
+	resource := model.Resource{
+		ID: resourceID, UserID: "runtime-user", Kind: string(mediaKind), Status: model.ResourceStatusReady,
+		MimeType: map[agentruntime.MediaKind]string{
+			agentruntime.MediaKindImage: "image/png", agentruntime.MediaKindVideo: "video/mp4", agentruntime.MediaKindAudio: "audio/mpeg",
+		}[mediaKind],
+		Size: 1024, Width: 1280, Height: 720, DurationMs: 5000,
+	}
+	call := agentruntime.ToolCallDecision{ToolCallID: "media-" + string(mediaKind), ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1}
+	arguments := agentruntime.MediaGenerateArguments{
+		MediaKind: mediaKind, ModelRecordID: "model-record", ModelKey: "model-key",
+		TargetCanvasNodeID: "target-node", ClientRequestID: "request-" + string(mediaKind),
+	}
+	return task, primary, resource, call, arguments
 }
 
 func TestAgentMediaCapabilityDeliveryRejectsReceiptResourceOutsideTaskResult(t *testing.T) {

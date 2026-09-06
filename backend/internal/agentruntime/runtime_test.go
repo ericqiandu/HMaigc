@@ -538,6 +538,32 @@ func TestInterruptUsesStateVersionAndPreservesStartedToolFacts(t *testing.T) {
 	}
 }
 
+func TestResolveInterruptedToolKeepsRunCancelledAndClosesPendingFacts(t *testing.T) {
+	current := agentruntime.RuntimeState{
+		StateVersion: 7, StepNumber: 3, MaxSteps: 12, Status: agentruntime.RunCancelled,
+		UserMessage: "生成图片", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic},
+	}
+	current.PendingToolCall = &agentruntime.ToolCallDecision{
+		ToolCallID: "late-media", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
+		Arguments: json.RawMessage(`{"mediaKind":"image"}`),
+	}
+	current.PendingToolStarted = true
+
+	transition, err := agentruntime.ResolveInterruptedTool(current, agentruntime.ToolResolution{
+		ToolCallID: "late-media", ActionVersion: 1, Succeeded: true, Output: json.RawMessage(`{"taskId":"late-task"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transition.State.Status != agentruntime.RunCancelled || transition.State.PendingToolCall != nil || transition.State.PendingToolStarted ||
+		transition.State.LastToolResult == nil || !transition.State.LastToolResult.Succeeded || transition.State.StateVersion != current.StateVersion+1 {
+		t.Fatalf("settled interrupted tool state = %#v", transition.State)
+	}
+	if len(transition.EventKinds) != 1 || transition.EventKinds[0] != agentruntime.EventToolResult {
+		t.Fatalf("settled interrupted tool events = %#v", transition.EventKinds)
+	}
+}
+
 func TestRunConfigurationRejectsMissingModeAndInvalidAttachmentFacts(t *testing.T) {
 	if err := agentruntime.ValidateRunConfiguration(agentruntime.RunConfiguration{}); err == nil {
 		t.Fatal("missing execution mode was accepted")

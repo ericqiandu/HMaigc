@@ -613,6 +613,43 @@ func ResolveTool(current RuntimeState, resolution ToolResolution) (RuntimeTransi
 	return RuntimeTransition{State: next, EventKinds: []EventKind{EventToolResult, EventRunStatusChanged}}, nil
 }
 
+// ResolveInterruptedTool records the authoritative terminal result of a tool
+// that was already in flight when its run was interrupted. The run remains
+// cancelled: this transition only closes the preserved external-effect facts.
+func ResolveInterruptedTool(current RuntimeState, resolution ToolResolution) (RuntimeTransition, error) {
+	if err := validateRuntimeState(current); err != nil {
+		return RuntimeTransition{}, err
+	}
+	if current.Status != RunCancelled || current.PendingToolCall == nil || !current.PendingToolStarted {
+		return RuntimeTransition{}, errors.New("agent runtime has no interrupted tool awaiting settlement")
+	}
+	resolution.ToolCallID = strings.TrimSpace(resolution.ToolCallID)
+	resolution.ErrorCode = strings.TrimSpace(resolution.ErrorCode)
+	if resolution.ToolCallID != current.PendingToolCall.ToolCallID || resolution.ActionVersion != current.PendingToolCall.ActionVersion {
+		return RuntimeTransition{}, errors.New("interrupted agent tool result identity is invalid")
+	}
+	output := bytes.TrimSpace(resolution.Output)
+	if len(output) == 0 || len(output) > agentToolResultLimit || output[0] != '{' || !json.Valid(output) {
+		return RuntimeTransition{}, errors.New("interrupted agent tool result output is invalid")
+	}
+	if resolution.Succeeded && (resolution.ErrorCode != "" || resolution.FailureClass != "") {
+		return RuntimeTransition{}, errors.New("successful interrupted agent tool result has failure facts")
+	}
+	if !resolution.Succeeded && (!validFailureCode(resolution.ErrorCode) ||
+		(resolution.FailureClass != ToolFailureAgentRepairable && resolution.FailureClass != ToolFailureTerminal)) {
+		return RuntimeTransition{}, errors.New("failed interrupted agent tool result is invalid")
+	}
+	next := current
+	next.StateVersion++
+	next.PendingToolCall = nil
+	next.PendingToolStarted = false
+	next.LastToolResult = &ToolResult{
+		ToolCallID: resolution.ToolCallID, ActionVersion: resolution.ActionVersion,
+		Succeeded: resolution.Succeeded, Output: append(json.RawMessage(nil), output...), ErrorCode: resolution.ErrorCode,
+	}
+	return RuntimeTransition{State: next, EventKinds: []EventKind{EventToolResult}}, nil
+}
+
 func BeginToolExecution(current RuntimeState, execution ToolExecution) (RuntimeTransition, error) {
 	if err := validateRuntimeState(current); err != nil {
 		return RuntimeTransition{}, err

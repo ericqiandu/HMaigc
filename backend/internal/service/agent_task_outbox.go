@@ -114,7 +114,7 @@ func expectedAgentTaskID(state agentruntime.RuntimeState, scope agentruntime.Sco
 		}
 		return agentRuntimeModelTaskID(scope.RunID, state.StepNumber), nil
 	case agentWakeGenerationTaskFinished:
-		if state.Status != agentruntime.RunWaitingTool || state.PendingToolCall == nil || !state.PendingToolStarted {
+		if (state.Status != agentruntime.RunWaitingTool && state.Status != agentruntime.RunCancelled) || state.PendingToolCall == nil || !state.PendingToolStarted {
 			return "", nil
 		}
 		if state.PendingToolCall.ToolName != agentruntime.ToolMediaGenerate && state.PendingToolCall.ToolName != agentruntime.ToolVisionAnalyze {

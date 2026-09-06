@@ -14,6 +14,8 @@ import (
 type agentCapabilityExecutionError struct {
 	Code string
 	Err  error
+	// 只有任务与账单均确认终态的失败才可关闭已中断工具；协议或结算错误不能冒充结果。
+	Settled bool
 }
 
 func (failure *agentCapabilityExecutionError) Error() string {

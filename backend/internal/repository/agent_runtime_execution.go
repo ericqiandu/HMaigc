@@ -457,10 +457,10 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 	if err := persistAgentToolTransition(tx, scope, previous, state, transition.ApprovalProposalHash, transition.ApprovalCostQuote, transition.ApprovalResolution, facts.ToolSchemaVersion, now); err != nil {
 		return err
 	}
-	shouldDisposeRunTree := state.Status == agentruntime.RunCancelled ||
+	shouldDisposeRunTree := (state.Status == agentruntime.RunCancelled && previous.Status != agentruntime.RunCancelled) ||
 		(state.Status == agentruntime.RunFailed && state.FailureCode == agentruntime.FailureRuntimeDeadlineExceeded)
 	if shouldDisposeRunTree && interruptAudit == nil {
-		if err := r.cancelAgentRunTreeTx(tx, scope, now); err != nil {
+		if err := r.cancelAgentRunTreeTx(tx, scope, state, now); err != nil {
 			return err
 		}
 	}

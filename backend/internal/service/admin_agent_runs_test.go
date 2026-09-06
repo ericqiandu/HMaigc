@@ -341,7 +341,7 @@ func openAdminAgentRunServiceSQLite(t *testing.T) (*Service, *gorm.DB) {
 		&model.User{}, &model.Task{}, &model.BillingOrder{}, &model.CreditAccount{}, &model.CreditLedgerEntry{},
 		&model.AgentThread{}, &model.AgentRun{}, &model.AgentTimelineItem{}, &model.AgentRunEvent{},
 		&model.AgentCheckpoint{}, &model.AgentToolCall{}, &model.AgentProductionPlanVersion{}, &model.AgentProductionArtifact{},
-		&model.AgentExternalDecision{},
+		&model.AgentExternalDecision{}, &model.TaskOutbox{},
 	); err != nil {
 		t.Fatal(err)
 	}
