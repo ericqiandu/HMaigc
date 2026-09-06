@@ -108,6 +108,17 @@ type providerTextStreamResult struct {
 	ProviderRequestID string
 	FinishReason      string
 	Usage             TokenUsageFact
+	Diagnostics       providerTextStreamDiagnostics
+}
+
+type providerTextStreamDiagnostics struct {
+	EventCount                   int
+	OutputTextDeltaCount         int
+	OutputTextDoneCount          int
+	ReasoningTextDeltaCount      int
+	CompletedOutputItemTypes     []string
+	CompletedContentPartTypes    []string
+	CompletedOutputTextPartCount int
 }
 
 var errProviderTextMissing = errors.New("文本接口没有返回内容")

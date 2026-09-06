@@ -87,6 +87,57 @@ func TestParseResponsesSSEEmitsTextUsageAndCompletion(t *testing.T) {
 	}
 }
 
+func TestParseResponsesSSECompletesMissingDeltaSuffixFromFinalText(t *testing.T) {
+	complete := `{"kind":"final","final":{"message":"ok","expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}`
+	partial := complete[:len(complete)-2]
+	stream := strings.Join([]string{
+		`event: response.output_text.delta`,
+		`data: {"type":"response.output_text.delta","delta":` + string(mustJSONMarshal(t, partial)) + `}`,
+		``,
+		`event: response.output_text.done`,
+		`data: {"type":"response.output_text.done","text":` + string(mustJSONMarshal(t, complete)) + `}`,
+		``,
+		`event: response.completed`,
+		`data: {"type":"response.completed","response":{"id":"resp-final-text","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":` + string(mustJSONMarshal(t, complete)) + `}]}],"usage":{"input_tokens":12,"output_tokens":8}}}`,
+		``,
+	}, "\n")
+	var deltas []string
+	result, err := parseResponsesSSE(context.Background(), strings.NewReader(stream), func(delta string) error {
+		deltas = append(deltas, delta)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != complete || strings.Join(deltas, "") != complete {
+		t.Fatalf("result.Text = %q deltas = %q", result.Text, strings.Join(deltas, ""))
+	}
+}
+
+func TestParseResponsesSSERejectsFinalTextThatConflictsWithDeltas(t *testing.T) {
+	stream := strings.Join([]string{
+		`event: response.output_text.delta`,
+		`data: {"type":"response.output_text.delta","delta":"{\"kind\":\"final\""}`,
+		``,
+		`event: response.output_text.done`,
+		`data: {"type":"response.output_text.done","text":"{\"kind\":\"tool_call\"}"}`,
+		``,
+	}, "\n")
+	_, err := parseResponsesSSE(context.Background(), strings.NewReader(stream), func(string) error { return nil })
+	if !errors.Is(err, errAgentProviderStreamProtocolInvalid) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func mustJSONMarshal(t *testing.T, value string) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
 func TestParseResponsesSSERejectsFailedAndTruncatedStreams(t *testing.T) {
 	failed := "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp-failed\",\"status\":\"failed\",\"error\":{\"message\":\"provider rejected\"}}}\n\n"
 	if _, err := parseResponsesSSE(context.Background(), strings.NewReader(failed), func(string) error { return nil }); err == nil || !strings.Contains(err.Error(), "provider rejected") {
@@ -95,5 +146,27 @@ func TestParseResponsesSSERejectsFailedAndTruncatedStreams(t *testing.T) {
 	truncated := "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"x\"}\n\n"
 	if _, err := parseResponsesSSE(context.Background(), strings.NewReader(truncated), func(string) error { return nil }); !errors.Is(err, errAgentProviderStreamTruncated) {
 		t.Fatalf("truncated stream error = %v", err)
+	}
+}
+
+func TestParseResponsesSSERecordsSafeDiagnosticsWhenCompletedResponseHasNoText(t *testing.T) {
+	stream := strings.Join([]string{
+		`event: response.reasoning_text.delta`,
+		`data: {"type":"response.reasoning_text.delta","delta":"private reasoning"}`,
+		``,
+		`event: response.completed`,
+		`data: {"type":"response.completed","response":{"id":"resp-reasoning-only","status":"completed","output":[{"id":"rs_1","type":"reasoning","summary":[]}],"usage":{"input_tokens":20,"output_tokens":8}}}`,
+		``,
+	}, "\n")
+
+	result, err := parseResponsesSSE(context.Background(), strings.NewReader(stream), func(string) error { return nil })
+	if !errors.Is(err, errProviderTextMissing) {
+		t.Fatalf("error = %v", err)
+	}
+	if result.Diagnostics.EventCount != 2 || result.Diagnostics.ReasoningTextDeltaCount != 1 || result.Diagnostics.OutputTextDeltaCount != 0 {
+		t.Fatalf("event diagnostics = %#v", result.Diagnostics)
+	}
+	if strings.Join(result.Diagnostics.CompletedOutputItemTypes, ",") != "reasoning" || result.Diagnostics.CompletedOutputTextPartCount != 0 {
+		t.Fatalf("completed response diagnostics = %#v", result.Diagnostics)
 	}
 }
