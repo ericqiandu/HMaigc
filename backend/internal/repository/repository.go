@@ -1677,13 +1677,6 @@ func (r *Repository) ShotForProject(projectID string, shotID string) (*model.Sho
 	return &shot, nil
 }
 
-func (r *Repository) UpsertShotAssetReference(reference *model.ShotAssetReference) error {
-	result := r.db.Model(&model.ShotAssetReference{}).Where("shot_id = ? AND asset_version_id = ? AND role = ?", reference.ShotID, reference.AssetVersionID, reference.Role).Updates(map[string]any{"status": reference.Status})
-	if result.Error != nil || result.RowsAffected > 0 {
-		return result.Error
-	}
-	return r.db.Create(reference).Error
-}
 
 func (r *Repository) ProjectShotAssetReferences(projectID string) ([]model.ShotAssetReference, error) {
 	var references []model.ShotAssetReference
@@ -1708,12 +1701,6 @@ func (r *Repository) ProjectAssetCandidate(projectID string, candidateID string)
 	return &candidate, nil
 }
 
-func (r *Repository) CreateProjectAssetCandidates(candidates []model.ProjectAssetCandidate) error {
-	if len(candidates) == 0 {
-		return nil
-	}
-	return r.db.Create(&candidates).Error
-}
 
 // ConfirmProjectAssetCandidate 将正式资产身份、首版本、项目引用和候选状态放在同一事务中，避免出现半确认数据。
 func (r *Repository) ConfirmProjectAssetCandidate(candidate *model.ProjectAssetCandidate, asset *model.Asset, version *model.AssetVersion, link *model.ProjectAssetLink, createAsset bool) error {

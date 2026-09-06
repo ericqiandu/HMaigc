@@ -141,10 +141,7 @@ func (s *Service) LinkShotAsset(userID string, projectID string, shotID string, 
 		return model.ShotAssetReference{}, BadAuthRequest("不支持的镜头素材用途")
 	}
 	reference := model.ShotAssetReference{ID: newID(), ShotID: shotID, AssetVersionID: versionID, Role: role, Status: "linked", CreatedAt: time.Now()}
-	if err := s.repo.UpsertShotAssetReference(&reference); err != nil {
-		return model.ShotAssetReference{}, err
-	}
-	if err := s.repo.BumpProjectRevision(projectID); err != nil {
+	if err := s.repo.UpsertShotAssetReference(userID, projectID, &reference); err != nil {
 		return model.ShotAssetReference{}, err
 	}
 	return reference, nil
@@ -186,10 +183,7 @@ func (s *Service) CreateProjectAssetCandidates(userID string, projectID string, 
 		}
 		candidates = append(candidates, model.ProjectAssetCandidate{ID: newID(), ProjectID: projectID, UnitID: strings.TrimSpace(input.UnitID), ShotID: strings.TrimSpace(input.ShotID), Name: name, Category: category, Status: "pending_confirmation", DetailsJSON: detailsJSON, CreatedAt: now, UpdatedAt: now})
 	}
-	if err := s.repo.CreateProjectAssetCandidates(candidates); err != nil {
-		return nil, err
-	}
-	if err := s.repo.BumpProjectRevision(projectID); err != nil {
+	if err := s.repo.CreateProjectAssetCandidates(userID, projectID, candidates); err != nil {
 		return nil, err
 	}
 	return candidates, nil
