@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -140,6 +141,61 @@ func TestConcurrentAgentRuntimeResumeCommitsOneTerminalTransition(t *testing.T) 
 	}
 	if eventCount != 1 || checkpointCount != 1 || calls.Load() != 1 {
 		t.Fatalf("concurrent facts: completedEvents=%d checkpoints=%d calls=%d", eventCount, checkpointCount, calls.Load())
+	}
+}
+
+func TestResumeAgentRuntimeMarksStreamedMessageFailedWhenDeliveryContractChanges(t *testing.T) {
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		decision := `{"kind":"tool_call","toolCall":{"toolCallId":"read-before-final","toolName":"canvas.read","actionVersion":1,"arguments":{"canvasId":"runtime-canvas","selectedNodeIds":[],"includeViewport":true},"expectedDelivery":{"kind":"project_change","targetProjectId":"runtime-project","completionCriteria":[{"fact":"project_revision"}]}}}`
+		if calls.Add(1) == 2 {
+			decision = `{"kind":"final","final":{"message":"项目已经全部完成。","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`
+		}
+		writeAgentRuntimeChatStream(t, writer, "chatcmpl-contract-change", decision, 0, 0, 0)
+	}))
+	defer server.Close()
+
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	scope := agentRuntimeServiceScope()
+	started, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: scope, ClientRequestID: "delivery-contract-message-failure", UserMessage: "读取画布后修改项目",
+		MaxSteps: 4, Configuration: AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionAutomatic},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := svc.advanceAgentRun(scope, agentWakeModelTaskFinished)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if progress.ModelTask == nil || progress.ModelTask.ID == started.ModelTask.ID {
+		t.Fatalf("canvas read did not schedule the next model step: %#v", progress)
+	}
+	if progress.State.ExpectedDelivery == nil || progress.State.ExpectedDelivery.Kind != agentruntime.DeliveryProjectChange {
+		t.Fatalf("first model decision did not freeze project delivery: expected=%#v calls=%d", progress.State.ExpectedDelivery, calls.Load())
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	repairing, err := svc.advanceAgentRun(scope, agentWakeModelTaskFinished)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repairing.State.Status != agentruntime.RunRunning || repairing.State.DecisionFeedback == nil || repairing.State.DecisionFeedback.Code != "delivery_contract_changed" {
+		t.Fatalf("delivery contract change was not rejected: %#v", repairing)
+	}
+	var message model.AgentTimelineItem
+	if err := db.First(&message, "id = ?", agentruntime.AgentMessageItemID(scope.RunID, 1)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if message.Status != model.AgentTimelineItemFailed || message.CompletedAt == nil ||
+		!strings.Contains(message.ContentJSON, `"failureCode":"delivery_contract_changed"`) {
+		t.Fatalf("rejected success message remained visible as successful: %#v", message)
 	}
 }
 

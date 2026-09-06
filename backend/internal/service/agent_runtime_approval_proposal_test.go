@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -68,7 +69,7 @@ func TestValidateStoredApprovalProposalRejectsPaidMediaWithoutAuthoritativeQuote
 	}
 }
 
-func TestSubmitAgentToolApprovalInvalidatesExpiredProposalAndRequeuesSameRun(t *testing.T) {
+func TestRefreshExpiredAgentToolApprovalInvalidatesProposalAndRequeuesSameRun(t *testing.T) {
 	decision := `{"kind":"tool_call","toolCall":{"toolCallId":"publish-expired-1","toolName":"assets.publish","actionVersion":1,"arguments":{"resourceId":"resource-1","domainProjectId":"runtime-project","displayName":"角色图","clientMutationId":"publish-1"}}}`
 	server, _ := newAgentRuntimeDecisionServer(t, decision, agentRuntimeTestImageDelivery())
 	defer server.Close()
@@ -102,6 +103,21 @@ func TestSubmitAgentToolApprovalInvalidatesExpiredProposalAndRequeuesSameRun(t *
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := svc.RefreshExpiredAgentToolApproval(scope, AgentToolApprovalRefreshSubmission{
+		ToolCallID: "publish-expired-1", ActionVersion: 1, ProposalHash: record.ApprovalProposalHash,
+	}); err == nil || err.Error() != "agent tool approval proposal has not expired" {
+		t.Fatalf("active proposal refresh error = %v", err)
+	}
+	if _, err := svc.RefreshScopedExpiredAgentApproval(&model.User{ID: scope.ActorUserID}, scope.RunID, AgentToolApprovalRefreshSubmission{
+		ToolCallID: "publish-expired-1", ActionVersion: 1, ProposalHash: record.ApprovalProposalHash,
+	}); err == nil {
+		t.Fatal("active scoped proposal refresh unexpectedly succeeded")
+	} else {
+		var controlErr *AgentControlError
+		if !errors.As(err, &controlErr) || controlErr.Status != http.StatusConflict || controlErr.ErrorCode != "agent_approval_refresh_conflict" {
+			t.Fatalf("active scoped proposal refresh error = %#v", err)
+		}
+	}
 	proposal.ExpiresAt = time.Now().UTC().Add(-time.Minute)
 	payload, err := json.Marshal(proposal)
 	if err != nil {
@@ -119,10 +135,26 @@ func TestSubmitAgentToolApprovalInvalidatesExpiredProposalAndRequeuesSameRun(t *
 	if err := db.Model(&model.AgentToolCall{}).Where("id = ?", record.ID).Updates(expiredFacts).Error; err != nil {
 		t.Fatal(err)
 	}
+	expiredRuntimeState := waiting.State
+	if expiredRuntimeState.Limits == nil {
+		t.Fatal("runtime limits are missing")
+	}
+	expiredRuntimeState.Limits.StartedAt = time.Now().UTC().Add(-2 * time.Hour)
+	expiredRuntimeState.Limits.DeadlineAt = time.Now().UTC().Add(-time.Hour)
+	checkpointPayload, err := json.Marshal(expiredRuntimeState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentCheckpoint{}).
+		Where("run_id = ? AND state_version = ?", scope.RunID, waiting.State.StateVersion).
+		Update("state_json", string(checkpointPayload)).Error; err != nil {
+		t.Fatal(err)
+	}
+	renewedAfter := time.Now().UTC()
 
-	progress, err := svc.SubmitAgentToolApproval(scope, AgentToolApprovalSubmission{
+	progress, err := svc.RefreshExpiredAgentToolApproval(scope, AgentToolApprovalRefreshSubmission{
 		ToolCallID: "publish-expired-1", ActionVersion: 1,
-		Decision: agentruntime.ToolApprovalApproved, ProposalHash: proposalHash,
+		ProposalHash: proposalHash,
 	})
 	if err != nil {
 		t.Fatalf("expired proposal should become a factual tool result: %v", err)
@@ -131,6 +163,9 @@ func TestSubmitAgentToolApprovalInvalidatesExpiredProposalAndRequeuesSameRun(t *
 		progress.State.LastToolResult == nil || progress.State.LastToolResult.ErrorCode != agentruntime.ApprovalProposalExpired ||
 		progress.ModelTask == nil || progress.ModelTask.Status != model.TaskStatusQueued {
 		t.Fatalf("expired approval progress = %#v", progress)
+	}
+	if progress.State.Limits == nil || !progress.State.Limits.DeadlineAt.After(renewedAfter) {
+		t.Fatalf("expired approval did not renew the bounded runtime window: %#v", progress.State.Limits)
 	}
 	if err := db.First(record, "id = ?", record.ID).Error; err != nil {
 		t.Fatal(err)

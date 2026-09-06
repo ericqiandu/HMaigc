@@ -5,7 +5,83 @@ import (
 	"testing"
 
 	"infinite-canvas/backend/internal/agentruntime"
+	"infinite-canvas/backend/internal/model"
 )
+
+func TestAgentTimelineToolLifecyclePreservesToolIdentity(t *testing.T) {
+	call := &agentruntime.ToolCallDecision{
+		ToolCallID: "call-project", ToolName: agentruntime.ToolProjectApplyOps, ActionVersion: 1,
+	}
+	tests := []struct {
+		name     string
+		previous agentruntime.RuntimeState
+		current  agentruntime.RuntimeState
+		kind     agentruntime.EventKind
+	}{
+		{
+			name:    "tool started",
+			current: agentruntime.RuntimeState{PendingToolCall: call, PendingToolStarted: true},
+			kind:    agentruntime.EventToolStarted,
+		},
+		{
+			name:    "approval required",
+			current: agentruntime.RuntimeState{PendingToolCall: call},
+			kind:    agentruntime.EventApprovalRequired,
+		},
+		{
+			name:     "approval decided",
+			previous: agentruntime.RuntimeState{PendingToolCall: call},
+			kind:     agentruntime.EventApprovalDecided,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mutation, err := agentTimelineMutationForEvent("run-1", test.previous, test.current, test.kind, 4)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mutation == nil {
+				t.Fatal("tool lifecycle timeline mutation is missing")
+			}
+			var content struct {
+				ToolCallID string                `json:"toolCallId"`
+				ToolName   agentruntime.ToolName `json:"toolName"`
+			}
+			if err := json.Unmarshal(mutation.ContentJSON, &content); err != nil {
+				t.Fatal(err)
+			}
+			if content.ToolCallID != call.ToolCallID || content.ToolName != call.ToolName {
+				t.Fatalf("tool lifecycle identity = %#v", content)
+			}
+		})
+	}
+}
+
+func TestInterruptedToolLateResultCreatesImmutableSettlementItem(t *testing.T) {
+	call := &agentruntime.ToolCallDecision{
+		ToolCallID: "late-media", ToolName: agentruntime.ToolMediaGenerate, ActionVersion: 1,
+		Arguments: json.RawMessage(`{"mediaKind":"image"}`),
+	}
+	previous := agentruntime.RuntimeState{
+		Status: agentruntime.RunCancelled, PendingToolCall: call, PendingToolStarted: true,
+	}
+	current := previous
+	current.PendingToolCall = nil
+	current.PendingToolStarted = false
+	current.LastToolResult = &agentruntime.ToolResult{
+		ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion, Succeeded: true,
+		Output: json.RawMessage(`{"taskId":"late-task","billingOrderId":"late-order","mediaKind":"image","clientRequestId":"late-request","resources":[{"resourceId":"late-resource","kind":"image","url":"/api/resources/late-resource/file"}]}`),
+	}
+
+	mutation, err := agentTimelineMutationForEvent("late-run", previous, current, agentruntime.EventToolResult, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mutation == nil || mutation.Kind != model.AgentTimelineItemToolResult || mutation.FromStatus != nil ||
+		mutation.ToStatus != model.AgentTimelineItemCompleted || mutation.SourceEventSequence != 9 {
+		t.Fatalf("late result timeline mutation = %#v", mutation)
+	}
+}
 
 func TestAgentTimelineToolResultPublishesExactCanvasApplyOpsReceipt(t *testing.T) {
 	call := &agentruntime.ToolCallDecision{

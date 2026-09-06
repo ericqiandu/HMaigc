@@ -184,6 +184,68 @@ func TestCoordinatePendingCloudReadExecutesRegistryCapability(t *testing.T) {
 	}
 }
 
+func TestCoordinatePendingCloudReadsStopWhenFactsRepeatWithoutProgress(t *testing.T) {
+	server, _ := newAgentRuntimeDecisionServer(t, `{"kind":"final","final":{"message":"完成。","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
+	defer server.Close()
+	svc, db, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	scope := agentRuntimeServiceScope()
+	if err := db.Model(&model.CanvasProject{}).Where("id = ?", scope.CanvasID).
+		Update("payload_json", `{"nodes":[],"connections":[],"viewport":{"x":0,"y":0,"k":1}}`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: scope, ClientRequestID: "repeated-cloud-reads", UserMessage: "读取画布和资产后继续制作",
+		MaxSteps: 8, Configuration: AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionAutomatic},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	canvasArguments := json.RawMessage(`{"canvasId":"runtime-canvas","selectedNodeIds":[],"includeViewport":true}`)
+	assetsArguments := json.RawMessage(`{"domainProjectId":"runtime-project","resourceIds":[],"limit":100}`)
+	runRead := func(toolCallID string, toolName agentruntime.ToolName, arguments json.RawMessage) AgentRuntimeProgress {
+		t.Helper()
+		state, err := svc.repo.LoadAgentCheckpoint(scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requested, err := agentruntime.Advance(state, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+			Kind: agentruntime.DecisionToolCall,
+			ToolCall: &agentruntime.ToolCallDecision{
+				ToolCallID: toolCallID, ToolName: toolName, ActionVersion: 1,
+				Arguments: arguments, ExpectedDelivery: agentRuntimeTestAnswerDelivery(),
+			},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.repo.CommitAgentRuntimeTransition(scope, state, requested, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		progress, err := svc.coordinatePendingAgentTool(scope, CoordinateAgentToolInput{ToolCallID: toolCallID, ActionVersion: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return *progress
+	}
+
+	if progress := runRead("initial-canvas-read", agentruntime.ToolCanvasRead, canvasArguments); progress.State.LastToolResult == nil || !progress.State.LastToolResult.Succeeded {
+		t.Fatalf("initial canvas read = %#v", progress.State.LastToolResult)
+	}
+	if progress := runRead("initial-assets-read", agentruntime.ToolAssetsRead, assetsArguments); progress.State.LastToolResult == nil || !progress.State.LastToolResult.Succeeded {
+		t.Fatalf("initial assets read = %#v", progress.State.LastToolResult)
+	}
+	firstRepeat := runRead("repeated-canvas-read", agentruntime.ToolCanvasRead, canvasArguments)
+	if firstRepeat.State.Status != agentruntime.RunRunning || firstRepeat.State.LastToolResult == nil || firstRepeat.State.LastToolResult.Succeeded ||
+		firstRepeat.State.LastToolResult.ErrorCode != "tool_no_progress" {
+		t.Fatalf("first repeated read = status:%q result:%#v", firstRepeat.State.Status, firstRepeat.State.LastToolResult)
+	}
+	secondRepeat := runRead("repeated-assets-read", agentruntime.ToolAssetsRead, assetsArguments)
+	if secondRepeat.State.Status != agentruntime.RunFailed || secondRepeat.State.FailureCode != "tool_no_progress" || secondRepeat.State.LastToolResult == nil ||
+		secondRepeat.State.LastToolResult.Succeeded || secondRepeat.State.LastToolResult.ErrorCode != "tool_no_progress" {
+		t.Fatalf("second repeated read = status:%q failure:%q result:%#v", secondRepeat.State.Status, secondRepeat.State.FailureCode, secondRepeat.State.LastToolResult)
+	}
+}
+
 func TestCoordinatePendingAgentToolRejectsRetiredRunContractBeforeExecution(t *testing.T) {
 	server, _ := newAgentRuntimeDecisionServer(t, `{"kind":"final","final":{"message":"完成。","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
 	defer server.Close()

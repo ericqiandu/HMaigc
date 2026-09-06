@@ -463,6 +463,39 @@ func TestAgentRuntimePromptIncludesCompletedClarificationFacts(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimePromptNamesFrozenDeliveryWithoutConflictingWithDecisionField(t *testing.T) {
+	delivery := agentruntime.ExpectedDelivery{
+		Kind:               agentruntime.DeliveryMixed,
+		RequiredArtifacts:  []agentruntime.ArtifactKind{agentruntime.ArtifactVideo, agentruntime.ArtifactCanvasRevision},
+		TargetCanvasID:     "runtime-canvas",
+		CompletionCriteria: []agentruntime.DeliveryCriterion{{Fact: agentruntime.DeliveryFactCanvasBoundResource, Artifact: "video"}, {Fact: agentruntime.DeliveryFactCanvasRevision}},
+	}
+	state := agentruntime.RuntimeState{
+		StateVersion: 3, StepNumber: 2, MaxSteps: 8, Status: agentruntime.RunRunning,
+		UserMessage: "生成视频", ExpectedDelivery: &delivery,
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+	}
+	prompt, err := encodeAgentRuntimeModelPrompt(agentRuntimeServiceScope(), state, 7, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(prompt, agentRuntimeModelPromptPrefix)), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, found := raw["expectedDelivery"]; found {
+		t.Fatal("runtime context exposes expectedDelivery at the same level as the decision root")
+	}
+	encoded, found := raw["frozenExpectedDelivery"]
+	if !found {
+		t.Fatal("runtime context omitted frozenExpectedDelivery")
+	}
+	var actual agentruntime.ExpectedDelivery
+	if err := json.Unmarshal(encoded, &actual); err != nil || !actual.Equal(delivery) {
+		t.Fatalf("frozen delivery = %#v, error = %v", actual, err)
+	}
+}
+
 func TestEncodeCloudAgentRuntimePromptContainsOnlyAtomicCapabilities(t *testing.T) {
 	t.Parallel()
 
@@ -499,6 +532,8 @@ func TestEncodeCloudAgentRuntimePromptContainsOnlyAtomicCapabilities(t *testing.
 		agentruntime.ToolCanvasApplyOps,
 		agentruntime.ToolAssetsRead,
 		agentruntime.ToolAssetsPublish,
+		agentruntime.ToolProjectRead,
+		agentruntime.ToolProjectApplyOps,
 		agentruntime.ToolMediaGenerate,
 		agentruntime.ToolVisionAnalyze,
 		agentruntime.ToolSkillsLoad,
@@ -544,7 +579,7 @@ func TestCloudAgentRuntimeSystemPromptExposesOnlyAtomicCapabilities(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"canvas.read", "canvas.apply_ops", "assets.read", "assets.publish", "media.generate", "vision.analyze", "skills.load"} {
+	for _, required := range []string{"canvas.read", "canvas.apply_ops", "assets.read", "assets.publish", "project.read", "project.apply_ops", "media.generate", "vision.analyze", "skills.load"} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("cloud system prompt is missing %q", required)
 		}
@@ -585,12 +620,119 @@ func TestAgentRuntimeSystemPromptDeclaresStructuredClarificationDecision(t *test
 func TestAgentRuntimeSystemPromptRequiresCompletionFromAccumulatedEvidence(t *testing.T) {
 	for _, required := range []string{
 		"deliveryEvidence 与 deliveryVerification",
+		"observedToolFacts 保存本轮",
+		"必须与 lastToolResult 一起复用",
 		"已经满足的 criterion 禁止重复执行",
 		"missingCriteria 只剩 final_message 时必须直接返回 final",
 	} {
 		if !strings.Contains(agentRuntimeCloudSystemPrompt, required) {
 			t.Fatalf("agent runtime system prompt is missing %q", required)
 		}
+	}
+}
+
+func TestAgentRuntimeObservedReadFactsPreserveCurrentEpochAcrossFailedRepeat(t *testing.T) {
+	calls := []model.AgentToolCall{
+		{
+			ToolCallID: "read-canvas", ActionVersion: 1, ToolName: string(agentruntime.ToolCanvasRead),
+			Status: agentruntime.ToolCallSucceeded, RiskLevel: agentruntime.ToolRiskRead,
+			InputJSON:  `{"canvasId":"canvas-1","selectedNodeIds":[],"includeViewport":true}`,
+			OutputJSON: `{"revision":7,"nodes":[{"id":"script-1","type":"script"}]}`,
+		},
+		{
+			ToolCallID: "read-assets", ActionVersion: 1, ToolName: string(agentruntime.ToolAssetsRead),
+			Status: agentruntime.ToolCallSucceeded, RiskLevel: agentruntime.ToolRiskRead,
+			InputJSON:  `{"domainProjectId":"project-1","resourceIds":[],"limit":100}`,
+			OutputJSON: `{"assets":[{"id":"role-linxia","resourceId":"resource-linxia"}]}`,
+		},
+		{
+			ToolCallID: "repeat-canvas", ActionVersion: 1, ToolName: string(agentruntime.ToolCanvasRead),
+			Status: agentruntime.ToolCallFailed, RiskLevel: agentruntime.ToolRiskRead, ErrorCode: "tool_no_progress",
+			InputJSON:  `{"canvasId":"canvas-1","selectedNodeIds":[],"includeViewport":true}`,
+			OutputJSON: `{"reason":"identical read facts were already observed"}`,
+		},
+	}
+	lastResult := &agentruntime.ToolResult{
+		ToolCallID: "repeat-canvas", ActionVersion: 1, Succeeded: false,
+		Output: json.RawMessage(`{"reason":"identical read facts were already observed"}`), ErrorCode: "tool_no_progress",
+	}
+
+	facts, err := agentRuntimeObservedReadFacts(calls, lastResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts) != 2 {
+		t.Fatalf("observed read facts = %#v", facts)
+	}
+	if facts[0].ToolName != agentruntime.ToolCanvasRead || facts[1].ToolName != agentruntime.ToolAssetsRead {
+		t.Fatalf("observed read fact order = %#v", facts)
+	}
+	if !strings.Contains(string(facts[0].Output), `"script-1"`) || !strings.Contains(string(facts[1].Output), `"resource-linxia"`) {
+		t.Fatalf("observed read outputs = %#v", facts)
+	}
+}
+
+func TestAgentRuntimeObservedReadFactsResetAfterSuccessfulMutation(t *testing.T) {
+	calls := []model.AgentToolCall{
+		{
+			ToolCallID: "read-before-write", ActionVersion: 1, ToolName: string(agentruntime.ToolCanvasRead),
+			Status: agentruntime.ToolCallSucceeded, RiskLevel: agentruntime.ToolRiskRead,
+			InputJSON:  `{"canvasId":"canvas-1","selectedNodeIds":[],"includeViewport":true}`,
+			OutputJSON: `{"revision":7}`,
+		},
+		{
+			ToolCallID: "write-canvas", ActionVersion: 1, ToolName: string(agentruntime.ToolCanvasApplyOps),
+			Status: agentruntime.ToolCallSucceeded, RiskLevel: agentruntime.ToolRiskWrite,
+			InputJSON:  `{"canvasId":"canvas-1","baseRevision":7,"clientMutationId":"mutation-1","operations":[]}`,
+			OutputJSON: `{"revision":8}`,
+		},
+		{
+			ToolCallID: "read-after-write", ActionVersion: 1, ToolName: string(agentruntime.ToolCanvasRead),
+			Status: agentruntime.ToolCallSucceeded, RiskLevel: agentruntime.ToolRiskRead,
+			InputJSON:  `{"canvasId":"canvas-1","selectedNodeIds":[],"includeViewport":true}`,
+			OutputJSON: `{"revision":8}`,
+		},
+	}
+
+	facts, err := agentRuntimeObservedReadFacts(calls, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts) != 1 || facts[0].ToolCallID != "read-after-write" || !strings.Contains(string(facts[0].Output), `"revision":8`) {
+		t.Fatalf("observed read facts after write = %#v", facts)
+	}
+}
+
+func TestEncodeAgentRuntimeModelPromptCarriesObservedReadFacts(t *testing.T) {
+	state := agentruntime.RuntimeState{
+		StateVersion: 3, StepNumber: 2, MaxSteps: 8, Status: agentruntime.RunRunning,
+		UserMessage:   "生成当前章节的第一张分镜图",
+		Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionAutomatic},
+		LastToolResult: &agentruntime.ToolResult{
+			ToolCallID: "read-assets", ActionVersion: 1, Succeeded: true,
+			Output: json.RawMessage(`{"assets":[{"resourceId":"role-linxia"}]}`),
+		},
+	}
+	facts := []agentRuntimeObservedToolFact{
+		{
+			ToolCallID: "read-canvas", ToolName: agentruntime.ToolCanvasRead, ActionVersion: 1,
+			Arguments: json.RawMessage(`{"canvasId":"runtime-canvas","includeViewport":true,"selectedNodeIds":[]}`),
+			Output:    json.RawMessage(`{"nodes":[{"id":"script-1"}],"revision":7}`),
+		},
+	}
+
+	prompt, err := encodeAgentRuntimeModelPromptWithObservedFacts(
+		agentRuntimeServiceScope(), state, 7, nil, nil, nil, facts,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	context := decodeAgentRuntimePromptContextForTest(t, prompt)
+	if len(context.ObservedToolFacts) != 1 || context.ObservedToolFacts[0].ToolCallID != "read-canvas" {
+		t.Fatalf("observed tool facts = %#v", context.ObservedToolFacts)
+	}
+	if _, err := frozenAgentRuntimeModelContext(agentRuntimeServiceScope(), state, prompt); err != nil {
+		t.Fatalf("frozen prompt rejected observed tool facts: %v", err)
 	}
 }
 
@@ -604,8 +746,9 @@ func TestAgentRuntimeSystemPromptDeclaresFinalDeliveryAndMediaCanvasLifecycle(t 
 		"先通过 canvas.apply_ops 创建目标媒体占位节点",
 		`metadata.agentRunId 必须使用本轮 scope.runId`,
 		`metadata.prompt 与 metadata.composerContent 必须逐字使用随后 media.generate 的 parameters.prompt`,
-		"再通过 canvas.apply_ops 把返回的资源事实写入同一目标节点",
-		"当前节点 metadata.prompt 与 metadata.composerContent 均与已批准生成提示逐字一致",
+		"服务端会在返回能力结果前把主 Resource 确定性回填到已批准的同一目标节点",
+		"相同能力重放只验证并复用该绑定，不得再发起 canvas.apply_ops 或再次生成",
+		"canvas_bound_resource 仍要求当前节点的 Resource、Task 与提示词事实均与已批准调用一致",
 	} {
 		if !strings.Contains(agentRuntimeCloudSystemPrompt, required) {
 			t.Fatalf("agent runtime system prompt is missing %q", required)
@@ -632,6 +775,7 @@ type agentRuntimePromptContextForTest struct {
 	Configuration        agentruntime.RunConfiguration         `json:"configuration"`
 	LoadedSkillDirs      []string                              `json:"loadedSkillDirs"`
 	ClarificationHistory []agentruntime.CompletedClarification `json:"clarificationHistory"`
+	ObservedToolFacts    []agentRuntimeObservedToolFact        `json:"observedToolFacts"`
 	CallableTools        []agentRuntimeCallableToolFact        `json:"callableTools"`
 	CallableModels       []struct {
 		ChannelID             string                      `json:"channelId"`

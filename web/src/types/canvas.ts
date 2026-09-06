@@ -225,6 +225,17 @@ export type CanvasNodeMetadata = {
     actionBoardRows?: number;
     actionBoardColumns?: number;
     agentRunId?: string;
+    generationEvidence?: {
+        runId: string;
+        toolCallId: string;
+        actionVersion: number;
+        taskId: string;
+        billingOrderId: string;
+        resourceId: string;
+        clientRequestId: string;
+        modelRecordId: string;
+        modelKey: string;
+    };
     taskId?: string;
     taskStatus?: "queued" | "running" | "succeeded" | "failed" | "cancelled" | string;
     taskProgress?: number;
@@ -350,7 +361,7 @@ export type CanvasAgentSkillSelection = {
 
 export type CanvasAgentLaunchRequest = {
     id: string;
-    source: "home";
+    source: "home" | "project_chapter";
     prompt: string;
     attachments: Array<{ resourceId: string; name: string }>;
     generationModels: CanvasAgentGenerationModels;

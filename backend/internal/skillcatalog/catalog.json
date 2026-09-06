@@ -1,6 +1,26 @@
 {
   "skills": [
     {
+      "dir": "project-chapter-structure",
+      "version": 1,
+      "name": "项目章节结构化",
+      "description": "把章节正文提取为待确认角色候选或可编辑分镜，并原子写回项目。",
+      "icon": "list-tree",
+      "coverUrl": "",
+      "categories": ["项目", "章节", "角色", "分镜"],
+      "visibility": "public",
+      "sourceKind": "original",
+      "sourceUrl": "",
+      "sourceRevision": "hmaigc-v1",
+      "sourceLicense": "HMaigc-Proprietary",
+      "changelog": "发布章节角色候选与分镜草案的 Agent 原子写回链路",
+      "capabilityManifest": {
+        "specialists": ["asset", "narrative", "storyboard"],
+        "tools": ["project.apply_ops"],
+        "artifactSchemas": ["project_structure.v1"]
+      }
+    },
+    {
       "dir": "short-drama-director",
       "version": 6,
       "name": "短剧总导演",

@@ -18,6 +18,10 @@ func validCapabilityArgumentsForTest(tool agentruntime.ToolName) json.RawMessage
 		return json.RawMessage(`{"domainProjectId":"project-1","resourceIds":[],"limit":20}`)
 	case agentruntime.ToolAssetsPublish:
 		return json.RawMessage(`{"resourceId":"resource-1","domainProjectId":"project-1","displayName":"资产","clientMutationId":"publish-1"}`)
+	case agentruntime.ToolProjectRead:
+		return json.RawMessage(`{"domainProjectId":"project-1","canvasId":"canvas-1"}`)
+	case agentruntime.ToolProjectApplyOps:
+		return json.RawMessage(`{"domainProjectId":"project-1","baseRevision":1,"clientMutationId":"project-1","operations":[{"operationId":"shots","type":"replace_unit_shots","unitId":"unit-1","shots":[{"title":"镜头","description":"场景描述","durationMs":5000}]}]}`)
 	case agentruntime.ToolMediaGenerate:
 		return json.RawMessage(`{"mediaKind":"image","modelRecordId":"model-record-1","modelKey":"image-model","parameters":{"prompt":"主视觉"},"sourceResourceIds":[],"targetCanvasNodeId":"node-1","clientRequestId":"media-1"}`)
 	case agentruntime.ToolVisionAnalyze:
@@ -63,6 +67,11 @@ func TestCapabilityArgumentsDecodeExactCurrentContracts(t *testing.T) {
 			name:    "assets publish",
 			tool:    agentruntime.ToolAssetsPublish,
 			payload: `{"resourceId":"resource-1","domainProjectId":"project-1","displayName":"角色立绘","clientMutationId":"publish-1"}`,
+		},
+		{
+			name:    "project read",
+			tool:    agentruntime.ToolProjectRead,
+			payload: `{"domainProjectId":"project-1","canvasId":"canvas-1"}`,
 		},
 		{
 			name: "media generate",

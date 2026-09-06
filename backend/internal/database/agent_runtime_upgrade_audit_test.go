@@ -10,6 +10,19 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+func TestToolSchemaV10CutoverClassifiesPreviousProjectContracts(t *testing.T) {
+	for _, schema := range []int{agentruntime.RetiredProjectToolSchemaVersion, agentruntime.RetiredProjectMutationToolSchemaVersion} {
+		run := model.AgentRun{
+			ToolSchemaVersion: schema,
+			RuntimeVersion:    agentruntime.CurrentRuntimeVersion,
+			PolicyVersion:     agentruntime.CurrentPolicyVersion,
+		}
+		if contract := queuedRunRetirementContract(run); contract != queuedRunContractCurrent {
+			t.Fatalf("schema %d retirement contract = %q", schema, contract)
+		}
+	}
+}
+
 func TestToolSchemaV8CutoverRetiresSafeV7RunsAndPreservesCurrentAndTerminalFacts(t *testing.T) {
 	db := openAgentRuntimeSchemaSQLite(t)
 	if err := MigrateBaseSchema(db); err != nil {

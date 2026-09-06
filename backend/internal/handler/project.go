@@ -311,7 +311,7 @@ func RegisterProjectRoutes(r *gin.RouterGroup, svc *service.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		link, err := svc.LinkCanvasUnit(user.ID, c.Param("id"), req)
+		link, projectRevision, err := svc.LinkCanvasUnit(user.ID, c.Param("id"), req)
 		if err != nil {
 			if service.IsProjectNotFound(err) {
 				fail(c, http.StatusNotFound, err)
@@ -320,7 +320,7 @@ func RegisterProjectRoutes(r *gin.RouterGroup, svc *service.Service) {
 			failService(c, err)
 			return
 		}
-		ok(c, gin.H{"link": link})
+		ok(c, gin.H{"link": link, "projectRevision": projectRevision})
 	})
 	r.DELETE("/projects/:id/canvas-links/:canvasId/units/:unitId", func(c *gin.Context) {
 		user, err := currentUser(c, svc)

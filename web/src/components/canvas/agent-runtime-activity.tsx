@@ -2,7 +2,7 @@ import { CircleAlert, CircleCheck, LoaderCircle } from "lucide-react";
 
 import { agentRuntimeUserErrorMessage, agentVisionAnalyzeResultFromToolResult } from "@/lib/canvas/canvas-agent-runtime-event";
 import { isAgentToolName, type AgentToolName } from "@/services/api/agent-capabilities";
-import type { AgentRuntimeEvent, AgentRuntimeView, AgentThreadHistoryTurn, AgentTimelineItemStatus, AgentVisionAnalyzeResult } from "@/services/api/agent-runtime";
+import { isAgentInterruptedToolSettlement, type AgentRuntimeEvent, type AgentRuntimeView, type AgentThreadHistoryTurn, type AgentTimelineItemStatus, type AgentVisionAnalyzeResult } from "@/services/api/agent-runtime";
 
 type AgentActivityStatus = AgentTimelineItemStatus | "invalid";
 
@@ -18,6 +18,7 @@ type AgentActivityFact = {
     visionStage?: "preparing" | "waiting_approval" | "running";
     visionResourceCount?: number;
     visionResult?: AgentVisionAnalyzeResult;
+    settlementPending?: boolean;
 };
 
 type AgentGeneratedResource = {
@@ -52,7 +53,39 @@ export function collectAgentActivityFacts(runId: string, turns: AgentThreadHisto
         byItemId.set(event.itemId, activityFact(event.itemId, event.sequence, status, event.payload));
     });
 
+    if (view?.run.id === runId && view.state.lastToolResult) {
+        const authoritativeResult = view.state.lastToolResult;
+        const existing = Array.from(byItemId.values()).find((activity) => activity.toolCallId === authoritativeResult.toolCallId);
+        if (existing?.toolName) {
+            const content = {
+                toolName: existing.toolName,
+                toolCallId: authoritativeResult.toolCallId,
+                actionVersion: authoritativeResult.actionVersion,
+                succeeded: authoritativeResult.succeeded,
+                output: authoritativeResult.output,
+                ...(authoritativeResult.errorCode ? { errorCode: authoritativeResult.errorCode } : {}),
+            };
+            byItemId.set(
+                existing.id,
+                activityFact(existing.id, Math.max(existing.sequence, view.run.lastEventSequence), authoritativeResult.succeeded ? "completed" : "failed", content),
+            );
+        }
+    }
+
     const pendingCall = view?.run.id === runId ? view.state.pendingToolCall : undefined;
+    const interruptedCall = view?.run.id === runId && isAgentInterruptedToolSettlement(view.state) ? view.state.pendingToolCall : undefined;
+    if (interruptedCall) {
+        const existing = Array.from(byItemId.values()).find((activity) => activity.toolCallId === interruptedCall.toolCallId);
+        const id = existing?.id ?? `interrupted-${interruptedCall.toolCallId}`;
+        byItemId.set(id, {
+            id,
+            sequence: Math.max(existing?.sequence ?? 0, view?.run.lastEventSequence ?? 0),
+            status: "interrupted",
+            toolName: interruptedCall.toolName,
+            toolCallId: interruptedCall.toolCallId,
+            settlementPending: true,
+        });
+    }
     if (pendingCall?.toolName === "vision.analyze" && "sourceResourceIds" in pendingCall.arguments && (view?.state.status === "waiting_approval" || view?.state.status === "waiting_tool")) {
         const existing = Array.from(byItemId.values()).find((activity) => activity.toolCallId === pendingCall.toolCallId);
         const id = existing?.id ?? `vision-${pendingCall.toolCallId}`;
@@ -164,6 +197,7 @@ function AgentGeneratedResourcePreview({ resource }: { resource: AgentGeneratedR
 
 function activityTitle(activity: AgentActivityFact): string {
     if (activity.status === "invalid") return "工具事实不可读取";
+    if (activity.settlementPending) return activity.toolName === "media.generate" || activity.toolName === "vision.analyze" ? "已停止，等待结算" : "已停止，等待工具结果";
     if (activity.toolName === "vision.analyze") {
         if (activity.visionStage === "waiting_approval") return "等待费用确认";
         if (activity.visionStage === "preparing") return "准备理解图片";
@@ -174,13 +208,19 @@ function activityTitle(activity: AgentActivityFact): string {
         return "图片理解失败";
     }
     if (activity.status === "in_progress") return "工具正在执行";
-    if (activity.status !== "completed") return activity.toolName === "canvas.apply_ops" ? "画布写入失败" : "工具执行失败";
+    if (activity.status !== "completed") {
+        if (activity.toolName === "canvas.apply_ops") return "画布写入失败";
+        if (activity.toolName === "project.apply_ops") return "项目写入失败";
+        return "工具执行失败";
+    }
     if (activity.toolName === "canvas.read") return "已读取画布";
     if (activity.toolName === "assets.read") return "已读取资产";
     if (activity.toolName === "skills.load") return "已加载 Skill";
     if (activity.toolName === "canvas.apply_ops") return "画布变更已提交";
+    if (activity.toolName === "project.apply_ops") return "项目变更已提交";
     if (activity.toolName === "assets.publish") return "资产已发布";
-    return "媒体已生成";
+    if (activity.toolName === "media.generate") return "媒体已生成";
+    return "工具执行完成";
 }
 
 function activityErrorMessage(activity: AgentActivityFact): string | undefined {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/repository"
 
 	"gorm.io/gorm"
 )
@@ -384,23 +385,25 @@ func (s *Service) UpdateProjectUnit(userID string, projectID string, unitID stri
 	return *unit, nil
 }
 
-func (s *Service) LinkCanvasUnit(userID string, projectID string, req LinkCanvasUnitRequest) (model.CanvasUnitLink, error) {
-	if _, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now()); err != nil {
-		return model.CanvasUnitLink{}, err
+func (s *Service) LinkCanvasUnit(userID string, projectID string, req LinkCanvasUnitRequest) (model.CanvasUnitLink, int64, error) {
+	project, err := s.repo.ProjectEditableForUser(userID, projectID, time.Now())
+	if err != nil {
+		return model.CanvasUnitLink{}, 0, err
 	}
 	canvasID := strings.TrimSpace(req.CanvasID)
 	unitID := strings.TrimSpace(req.UnitID)
 	if canvasID == "" || unitID == "" {
-		return model.CanvasUnitLink{}, BadAuthRequest("画布和章节不能为空")
+		return model.CanvasUnitLink{}, 0, BadAuthRequest("画布和章节不能为空")
 	}
-	if _, err := s.repo.CanvasProjectForUser(userID, canvasID); err != nil {
-		return model.CanvasUnitLink{}, err
+	canvas, err := s.repo.CanvasProjectForUser(userID, canvasID)
+	if err != nil {
+		return model.CanvasUnitLink{}, 0, err
+	}
+	if canvas.TeamID != project.TeamID || (canvas.ProjectID != "" && canvas.ProjectID != projectID) {
+		return model.CanvasUnitLink{}, 0, BadAuthRequest("画布已属于其他项目")
 	}
 	if _, err := s.repo.ProjectUnit(projectID, unitID); err != nil {
-		return model.CanvasUnitLink{}, err
-	}
-	if err := s.repo.AssignCanvasToProject(userID, canvasID, projectID); err != nil {
-		return model.CanvasUnitLink{}, err
+		return model.CanvasUnitLink{}, 0, err
 	}
 	role := strings.TrimSpace(req.Role)
 	if role == "" {
@@ -408,13 +411,14 @@ func (s *Service) LinkCanvasUnit(userID string, projectID string, req LinkCanvas
 	}
 	now := time.Now()
 	link := model.CanvasUnitLink{ID: newID(), ProjectID: projectID, CanvasID: canvasID, UnitID: unitID, Role: role, CreatedAt: now}
-	if err := s.repo.UpsertCanvasUnitLink(&link); err != nil {
-		return model.CanvasUnitLink{}, err
+	projectRevision, err := s.repo.LinkCanvasUnit(userID, &link, now)
+	if errors.Is(err, repository.ErrCanvasProjectScopeConflict) {
+		return model.CanvasUnitLink{}, 0, BadAuthRequest("画布已属于其他项目")
 	}
-	if err := s.repo.BumpProjectRevision(projectID); err != nil {
-		return model.CanvasUnitLink{}, err
+	if err != nil {
+		return model.CanvasUnitLink{}, 0, err
 	}
-	return link, nil
+	return link, projectRevision, nil
 }
 
 func (s *Service) UnlinkCanvasUnit(userID string, projectID string, canvasID string, unitID string) error {

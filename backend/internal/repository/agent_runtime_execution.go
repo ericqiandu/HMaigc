@@ -480,9 +480,32 @@ func (r *Repository) commitAgentRuntimeTransitionTx(
 		if err != nil {
 			return err
 		}
+		if kind == agentruntime.EventAgentMessageFailed && transition.MessageFailure != nil {
+			encodedFailure, encodeErr := json.Marshal(agentMessageFailurePayload{
+				ItemID:  agentruntime.AgentMessageItemID(scope.RunID, transition.MessageFailure.StepNumber),
+				Message: transition.MessageFailure.Message, FailureCode: transition.MessageFailure.FailureCode,
+			})
+			if encodeErr != nil {
+				return encodeErr
+			}
+			eventPayload = string(encodedFailure)
+		}
 		event := model.AgentRunEvent{ID: agentFactID("event", scope.RunID, strconv.FormatInt(sequence, 10)), RunID: scope.RunID, Sequence: sequence, Kind: kind, PayloadJSON: eventPayload, CreatedAt: now}
 		if err := tx.Create(&event).Error; err != nil {
 			return err
+		}
+		if kind == agentruntime.EventAgentMessageFailed {
+			mutation, mutationErr := agentTimelineMutationForStoredEvent(scope.RunID, event, nil)
+			if mutationErr != nil {
+				return mutationErr
+			}
+			if mutation == nil {
+				return errors.New("agent message failure timeline mutation is missing")
+			}
+			if mutationErr := persistAgentTimelineMutation(tx, scope, *mutation, &nextTimelineOrdinal, now); mutationErr != nil {
+				return mutationErr
+			}
+			continue
 		}
 		if err := persistAgentTimelineEvent(tx, scope, eventPrevious, eventState, kind, sequence, &nextTimelineOrdinal, now); err != nil {
 			return err
@@ -674,6 +697,34 @@ func validateAgentRuntimeTransition(scope agentruntime.Scope, previous agentrunt
 	for _, kind := range transition.EventKinds {
 		if !kind.Valid() {
 			return errors.New("agent runtime transition event kind is invalid")
+		}
+	}
+	messageFailureEvents := 0
+	for _, kind := range transition.EventKinds {
+		if kind == agentruntime.EventAgentMessageFailed {
+			messageFailureEvents++
+		}
+	}
+	if transition.MessageFailure == nil {
+		if messageFailureEvents != 0 {
+			return errors.New("agent message failure transition facts are missing")
+		}
+	} else {
+		failure := transition.MessageFailure
+		if messageFailureEvents != 1 || failure.StepNumber != previous.StepNumber ||
+			strings.TrimSpace(failure.Message) == "" || strings.TrimSpace(failure.FailureCode) == "" ||
+			state.DecisionFeedback == nil || failure.FailureCode != state.DecisionFeedback.Code {
+			return errors.New("agent message failure transition is invalid")
+		}
+		modelRejected := false
+		for _, kind := range transition.EventKinds {
+			if kind == agentruntime.EventModelRejected {
+				modelRejected = true
+				break
+			}
+		}
+		if !modelRejected {
+			return errors.New("agent message failure lacks a model rejection")
 		}
 	}
 	if transition.RejectedToolCall != nil {

@@ -89,7 +89,10 @@ node canvas-agent/dist/index.js serve
 - `media.generate` 仍由 HMaigc 后端冻结模型、价格和积分报价，并负责预留、结算、释放、退款与审计；批准前不会创建付费媒体任务。
 - 图片、视频或音频生成前，Codex 必须先通过 `canvas.apply_ops` 把本次 `parameters.prompt` 逐字写入目标媒体节点的 `metadata.prompt` 与初始 `metadata.composerContent`；生成成功后的资源回填使用字段级 metadata 补丁并保留提示词。当前画布缺失或改变该权威提示词时，`canvas_bound_resource` 不成立；Codex 必须修复同一节点，或在用户确实要求改提示词时完成一次新的媒体生成后才能结束。
 - 媒体请求必须在断线重试时复用原 `clientRequestId` 与 `targetCanvasNodeId`，并保持全部生成参数完全一致。后端会重读原始 Task、账单与 Resource：已成功则直接回放结果且不再次审批/扣费，仍在执行则明确返回“正在运行”，同一请求身份参数不一致则明确报冲突。客户端不得通过生成新请求 ID 绕过这些结果。
-- 六种 MCP 工具分别发布与后端规范契约一致的闭合输入 Schema；媒体身份、画布操作联合类型与 Skill 校验字段必须由 Codex 按 Schema 提交，未知字段和缺失字段都会显式失败。
+- 八种 MCP 工具分别发布与后端规范契约一致的闭合输入 Schema；媒体身份、画布操作联合类型、项目读取作用域、项目操作联合类型与 Skill 校验字段必须由 Codex 按 Schema 提交，未知字段和缺失字段都会显式失败。
+- Codex 的运行时指令完整声明 `answer`、`canvas_change`、`project_change`、`generated_asset` 与 `mixed` 五类通用交付不变量；工具提案与最终决策必须使用同一份 `expectedDelivery`。结构化输出用 `null` 表示缺省字段时，MCP 传输边界只把这些 `null` 规范化为字段缺省，绝不删除或改写非空交付事实，语义冲突仍由后端显式拒绝。
+- `project_apply_ops` 对应后端 `project.apply_ops`，只允许修改当前画布权威绑定的项目；角色候选创建与章节镜头替换都必须经过用户对冻结提案的批准，并由后端在单一事务内完成所有权、base revision、幂等回执和项目 revision/CAS 校验。
+- `project_read` 对应后端 `project.read`，只读返回当前画布关联章节的原文与结构化镜头，以及项目内已确认角色版本和 Resource 证据；项目 ID 与画布 ID 必须同时匹配本轮冻结作用域。
 - 网站 Agent 专属的 `vision.analyze` 不在本机 MCP 能力面中；本机 Run 不依赖管理员默认视觉模型配置。
 - `canvas_get_state` 的权威结果同时包含当前 `domainProjectId` 与服务器生成的可调用媒体模型事实；`assets_*` 和 `media_generate` 必须复用这些返回值，禁止把 canvas ID 当作项目 ID、猜测模型记录或读取本地静态模型表。
 - 回环令牌只通过 Codex MCP 的环境变量白名单传入 MCP 子进程，不写入 Codex MCP 配置值、命令行参数或日志。

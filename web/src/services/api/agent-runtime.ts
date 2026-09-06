@@ -21,17 +21,18 @@ export type AgentRunStatus = "queued" | "running" | "waiting_input" | "waiting_a
 export type AgentReasoningHost = "managed" | "local_codex";
 export type AgentRuntimeEventKind = "run.started" | "run.completed" | "run.failed" | "run.interrupted" | "item.started" | "item.delta" | "item.completed" | "item.failed" | "approval.requested" | "approval.resolved" | "state.snapshot";
 export type AgentArtifactKind = "image" | "video" | "audio" | "text" | "canvas_revision";
-export type AgentDeliveryFact = "final_message" | "canvas_revision" | "artifact" | "artifact_revision" | "resource" | "task_backed_resource" | "canvas_bound_resource" | "publication";
+export type AgentDeliveryFact = "final_message" | "canvas_revision" | "project_revision" | "artifact" | "artifact_revision" | "resource" | "task_backed_resource" | "canvas_bound_resource" | "publication";
 
 export type AgentExpectedDelivery = {
-    kind: "answer" | "canvas_change" | "generated_asset" | "mixed";
+    kind: "answer" | "canvas_change" | "generated_asset" | "project_change" | "mixed";
     requiredArtifacts?: AgentArtifactKind[];
     targetCanvasId?: string;
+    targetProjectId?: string;
     completionCriteria: Array<{ fact: AgentDeliveryFact; artifact?: AgentArtifactKind }>;
 };
 export type AgentToolCall = { toolCallId: string; toolName: AgentToolName; actionVersion: number; arguments: AgentCapabilityArguments; expectedDelivery: AgentExpectedDelivery };
 export type AgentModelDecision = { kind: "final"; final: { message: string; expectedDelivery: AgentExpectedDelivery } } | { kind: "tool_call"; toolCall: AgentToolCall } | { kind: "clarification_request"; clarification: AgentClarificationRequest };
-export type AgentApprovalEffect = { kind: "canvas_mutation" | "asset_publish" | "media_generation" | "vision_analysis"; summary: string; targetIds: string[] };
+export type AgentApprovalEffect = { kind: "canvas_mutation" | "project_mutation" | "asset_publish" | "media_generation" | "vision_analysis"; summary: string; targetIds: string[] };
 export type AgentApprovalCostQuote = { modelRecordId: string; modelKey: string; priceVersion: number; amountMicrocredits: number };
 export type AgentPendingApproval = {
     toolCallId: string;
@@ -48,6 +49,7 @@ export type AgentApprovalSubmission = {
     proposalHash: string;
     decision: "approved" | "rejected";
 };
+export type AgentApprovalRefreshSubmission = Omit<AgentApprovalSubmission, "decision">;
 export type AgentDeliveryVerification = { status: "satisfied" | "repairable" | "failed"; rationale: string; missingCriteria?: Array<{ fact: string; artifact?: string }> };
 export type AgentRuntimeGenerationModelSelection = { channelId: string; model: string };
 export type AgentRuntimeGenerationModelSelections = { image?: AgentRuntimeGenerationModelSelection; video?: AgentRuntimeGenerationModelSelection };
@@ -174,6 +176,7 @@ export type AgentRuntimeClient = {
     steer: (runId: string, input: { clientRequestId: string; message: string; expectedStateVersion: number }) => Promise<AgentRuntimeView>;
     interrupt: (runId: string, input: { expectedStateVersion: number }) => Promise<AgentRuntimeView>;
     submitApproval: (runId: string, input: { toolCallId: string; actionVersion: number; decision: "approved" | "rejected"; proposalHash: string }) => Promise<AgentRuntimeView>;
+    refreshExpiredApproval: (runId: string, input: AgentApprovalRefreshSubmission) => Promise<AgentRuntimeView>;
     submitClarificationResponse: (runId: string, requestId: string, input: { expectedStateVersion: number; questionId: string; answer: AgentClarificationAnswerInput; complete: boolean }) => Promise<AgentRuntimeView>;
     subscribe: (runId: string, afterSequence: number, handlers: { onOpen?: () => void; onEvent: (event: AgentRuntimeEvent) => void; onError: (error?: Error) => void }) => () => void;
 };
@@ -202,17 +205,18 @@ const eventKinds = new Set<AgentRuntimeEventKind>(["run.started", "run.completed
 const runEventKinds = new Set<AgentRuntimeEventKind>(["run.started", "run.completed", "run.failed", "run.interrupted", "state.snapshot"]);
 const timelineItemKinds = new Set<AgentTimelineItemKind>(["user_message", "agent_message", "status", "clarification", "tool_call", "tool_result", "approval", "artifact", "error"]);
 const timelineItemStatuses = new Set<AgentTimelineItemStatus>(["in_progress", "completed", "failed", "declined", "interrupted"]);
-const deliveryFacts = new Set(["final_message", "canvas_revision", "artifact", "artifact_revision", "resource", "task_backed_resource", "canvas_bound_resource", "publication"]);
+const deliveryFacts = new Set(["final_message", "canvas_revision", "project_revision", "artifact", "artifact_revision", "resource", "task_backed_resource", "canvas_bound_resource", "publication"]);
 const artifactKinds = new Set(["image", "video", "audio", "text", "canvas_revision"]);
 const isoInstantPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/;
 const baseURL = String(import.meta.env.VITE_CANVAS_BACKEND_URL || "/api").replace(/\/+$/, "");
 const currentRuntimeVersion = 5;
 const currentPolicyVersion = 5;
-const currentToolSchemaVersion = 8;
+const currentToolSchemaVersion = 10;
 const currentAgentUIProtocolVersion = 5;
 const retiredRuntimeVersion = 3;
 const retiredPolicyVersion = 3;
 const retiredToolSchemaVersion = 4;
+const retiredCurrentRuntimeToolSchemaVersions = new Set([7, 8, 9]);
 
 export class AgentRuntimeRequestError extends Error {
     readonly status: number;
@@ -264,7 +268,10 @@ export function parseAgentRuntimeView(value: unknown): AgentRuntimeView {
     }
     const isTerminal = terminalRunStatuses.has(parsedRun.status) && parsedRun.completedAt !== undefined;
     const isCurrentContract = parsedRun.runtimeVersion === currentRuntimeVersion && parsedRun.policyVersion === currentPolicyVersion && parsedRun.toolSchemaVersion === currentToolSchemaVersion;
-    const isRetiredReadOnlyContract = isTerminal && parsedRun.runtimeVersion === retiredRuntimeVersion && parsedRun.policyVersion === retiredPolicyVersion && parsedRun.toolSchemaVersion === retiredToolSchemaVersion;
+    const isRetiredReadOnlyContract =
+        isTerminal &&
+        ((parsedRun.runtimeVersion === retiredRuntimeVersion && parsedRun.policyVersion === retiredPolicyVersion && parsedRun.toolSchemaVersion === retiredToolSchemaVersion) ||
+            (parsedRun.runtimeVersion === currentRuntimeVersion && parsedRun.policyVersion === currentPolicyVersion && retiredCurrentRuntimeToolSchemaVersions.has(parsedRun.toolSchemaVersion)));
     if (state.configuration.executionMode === "historical" && (!isTerminal || parsedRun.toolSchemaVersion !== 1 || parsedRun.runtimeVersion !== 1 || parsedRun.policyVersion !== 1)) {
         throw new Error("historical 执行模式仅允许首代已终结 Agent 运行");
     }
@@ -313,6 +320,7 @@ export function parseAgentRuntimeView(value: unknown): AgentRuntimeView {
 
 function approvalEffectKindForTool(toolName: AgentToolName): AgentApprovalEffect["kind"] | undefined {
     if (toolName === "canvas.apply_ops") return "canvas_mutation";
+    if (toolName === "project.apply_ops") return "project_mutation";
     if (toolName === "assets.publish") return "asset_publish";
     if (toolName === "media.generate") return "media_generation";
     if (toolName === "vision.analyze") return "vision_analysis";
@@ -331,7 +339,7 @@ function parsePendingApproval(value: unknown): AgentPendingApproval {
     if (!/^[0-9a-f]{64}$/.test(proposalHash)) throw new Error("pendingApproval.proposalHash 必须是 SHA-256");
     const effectSource = exactObject(source.effect, "pendingApproval.effect", ["kind", "summary", "targetIds"]);
     const kind = effectSource.kind;
-    if (kind !== "canvas_mutation" && kind !== "asset_publish" && kind !== "media_generation" && kind !== "vision_analysis") {
+    if (kind !== "canvas_mutation" && kind !== "project_mutation" && kind !== "asset_publish" && kind !== "media_generation" && kind !== "vision_analysis") {
         throw new Error(`不受支持的审批影响类型: ${String(kind)}`);
     }
     const targetIds = array(effectSource.targetIds, "pendingApproval.effect.targetIds").map((target, index) => text(target, `pendingApproval.effect.targetIds[${index}]`));
@@ -516,7 +524,7 @@ function parseTimelineContent(value: unknown, label: string, kind: AgentTimeline
 }
 
 function parseToolTimelineActivity(value: unknown, label: string): AgentTimelineItemContent {
-    const source = exactObject(value, label, ["toolCallId", "toolName", "actionVersion", "started", "succeeded", "errorCode", "output", "decision"]);
+    const source = exactObject(value, label, ["toolCallId", "toolName", "actionVersion", "started", "succeeded", "interrupted", "errorCode", "output", "decision"]);
     const content: AgentTimelineItemContent = {
         toolCallId: text(source.toolCallId, `${label}.toolCallId`),
         actionVersion: integer(source.actionVersion, `${label}.actionVersion`),
@@ -527,6 +535,7 @@ function parseToolTimelineActivity(value: unknown, label: string): AgentTimeline
     }
     if (source.started !== undefined) content.started = flag(source.started, `${label}.started`);
     if (source.succeeded !== undefined) content.succeeded = flag(source.succeeded, `${label}.succeeded`);
+    if (source.interrupted !== undefined) content.interrupted = flag(source.interrupted, `${label}.interrupted`);
     if (source.errorCode !== undefined) content.errorCode = text(source.errorCode, `${label}.errorCode`);
     if (source.output !== undefined) {
         const output = object(source.output, `${label}.output`);
@@ -534,9 +543,10 @@ function parseToolTimelineActivity(value: unknown, label: string): AgentTimeline
     }
     if (source.decision !== undefined) content.decision = enumText(source.decision, `${label}.decision`, ["approved", "rejected"]);
 
-    const transitionFacts = [content.started, content.succeeded, content.decision].filter((fact) => fact !== undefined);
+    const transitionFacts = [content.started, content.succeeded, content.interrupted, content.decision].filter((fact) => fact !== undefined);
     if (transitionFacts.length > 1) throw new Error(`${label} 同时包含多个工具状态变更事实`);
     if (content.started === false) throw new Error(`${label}.started 只能为 true`);
+    if (content.interrupted === false) throw new Error(`${label}.interrupted 只能为 true`);
     if (content.output !== undefined && content.succeeded !== true) throw new Error(`${label}.output 缺少成功事实`);
     if (content.errorCode !== undefined && content.succeeded !== false) throw new Error(`${label}.errorCode 缺少失败事实`);
     return content;
@@ -774,10 +784,11 @@ function validateStateFacts(state: AgentRuntimeState) {
     const waitingForInput = state.status === "waiting_input";
     const waitingForApproval = state.status === "waiting_approval";
     const waitingForTool = state.status === "waiting_tool";
+    const interruptedToolSettlement = isAgentInterruptedToolSettlement(state);
     if (waitingForApproval && (!state.pendingToolCall || state.pendingToolStarted)) throw new Error("Agent 等待审批状态缺少冻结工具事实");
     if (waitingForTool && !state.pendingToolCall) throw new Error("Agent 等待工具状态缺少冻结工具事实");
-    if (!waitingForApproval && !waitingForTool && state.pendingToolCall) throw new Error("Agent 非等待状态携带了冻结工具事实");
-    if (state.pendingToolStarted && !waitingForTool) throw new Error("Agent 工具执行状态冲突");
+    if (!waitingForApproval && !waitingForTool && state.pendingToolCall && !interruptedToolSettlement) throw new Error("Agent 非等待状态携带了冻结工具事实");
+    if (state.pendingToolStarted && !waitingForTool && !interruptedToolSettlement) throw new Error("Agent 工具执行状态冲突");
     if (waitingForInput !== Boolean(state.pendingClarification)) throw new Error("Agent 追问状态与待回答事实冲突");
     if (waitingForInput && state.pendingToolCall) throw new Error("Agent 追问状态不能同时等待工具");
     const requestIds = new Set(state.clarificationHistory.map((item) => item.request.requestId));
@@ -791,6 +802,10 @@ function validateStateFacts(state: AgentRuntimeState) {
     }
     if (state.status === "failed" && !state.failureCode) throw new Error("Agent 失败状态缺少失败代码");
     if (state.status !== "succeeded" && state.verification?.status === "satisfied") throw new Error("Agent 验收状态与运行状态冲突");
+}
+
+export function isAgentInterruptedToolSettlement(state: AgentRuntimeState): state is AgentRuntimeState & { pendingToolCall: AgentToolCall; pendingToolStarted: true } {
+    return state.status === "cancelled" && state.pendingToolStarted === true && state.pendingToolCall !== undefined;
 }
 
 function sameExpectedDelivery(left: AgentExpectedDelivery, right: AgentExpectedDelivery) {
@@ -811,9 +826,9 @@ function parseToolCall(value: unknown): AgentToolCall {
 }
 
 export function parseAgentExpectedDelivery(value: unknown): NonNullable<AgentRuntimeState["expectedDelivery"]> {
-    const source = exactObject(value, "expectedDelivery", ["kind", "requiredArtifacts", "targetCanvasId", "completionCriteria"]);
+    const source = exactObject(value, "expectedDelivery", ["kind", "requiredArtifacts", "targetCanvasId", "targetProjectId", "completionCriteria"]);
     const kind = source.kind;
-    if (kind !== "answer" && kind !== "canvas_change" && kind !== "generated_asset" && kind !== "mixed") throw new Error(`不受支持的交付类型: ${String(kind)}`);
+    if (kind !== "answer" && kind !== "canvas_change" && kind !== "generated_asset" && kind !== "project_change" && kind !== "mixed") throw new Error(`不受支持的交付类型: ${String(kind)}`);
     const rawCriteria = array(source.completionCriteria, "completionCriteria");
     if (rawCriteria.length < 1 || rawCriteria.length > 20) throw new Error("completionCriteria 数量必须在 1 到 20 之间");
     const criteria = rawCriteria.map((item) => criterion(item));
@@ -824,6 +839,7 @@ export function parseAgentExpectedDelivery(value: unknown): NonNullable<AgentRun
         result.requiredArtifacts = requiredArtifacts.map((item) => artifact(item, "requiredArtifact"));
     }
     if (source.targetCanvasId !== undefined) result.targetCanvasId = text(source.targetCanvasId, "targetCanvasId");
+    if (source.targetProjectId !== undefined) result.targetProjectId = text(source.targetProjectId, "targetProjectId");
     return result;
 }
 
@@ -900,6 +916,7 @@ export const agentRuntimeClient: AgentRuntimeClient = {
     steer: async (runId, input) => parseAgentRuntimeView(await request(`/agent/runs/${encodeURIComponent(runId)}/steer`, { method: "POST", body: JSON.stringify(input) })),
     interrupt: async (runId, input) => parseAgentRuntimeView(await request(`/agent/runs/${encodeURIComponent(runId)}/interrupt`, { method: "POST", body: JSON.stringify(input) })),
     submitApproval: async (runId, input) => parseAgentRuntimeView(await request(`/agent/runs/${encodeURIComponent(runId)}/approvals`, { method: "POST", body: JSON.stringify(input) })),
+    refreshExpiredApproval: async (runId, input) => parseAgentRuntimeView(await request(`/agent/runs/${encodeURIComponent(runId)}/approvals/refresh`, { method: "POST", body: JSON.stringify(input) })),
     submitClarificationResponse: async (runId, requestId, input) =>
         parseAgentRuntimeView(await request(`/agent/runs/${encodeURIComponent(runId)}/clarifications/${encodeURIComponent(requestId)}/responses`, { method: "POST", body: JSON.stringify(input) })),
     subscribe: (runId, afterSequence, handlers) => {

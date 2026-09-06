@@ -4,7 +4,7 @@ import type { CanvasAgentLaunchRequest, CanvasAssistantSession } from "@/types/c
 
 const PROJECT_TITLE_LIMIT = 24;
 
-export function createCanvasAgentLaunchRequest(input: { draft: CanvasAgentDraft; id: string; createdAt: string }): CanvasAgentLaunchRequest {
+export function createCanvasAgentLaunchRequest(input: { draft: CanvasAgentDraft; id: string; createdAt: string; source?: CanvasAgentLaunchRequest["source"] }): CanvasAgentLaunchRequest {
     const { draft, id, createdAt } = input;
     const normalizedPrompt = draft.prompt.trim();
     if (!normalizedPrompt) throw new Error("创作描述不能为空");
@@ -18,7 +18,7 @@ export function createCanvasAgentLaunchRequest(input: { draft: CanvasAgentDraft;
     if (skillDirs.length > 8) throw new Error("一次最多选择 8 个 Skills");
     return {
         id,
-        source: "home",
+        source: input.source || "home",
         prompt: normalizedPrompt,
         attachments,
         generationModels: { ...draft.generationModels },

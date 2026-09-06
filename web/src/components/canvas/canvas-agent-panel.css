@@ -938,6 +938,16 @@
     font-size: 13px;
     line-height: 21px;
 }
+.canvas-agent-runtime-final[data-status="failed"] {
+    color: color-mix(in srgb, var(--foreground) 52%, transparent);
+}
+.canvas-agent-runtime-final-status {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--status-danger);
+    font-size: 11px;
+    line-height: 16px;
+}
 .canvas-agent-runtime-approval-heading {
     align-items: flex-start;
     gap: 10px;

@@ -247,7 +247,7 @@ export function CanvasManagedAgentWorkspace({
                     </div>
                 ) : null}
                 {runtime.view?.state.status === "waiting_approval" && runtime.view.state.pendingToolCall && runtime.view.pendingApproval ? (
-                    <AgentApprovalCard call={runtime.view.state.pendingToolCall} approval={runtime.view.pendingApproval} busy={runtime.busy} muted={theme.node.muted} onDecision={runtime.decideApproval} />
+                    <AgentApprovalCard call={runtime.view.state.pendingToolCall} approval={runtime.view.pendingApproval} busy={runtime.busy} muted={theme.node.muted} onDecision={runtime.decideApproval} onRefresh={runtime.refreshExpiredApproval} />
                 ) : null}
             </section>
 
@@ -371,8 +371,10 @@ function AgentRunContent({
                 events={meaningfulEvents}
             />
             {conversation.items.map((item) => {
+                const rejected = item.status === "failed";
                 return (
-                    <article key={item.id} className="canvas-agent-runtime-final" data-status={item.status} aria-label="Agent 回复">
+                    <article key={item.id} className="canvas-agent-runtime-final" data-status={item.status} aria-label={rejected ? "未采用的 Agent 回复" : "Agent 回复"}>
+                        {rejected ? <span className="canvas-agent-runtime-final-status">未采用</span> : null}
                         <p className="canvas-agent-runtime-final-copy">{item.text}</p>
                     </article>
                 );

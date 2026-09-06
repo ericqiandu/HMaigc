@@ -994,6 +994,21 @@ func TestInterruptAgentRunClosesPendingTimelineLifecycle(t *testing.T) {
 			if item.Status != model.AgentTimelineItemInterrupted {
 				t.Fatalf("interrupted lifecycle item = %#v", item)
 			}
+			if testCase.kind == model.AgentTimelineItemToolCall {
+				var content struct {
+					ToolCallID    string                `json:"toolCallId"`
+					ToolName      agentruntime.ToolName `json:"toolName"`
+					ActionVersion int                   `json:"actionVersion"`
+					Interrupted   bool                  `json:"interrupted"`
+				}
+				if err := json.Unmarshal([]byte(item.ContentJSON), &content); err != nil {
+					t.Fatal(err)
+				}
+				if content.ToolCallID != "call-interrupt" || content.ToolName != agentruntime.ToolCanvasApplyOps ||
+					content.ActionVersion != 1 || !content.Interrupted {
+					t.Fatalf("interrupted tool content = %#v", content)
+				}
+			}
 			var activeCount int64
 			if err := db.Model(&model.AgentTimelineItem{}).Where("run_id = ? AND status = ?", scope.RunID, model.AgentTimelineItemInProgress).Count(&activeCount).Error; err != nil {
 				t.Fatal(err)

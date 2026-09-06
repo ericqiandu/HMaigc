@@ -62,6 +62,15 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 			for _, nodeID := range result.Evidence.AddedNodeIDs {
 				createdCanvasNodeIDs[nodeID] = struct{}{}
 			}
+		case agentruntime.ToolProjectApplyOps:
+			result, resultErr := currentProjectApplyOpsDelivery(scope, call)
+			if resultErr != nil {
+				return agentruntime.DeliveryEvidence{}, resultErr
+			}
+			if result.CommittedRevision >= evidence.ProjectRevision {
+				evidence.ProjectID = result.DomainProjectID
+				evidence.ProjectRevision = result.CommittedRevision
+			}
 		case agentruntime.ToolMediaGenerate:
 			artifacts, artifactsErr := s.currentMediaCapabilityDeliveryArtifacts(scope, call)
 			if artifactsErr != nil {
@@ -88,7 +97,7 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 			if err := upsertArtifact(artifact); err != nil {
 				return agentruntime.DeliveryEvidence{}, err
 			}
-		case agentruntime.ToolCanvasRead, agentruntime.ToolAssetsRead, agentruntime.ToolSkillsLoad, agentruntime.ToolVisionAnalyze:
+		case agentruntime.ToolCanvasRead, agentruntime.ToolAssetsRead, agentruntime.ToolProjectRead, agentruntime.ToolSkillsLoad, agentruntime.ToolVisionAnalyze:
 			continue
 		default:
 			return agentruntime.DeliveryEvidence{}, errors.New("retired agent tool cannot provide current delivery evidence")
@@ -110,6 +119,21 @@ func (s *Service) agentRuntimeDeliveryEvidence(scope agentruntime.Scope, finalMe
 			if err := upsertArtifact(artifact); err != nil {
 				return agentruntime.DeliveryEvidence{}, err
 			}
+		}
+	}
+	if evidence.ProjectRevision > 0 {
+		facts, err := s.repo.AgentProjectDeliveryFacts(scope.ActorUserID, scope.DomainProjectID)
+		if err != nil {
+			return agentruntime.DeliveryEvidence{}, err
+		}
+		project := facts.Project
+		if project.ID != evidence.ProjectID || project.ID != scope.DomainProjectID || project.Revision < evidence.ProjectRevision {
+			return agentruntime.DeliveryEvidence{}, errors.New("agent project current revision scope is invalid")
+		}
+		evidence.ProjectRevision = project.Revision
+		evidence.ProjectCurrent, err = currentAgentProjectEntities(scope, calls, facts)
+		if err != nil {
+			return agentruntime.DeliveryEvidence{}, err
 		}
 	}
 	return evidence, nil
@@ -155,6 +179,32 @@ func currentCanvasApplyOpsDelivery(scope agentruntime.Scope, call model.AgentToo
 		if result.AppliedOperationIDs[index] != operation.OperationID {
 			return agentruntime.CanvasApplyOpsResult{}, errors.New("agent canvas delivery operation receipt is invalid")
 		}
+	}
+	return result, nil
+}
+
+func currentProjectApplyOpsDelivery(scope agentruntime.Scope, call model.AgentToolCall) (agentruntime.ProjectApplyOpsResult, error) {
+	decodedArguments, err := agentruntime.DecodeCapabilityArguments(agentruntime.ToolProjectApplyOps, json.RawMessage(call.InputJSON))
+	if err != nil {
+		return agentruntime.ProjectApplyOpsResult{}, errors.New("agent project delivery input is invalid")
+	}
+	arguments, ok := decodedArguments.(agentruntime.ProjectApplyOpsArguments)
+	if !ok || arguments.DomainProjectID != scope.DomainProjectID {
+		return agentruntime.ProjectApplyOpsResult{}, errors.New("agent project delivery scope is invalid")
+	}
+	decodedResult, err := agentruntime.DecodeCapabilityResult(agentruntime.ToolProjectApplyOps, json.RawMessage(call.OutputJSON))
+	if err != nil {
+		return agentruntime.ProjectApplyOpsResult{}, errors.New("agent project delivery evidence is invalid")
+	}
+	result, ok := decodedResult.(agentruntime.ProjectApplyOpsResult)
+	operationIDs, expectedCandidateCount, expectedShotCount := summarizeProjectOperations(arguments.Operations)
+	_, _, candidateIDs, shotIDs, translateErr := translateAgentProjectOperations(arguments.DomainProjectID, arguments.ClientMutationID, arguments.Operations)
+	if !ok || result.DomainProjectID != arguments.DomainProjectID || result.BaseRevision != arguments.BaseRevision ||
+		result.CommittedRevision != arguments.BaseRevision+1 || result.ClientMutationID != arguments.ClientMutationID ||
+		result.ProposalHash != call.ApprovalProposalHash || !sameStringSequence(result.AppliedOperationIDs, operationIDs) ||
+		translateErr != nil || len(result.CandidateIDs) != expectedCandidateCount || len(result.ShotIDs) != expectedShotCount ||
+		!sameStringSequence(result.CandidateIDs, candidateIDs) || !sameStringSequence(result.ShotIDs, shotIDs) {
+		return agentruntime.ProjectApplyOpsResult{}, errors.New("agent project delivery receipt conflicts with its approved request")
 	}
 	return result, nil
 }

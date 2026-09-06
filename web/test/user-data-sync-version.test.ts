@@ -405,6 +405,45 @@ test("首页 Agent 创建立即返回本地画布，并只等待该画布的定�
     expect(createdCanvasIds).toEqual([creation.id]);
 });
 
+test("项目章节 Agent 创建绑定项目并持久化专用 Skill 启动事实", async () => {
+    const [{ createProjectAgentCanvasShellWithRemoteSync, queueProjectAgentCanvasLaunch, syncRemoteUserData }, { useAssetStore }, { useCanvasStore }] = await Promise.all([
+        import("../src/services/user-data-sync"),
+        import("../src/stores/use-asset-store"),
+        import("../src/stores/canvas/use-canvas-store"),
+    ]);
+    listRemoteAssetsImpl = async () => ({ assets: [] });
+    useCanvasStore.setState({ projects: [], pendingDeletionIds: [] });
+    useAssetStore.setState({ assets: [] });
+    await syncRemoteUserData("user-1");
+
+    const creation = createProjectAgentCanvasShellWithRemoteSync({
+        title: "第一章 · 提取角色候选",
+        projectId: "domain-project-1",
+    });
+    await creation.remoteReady;
+
+    expect(useCanvasStore.getState().openProject(creation.id)?.pendingAgentLaunch).toBeUndefined();
+    queueProjectAgentCanvasLaunch({
+        canvasId: creation.id,
+        draft: {
+            prompt: "根据第一章正文提取角色候选并写回项目",
+            attachments: [],
+            generationModels: { image: "", video: "" },
+            skillSelections: [{ dir: "project-chapter-structure", name: "项目章节结构化", description: "写回项目结构" }],
+            executionMode: "guided",
+        },
+    });
+    const project = useCanvasStore.getState().openProject(creation.id);
+    expect(project?.projectId).toBe("domain-project-1");
+    expect(project?.pendingAgentLaunch).toMatchObject({
+        source: "project_chapter",
+        prompt: "根据第一章正文提取角色候选并写回项目",
+        skillDirs: ["project-chapter-structure"],
+        executionMode: "guided",
+    });
+    expect(createdCanvasIds).toEqual([creation.id]);
+});
+
 test("全量同步已在运行时，立即保存仍等待新画布的定向远端创建", async () => {
     let releaseFullSync: (() => void) | undefined;
     let releaseTargetedCreate: (() => void) | undefined;

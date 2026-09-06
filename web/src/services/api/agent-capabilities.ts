@@ -1,6 +1,6 @@
 import { array, boundedText, exactObject, flag, integer, object, text } from "./strict-contract";
 
-export type AgentToolName = "canvas.read" | "canvas.apply_ops" | "assets.read" | "assets.publish" | "media.generate" | "vision.analyze" | "skills.load";
+export type AgentToolName = "canvas.read" | "canvas.apply_ops" | "assets.read" | "assets.publish" | "project.read" | "project.apply_ops" | "media.generate" | "vision.analyze" | "skills.load";
 
 export type AgentCanvasPoint = { x: number; y: number };
 export type AgentCanvasViewport = AgentCanvasPoint & { zoom: number };
@@ -15,11 +15,33 @@ export type AgentCanvasOperation =
     | { operationId: string; type: "set_viewport"; viewport: AgentCanvasViewport }
     | { operationId: string; type: "select_nodes"; nodeIds: string[] };
 
+export type AgentProjectCharacterCandidate = {
+    name: string;
+    aliases: string[];
+    role: string;
+    appearance: string;
+    clothing: string;
+    physique: string;
+    personality: string;
+    props: string;
+    consistencyPrompt: string;
+    multiViewPrompt: string;
+    voiceLanguage: string;
+    voiceAge: string;
+    voiceTimbre: string;
+};
+
+export type AgentProjectOperation =
+    | { operationId: string; type: "create_character_candidates"; unitId: string; candidates: AgentProjectCharacterCandidate[] }
+    | { operationId: string; type: "replace_unit_shots"; unitId: string; shots: Array<{ title: string; description: string; durationMs: number }> };
+
 export type AgentCapabilityArguments =
     | { canvasId: string; selectedNodeIds: string[]; includeViewport: boolean }
     | { canvasId: string; baseRevision: number; clientMutationId: string; operations: AgentCanvasOperation[] }
     | { domainProjectId: string; resourceIds: string[]; limit: number }
     | { resourceId: string; domainProjectId: string; displayName: string; clientMutationId: string }
+    | { domainProjectId: string; canvasId: string }
+    | { domainProjectId: string; baseRevision: number; clientMutationId: string; operations: AgentProjectOperation[] }
     | { mediaKind: "image" | "video" | "audio"; modelRecordId: string; modelKey: string; parameters: Record<string, unknown>; sourceResourceIds: string[]; targetCanvasNodeId: string; clientRequestId: string }
     | { modelRecordId: string; modelKey: string; sourceResourceIds: string[]; prompt: string; detail: "low" | "original"; clientRequestId: string }
     | { skillDir: string; version: number; checksum: string };
@@ -36,7 +58,7 @@ export type AgentVisionAnalyzeResult = {
     usage: { inputTokens: number; cachedTokens: number; outputTokens: number };
 };
 
-const toolNames = new Set<AgentToolName>(["canvas.read", "canvas.apply_ops", "assets.read", "assets.publish", "media.generate", "vision.analyze", "skills.load"]);
+const toolNames = new Set<AgentToolName>(["canvas.read", "canvas.apply_ops", "assets.read", "assets.publish", "project.read", "project.apply_ops", "media.generate", "vision.analyze", "skills.load"]);
 
 export function isAgentToolName(value: unknown): value is AgentToolName {
     return typeof value === "string" && toolNames.has(value as AgentToolName);
@@ -85,6 +107,28 @@ export function parseAgentCapabilityArguments(toolName: string, value: unknown):
             clientMutationId: capabilityIdentifier(source.clientMutationId, "clientMutationId"),
         };
     }
+    if (toolName === "project.read") {
+        const source = exactObject(value, "project.read arguments", ["domainProjectId", "canvasId"]);
+        return {
+            domainProjectId: capabilityIdentifier(source.domainProjectId, "domainProjectId"),
+            canvasId: capabilityIdentifier(source.canvasId, "canvasId"),
+        };
+    }
+    if (toolName === "project.apply_ops") {
+        const source = exactObject(value, "project.apply_ops arguments", ["domainProjectId", "baseRevision", "clientMutationId", "operations"]);
+        const rawOperations = array(source.operations, "operations");
+        if (rawOperations.length < 1 || rawOperations.length > 100) throw new Error("operations 数量必须在 1 到 100 之间");
+        const operations = rawOperations.map((operation, index) => parseProjectOperation(operation, index));
+        if (new Set(operations.map((operation) => operation.operationId)).size !== operations.length) throw new Error("operationId 不能重复");
+        const unitOperationKeys = operations.map((operation) => `${operation.unitId}\u0000${operation.type}`);
+        if (new Set(unitOperationKeys).size !== unitOperationKeys.length) throw new Error("同一章节不能重复声明相同项目操作");
+        return {
+            domainProjectId: capabilityIdentifier(source.domainProjectId, "domainProjectId"),
+            baseRevision: integer(source.baseRevision, "baseRevision", true),
+            clientMutationId: capabilityIdentifier(source.clientMutationId, "clientMutationId"),
+            operations,
+        };
+    }
     if (toolName === "media.generate") {
         const source = exactObject(value, "media.generate arguments", ["mediaKind", "modelRecordId", "modelKey", "parameters", "sourceResourceIds", "targetCanvasNodeId", "clientRequestId"]);
         if (source.mediaKind !== "image" && source.mediaKind !== "video" && source.mediaKind !== "audio") {
@@ -119,6 +163,70 @@ export function parseAgentCapabilityArguments(toolName: string, value: unknown):
         skillDir: boundedText(source.skillDir, "skillDir", 240),
         version: integer(source.version, "version"),
         checksum,
+    };
+}
+
+function parseProjectOperation(value: unknown, index: number): AgentProjectOperation {
+    const header = object(value, `operations[${index}]`);
+    if (header.type === "create_character_candidates") {
+        const source = exactObject(value, `operations[${index}]`, ["operationId", "type", "unitId", "candidates"]);
+        const rawCandidates = array(source.candidates, `operations[${index}].candidates`);
+        if (rawCandidates.length < 1 || rawCandidates.length > 100) throw new Error(`operations[${index}].candidates 数量无效`);
+        const candidates = rawCandidates.map((candidate, candidateIndex) => parseProjectCharacterCandidate(candidate, `${index}.candidates[${candidateIndex}]`));
+        if (new Set(candidates.map((candidate) => candidate.name)).size !== candidates.length) throw new Error(`operations[${index}].candidates 角色名不能重复`);
+        return {
+            operationId: capabilityIdentifier(source.operationId, `operations[${index}].operationId`),
+            type: header.type,
+            unitId: capabilityIdentifier(source.unitId, `operations[${index}].unitId`),
+            candidates,
+        };
+    }
+    if (header.type === "replace_unit_shots") {
+        const source = exactObject(value, `operations[${index}]`, ["operationId", "type", "unitId", "shots"]);
+        const rawShots = array(source.shots, `operations[${index}].shots`);
+        if (rawShots.length < 1 || rawShots.length > 200) throw new Error(`operations[${index}].shots 数量无效`);
+        return {
+            operationId: capabilityIdentifier(source.operationId, `operations[${index}].operationId`),
+            type: header.type,
+            unitId: capabilityIdentifier(source.unitId, `operations[${index}].unitId`),
+            shots: rawShots.map((shot, shotIndex) => {
+                const parsed = exactObject(shot, `operations[${index}].shots[${shotIndex}]`, ["title", "description", "durationMs"]);
+                const durationMs = integer(parsed.durationMs, `operations[${index}].shots[${shotIndex}].durationMs`);
+                if (durationMs < 1_000 || durationMs > 30_000) throw new Error(`operations[${index}].shots[${shotIndex}].durationMs 必须在 1000 到 30000 之间`);
+                return {
+                    title: boundedText(parsed.title, `operations[${index}].shots[${shotIndex}].title`, 240),
+                    description: boundedText(parsed.description, `operations[${index}].shots[${shotIndex}].description`, 8 * 1024),
+                    durationMs,
+                };
+            }),
+        };
+    }
+    throw new Error(`不受支持的项目操作: ${String(header.type)}`);
+}
+
+function parseProjectCharacterCandidate(value: unknown, label: string): AgentProjectCharacterCandidate {
+    const source = exactObject(value, label, [
+        "name", "aliases", "role", "appearance", "clothing", "physique", "personality", "props",
+        "consistencyPrompt", "multiViewPrompt", "voiceLanguage", "voiceAge", "voiceTimbre",
+    ]);
+    const name = boundedText(source.name, `${label}.name`, 240);
+    const aliases = array(source.aliases, `${label}.aliases`).map((alias, index) => boundedText(alias, `${label}.aliases[${index}]`, 240));
+    if (aliases.length > 20 || new Set(aliases).size !== aliases.length || aliases.includes(name)) throw new Error(`${label}.aliases 无效`);
+    const required = (field: keyof Omit<AgentProjectCharacterCandidate, "name" | "aliases" | "props">) => boundedText(source[field], `${label}.${field}`, 2 * 1024);
+    return {
+        name,
+        aliases,
+        role: required("role"),
+        appearance: required("appearance"),
+        clothing: required("clothing"),
+        physique: required("physique"),
+        personality: required("personality"),
+        props: boundedText(source.props, `${label}.props`, 2 * 1024, true),
+        consistencyPrompt: required("consistencyPrompt"),
+        multiViewPrompt: required("multiViewPrompt"),
+        voiceLanguage: required("voiceLanguage"),
+        voiceAge: required("voiceAge"),
+        voiceTimbre: required("voiceTimbre"),
     };
 }
 

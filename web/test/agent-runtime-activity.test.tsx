@@ -32,6 +32,24 @@ test("读取画布与加载 Skill 只显示真实活动，不出现确认操作"
     expect(activity?.querySelectorAll("button")).toHaveLength(0);
 });
 
+test("项目写入显示项目变更而不是媒体生成", async () => {
+    await mount([
+        toolItem("project-item", 1, "project.apply_ops", true, {
+            projectId: "project-1",
+            unitId: "unit-1",
+            baseRevision: 6,
+            committedRevision: 7,
+            clientMutationId: "project-mutation-1",
+            proposalHash: "a".repeat(64),
+            appliedOperationIds: ["create-character-candidates"],
+        }),
+    ]);
+
+    const activity = document.querySelector<HTMLElement>('[data-agent-activity-id="project-item"]');
+    expect(activity?.textContent).toContain("项目变更已提交");
+    expect(activity?.textContent).not.toContain("媒体已生成");
+});
+
 test("刷新后从持久化事件恢复生成媒体，且后续画布写入失败不会隐藏资产", async () => {
     await mount([
         toolItem("media-item", 1, "media.generate", true, {
@@ -64,6 +82,61 @@ test("实时事件覆盖同一持久化执行项而不产生重复活动", async
     expect(activities[0]?.textContent).not.toContain("old-task");
     expect(activities[0]?.querySelector<HTMLVideoElement>('video[src="/api/resources/new-resource/file"]')).not.toBeNull();
     expect(activities[0]?.querySelector<HTMLVideoElement>('video[src="/api/resources/old-resource/file"]')).toBeNull();
+});
+
+test("终态权威结果收口本机流中迟到的工具开始事件", async () => {
+    const pending = visionView("waiting_tool", false);
+    const terminal: AgentRuntimeView = {
+        ...pending,
+        run: { ...pending.run, status: "succeeded", lastEventSequence: 1, stateVersion: 4, completedAt: "2026-09-01T00:00:08Z" },
+        state: {
+            ...pending.state,
+            status: "succeeded",
+            stateVersion: 4,
+            lastToolResult: { toolCallId: "read-call", actionVersion: 1, succeeded: true, output: { revision: 12 } },
+            pendingToolCall: undefined,
+            pendingToolStarted: undefined,
+        },
+    };
+    await mount([], [startedEvent("read-item", 2, "canvas.read", "read-call")], terminal);
+
+    const activity = document.querySelector<HTMLElement>('[data-agent-activity-id="read-item"]');
+    expect(activity?.textContent).toContain("已读取画布");
+    expect(activity?.textContent).not.toContain("工具正在执行");
+});
+
+test("取消后的待结算媒体工具不再显示为执行中", async () => {
+    const pending = cancelledMediaView();
+    await mount([], [startedEvent("media-item", 2, "media.generate", pending.state.pendingToolCall!.toolCallId)], pending);
+
+    const activity = document.querySelector<HTMLElement>('[data-agent-activity-id="media-item"]');
+    expect(activity?.dataset.status).toBe("interrupted");
+    expect(activity?.textContent).toContain("已停止，等待结算");
+    expect(activity?.textContent).not.toContain("工具正在执行");
+    expect(activity?.querySelector(".animate-spin")).toBeNull();
+});
+
+test("取消态权威事实会清除历史中断项的旧协议错误", async () => {
+    const pending = cancelledMediaView();
+    const interruptedItem: AgentTimelineItem = {
+        id: "media-item",
+        runId: "run-1",
+        kind: "tool_call",
+        status: "interrupted",
+        ordinal: 1,
+        sourceEventSequence: 5,
+        content: { toolCallId: "media-call-1", actionVersion: 1, interrupted: true },
+        startedAt: "2026-09-01T00:00:00Z",
+        completedAt: "2026-09-01T00:00:04Z",
+        createdAt: "2026-09-01T00:00:00Z",
+        updatedAt: "2026-09-01T00:00:04Z",
+    };
+    await mount([interruptedItem], [], pending);
+
+    const activity = document.querySelector<HTMLElement>('[data-agent-activity-id="media-item"]');
+    expect(activity?.dataset.status).toBe("interrupted");
+    expect(activity?.textContent).toContain("已停止，等待结算");
+    expect(activity?.textContent).not.toContain("工具执行事实缺少有效的 toolName 或 toolCallId");
 });
 
 test("媒体工具完成但缺少真实资源时显式暴露协议错误", async () => {
@@ -148,7 +221,7 @@ function historyRun(): AgentThreadHistoryRun {
         stepNumber: 2,
         maxSteps: 16,
         modelKey: "agent-model",
-        toolSchemaVersion: 8,
+        toolSchemaVersion: 10,
         runtimeVersion: 5,
         policyVersion: 5,
         createdAt: "2026-09-01T00:00:00Z",
@@ -186,7 +259,7 @@ function visionView(status: "waiting_approval" | "waiting_tool", started: boolea
             maxSteps: 8,
             modelRecordId: "agent-model-record",
             modelKey: "agent-model",
-            toolSchemaVersion: 8,
+            toolSchemaVersion: 10,
             runtimeVersion: 5,
             policyVersion: 5,
             createdAt: "2026-09-01T00:00:00Z",
@@ -224,6 +297,62 @@ function visionView(status: "waiting_approval" | "waiting_tool", started: boolea
     };
 }
 
+function cancelledMediaView(): AgentRuntimeView {
+    const pendingToolCall: NonNullable<AgentRuntimeView["state"]["pendingToolCall"]> = {
+        toolCallId: "media-call-1",
+        toolName: "media.generate",
+        actionVersion: 1,
+        arguments: {
+            mediaKind: "image",
+            modelRecordId: "image-model-record",
+            modelKey: "gpt-image-2",
+            parameters: { prompt: "纯白纸船漂浮在平静蓝色水面上" },
+            sourceResourceIds: [],
+            targetCanvasNodeId: "image-node-1",
+            clientRequestId: "generate-image-1",
+        },
+        expectedDelivery: { kind: "generated_asset", requiredArtifacts: ["image"], completionCriteria: [{ fact: "canvas_bound_resource", artifact: "image" }] },
+    };
+    return {
+        run: {
+            id: "run-1",
+            threadId: "thread-1",
+            reasoningHost: "managed",
+            actorUserId: "user-1",
+            clientRequestId: "request-1",
+            status: "cancelled",
+            lastEventSequence: 5,
+            stateVersion: 3,
+            stepNumber: 1,
+            maxSteps: 8,
+            modelRecordId: "agent-model-record",
+            modelKey: "agent-model",
+            toolSchemaVersion: 10,
+            runtimeVersion: 5,
+            policyVersion: 5,
+            createdAt: "2026-09-01T00:00:00Z",
+            updatedAt: "2026-09-01T00:00:04Z",
+            completedAt: "2026-09-01T00:00:04Z",
+        },
+        state: {
+            stateVersion: 3,
+            stepNumber: 1,
+            maxSteps: 8,
+            status: "cancelled",
+            pendingToolCall,
+            pendingToolStarted: true,
+            clarificationHistory: [],
+            userMessage: "生成测试图",
+            configuration: {
+                generationModels: { image: { channelId: "channel-image", model: "gpt-image-2" } },
+                skills: [],
+                attachments: [],
+                executionMode: "guided",
+            },
+        },
+    };
+}
+
 function toolItem(id: string, ordinal: number, toolName: string, succeeded: boolean, output: Record<string, unknown>, errorCode?: string): AgentTimelineItem {
     return {
         id,
@@ -251,5 +380,19 @@ function completedEvent(itemId: string, sequence: number, toolName: string, outp
         itemId,
         itemKind: "tool_call",
         payload: { toolCallId: `${itemId}-call`, toolName, actionVersion: 1, succeeded: true, output },
+    };
+}
+
+function startedEvent(itemId: string, sequence: number, toolName: string, toolCallId: string): AgentRuntimeEvent {
+    return {
+        protocolVersion: 5,
+        threadId: "thread-1",
+        runId: "run-1",
+        sequence,
+        createdAt: "2026-09-01T00:00:01Z",
+        kind: "item.started",
+        itemId,
+        itemKind: "tool_call",
+        payload: { toolCallId, toolName, actionVersion: 1 },
     };
 }

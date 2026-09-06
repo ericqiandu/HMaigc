@@ -29,8 +29,12 @@ func ToolPoliciesForSchema(toolSchemaVersion int) ([]ToolPolicy, bool) {
 		names = []ToolName{ToolSkillLoad, ToolSpecialistDelegate, ToolVisionAnalyze, ToolMediaGenerate, ToolCanvasProject, ToolMediaAssemble}
 	case RetiredCloudToolSchemaVersion:
 		names = []ToolName{ToolCanvasRead, ToolCanvasApplyOps, ToolAssetsRead, ToolAssetsPublish, ToolMediaGenerate, ToolSkillsLoad}
-	case CurrentToolSchemaVersion:
+	case RetiredProjectToolSchemaVersion:
 		names = []ToolName{ToolCanvasRead, ToolCanvasApplyOps, ToolAssetsRead, ToolAssetsPublish, ToolMediaGenerate, ToolVisionAnalyze, ToolSkillsLoad}
+	case RetiredProjectMutationToolSchemaVersion:
+		names = []ToolName{ToolCanvasRead, ToolCanvasApplyOps, ToolAssetsRead, ToolAssetsPublish, ToolProjectApplyOps, ToolMediaGenerate, ToolVisionAnalyze, ToolSkillsLoad}
+	case CurrentToolSchemaVersion:
+		names = []ToolName{ToolCanvasRead, ToolCanvasApplyOps, ToolAssetsRead, ToolAssetsPublish, ToolProjectRead, ToolProjectApplyOps, ToolMediaGenerate, ToolVisionAnalyze, ToolSkillsLoad}
 	default:
 		return nil, false
 	}
@@ -73,9 +77,9 @@ func ToolPolicyForSchema(name ToolName, toolSchemaVersion int) (ToolPolicy, bool
 		}
 	case CurrentToolSchemaVersion:
 		switch name {
-		case ToolCanvasRead, ToolAssetsRead, ToolSkillsLoad:
+		case ToolCanvasRead, ToolAssetsRead, ToolProjectRead, ToolSkillsLoad:
 			return ToolPolicy{Name: name, RiskLevel: ToolRiskRead, RequiredAccess: AccessViewer}, true
-		case ToolCanvasApplyOps, ToolAssetsPublish:
+		case ToolCanvasApplyOps, ToolAssetsPublish, ToolProjectApplyOps:
 			return ToolPolicy{Name: name, RiskLevel: ToolRiskWrite, RequiredAccess: AccessEditor}, true
 		case ToolMediaGenerate, ToolVisionAnalyze:
 			return ToolPolicy{Name: name, RiskLevel: ToolRiskCost, RequiredAccess: AccessEditor}, true
@@ -89,6 +93,28 @@ func ToolPolicyForSchema(name ToolName, toolSchemaVersion int) (ToolPolicy, bool
 		case ToolCanvasApplyOps, ToolAssetsPublish:
 			return ToolPolicy{Name: name, RiskLevel: ToolRiskWrite, RequiredAccess: AccessEditor}, true
 		case ToolMediaGenerate:
+			return ToolPolicy{Name: name, RiskLevel: ToolRiskCost, RequiredAccess: AccessEditor}, true
+		default:
+			return ToolPolicy{}, false
+		}
+	case RetiredProjectToolSchemaVersion:
+		switch name {
+		case ToolCanvasRead, ToolAssetsRead, ToolSkillsLoad:
+			return ToolPolicy{Name: name, RiskLevel: ToolRiskRead, RequiredAccess: AccessViewer}, true
+		case ToolCanvasApplyOps, ToolAssetsPublish:
+			return ToolPolicy{Name: name, RiskLevel: ToolRiskWrite, RequiredAccess: AccessEditor}, true
+		case ToolMediaGenerate, ToolVisionAnalyze:
+			return ToolPolicy{Name: name, RiskLevel: ToolRiskCost, RequiredAccess: AccessEditor}, true
+		default:
+			return ToolPolicy{}, false
+		}
+	case RetiredProjectMutationToolSchemaVersion:
+		switch name {
+		case ToolCanvasRead, ToolAssetsRead, ToolSkillsLoad:
+			return ToolPolicy{Name: name, RiskLevel: ToolRiskRead, RequiredAccess: AccessViewer}, true
+		case ToolCanvasApplyOps, ToolAssetsPublish, ToolProjectApplyOps:
+			return ToolPolicy{Name: name, RiskLevel: ToolRiskWrite, RequiredAccess: AccessEditor}, true
+		case ToolMediaGenerate, ToolVisionAnalyze:
 			return ToolPolicy{Name: name, RiskLevel: ToolRiskCost, RequiredAccess: AccessEditor}, true
 		default:
 			return ToolPolicy{}, false

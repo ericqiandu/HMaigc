@@ -738,9 +738,15 @@ func TestCloudAgentApprovalRejectionReturnsToRunningWithFactualResult(t *testing
 }
 
 func TestCloudAgentExpiredApprovalReturnsToRunningWithoutExecutingTool(t *testing.T) {
+	now := time.Date(2026, time.September, 1, 9, 0, 0, 0, time.UTC)
+	renewedDeadline := now.Add(30 * time.Minute)
 	current := agentruntime.RuntimeState{
 		StateVersion: 7, StepNumber: 3, MaxSteps: 8, Status: agentruntime.RunWaitingApproval,
 		UserMessage: "发布资产", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided},
+		Limits: &agentruntime.RuntimeLimits{
+			MaxToolCalls: 8, ToolCallsUsed: 3,
+			StartedAt: now.Add(-time.Hour), DeadlineAt: now.Add(-30 * time.Minute),
+		},
 		PendingToolCall: &agentruntime.ToolCallDecision{
 			ToolCallID: "publish-asset-1", ToolName: agentruntime.ToolAssetsPublish,
 			ActionVersion: 2,
@@ -751,6 +757,7 @@ func TestCloudAgentExpiredApprovalReturnsToRunningWithoutExecutingTool(t *testin
 	transition, err := agentruntime.InvalidateToolApproval(current, agentruntime.ToolApprovalInvalidation{
 		ToolCallID: "publish-asset-1", ActionVersion: 2,
 		ProposalHash: strings.Repeat("b", 64), ErrorCode: agentruntime.ApprovalProposalExpired,
+		RenewedDeadlineAt: renewedDeadline,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -763,6 +770,12 @@ func TestCloudAgentExpiredApprovalReturnsToRunningWithoutExecutingTool(t *testin
 	}
 	if transition.ApprovalProposalHash != strings.Repeat("b", 64) {
 		t.Fatalf("expired approval proposal hash = %q", transition.ApprovalProposalHash)
+	}
+	if transition.State.Limits == nil || !transition.State.Limits.DeadlineAt.Equal(renewedDeadline) {
+		t.Fatalf("expired approval renewed deadline = %#v", transition.State.Limits)
+	}
+	if !current.Limits.DeadlineAt.Equal(now.Add(-30 * time.Minute)) {
+		t.Fatalf("expired approval mutated previous deadline = %s", current.Limits.DeadlineAt)
 	}
 	if len(transition.EventKinds) != 2 || transition.EventKinds[0] != agentruntime.EventToolResult || transition.EventKinds[1] != agentruntime.EventRunStatusChanged {
 		t.Fatalf("expired approval events = %#v", transition.EventKinds)

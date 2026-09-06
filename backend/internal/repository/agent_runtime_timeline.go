@@ -395,10 +395,14 @@ func agentTimelineMutationForEvent(
 			state.LastToolResult.ActionVersion == previous.PendingToolCall.ActionVersion
 		if previous.PendingToolCall != nil && !pendingToolResolved {
 			content, err := marshalAgentTimelineContent(struct {
-				ToolCallID    string `json:"toolCallId"`
-				ActionVersion int    `json:"actionVersion"`
-				Interrupted   bool   `json:"interrupted"`
-			}{ToolCallID: previous.PendingToolCall.ToolCallID, ActionVersion: previous.PendingToolCall.ActionVersion, Interrupted: true})
+				ToolCallID    string                `json:"toolCallId"`
+				ToolName      agentruntime.ToolName `json:"toolName"`
+				ActionVersion int                   `json:"actionVersion"`
+				Interrupted   bool                  `json:"interrupted"`
+			}{
+				ToolCallID: previous.PendingToolCall.ToolCallID, ToolName: previous.PendingToolCall.ToolName,
+				ActionVersion: previous.PendingToolCall.ActionVersion, Interrupted: true,
+			})
 			if err != nil {
 				return nil, err
 			}
@@ -541,10 +545,11 @@ func agentTimelineMutationForEvent(
 			return nil, errors.New("agent tool start timeline facts are missing")
 		}
 		content, err := marshalAgentTimelineContent(struct {
-			ToolCallID    string `json:"toolCallId"`
-			ActionVersion int    `json:"actionVersion"`
-			Started       bool   `json:"started"`
-		}{ToolCallID: state.PendingToolCall.ToolCallID, ActionVersion: state.PendingToolCall.ActionVersion, Started: true})
+			ToolCallID    string                `json:"toolCallId"`
+			ToolName      agentruntime.ToolName `json:"toolName"`
+			ActionVersion int                   `json:"actionVersion"`
+			Started       bool                  `json:"started"`
+		}{ToolCallID: state.PendingToolCall.ToolCallID, ToolName: state.PendingToolCall.ToolName, ActionVersion: state.PendingToolCall.ActionVersion, Started: true})
 		if err != nil {
 			return nil, err
 		}
@@ -642,9 +647,10 @@ func agentTimelineMutationForEvent(
 			return nil, errors.New("agent approval timeline facts are missing")
 		}
 		content, err := marshalAgentTimelineContent(struct {
-			ToolCallID    string `json:"toolCallId"`
-			ActionVersion int    `json:"actionVersion"`
-		}{ToolCallID: state.PendingToolCall.ToolCallID, ActionVersion: state.PendingToolCall.ActionVersion})
+			ToolCallID    string                `json:"toolCallId"`
+			ToolName      agentruntime.ToolName `json:"toolName"`
+			ActionVersion int                   `json:"actionVersion"`
+		}{ToolCallID: state.PendingToolCall.ToolCallID, ToolName: state.PendingToolCall.ToolName, ActionVersion: state.PendingToolCall.ActionVersion})
 		if err != nil {
 			return nil, err
 		}
@@ -665,9 +671,10 @@ func agentTimelineMutationForEvent(
 		}
 		content, err := marshalAgentTimelineContent(struct {
 			ToolCallID    string                            `json:"toolCallId"`
+			ToolName      agentruntime.ToolName             `json:"toolName"`
 			ActionVersion int                               `json:"actionVersion"`
 			Decision      agentruntime.ToolApprovalDecision `json:"decision"`
-		}{ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion, Decision: decision})
+		}{ToolCallID: call.ToolCallID, ToolName: call.ToolName, ActionVersion: call.ActionVersion, Decision: decision})
 		if err != nil {
 			return nil, err
 		}

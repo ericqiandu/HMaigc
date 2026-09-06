@@ -108,9 +108,9 @@ func (s *Service) ListAgentThreads(actor *model.User, canvasID string, limit int
 		item := AgentThreadHistoryItem{
 			Thread: AgentThreadHistoryThreadView{
 				ID: record.Thread.ID, CanvasID: record.Thread.CanvasID, Status: record.Thread.Status,
-				CreatedAt: record.Thread.CreatedAt, UpdatedAt: record.Thread.UpdatedAt,
+				CreatedAt: agentHistoryUTCTime(record.Thread.CreatedAt), UpdatedAt: agentHistoryUTCTime(record.Thread.UpdatedAt),
 			},
-			ActivityAt: record.ActivityAt,
+			ActivityAt: agentHistoryUTCTime(record.ActivityAt),
 			Turns:      make([]AgentThreadHistoryTurnView, 0, len(record.Turns)),
 		}
 		for _, recordTurn := range record.Turns {
@@ -138,8 +138,8 @@ func agentThreadHistoryTurnView(run model.AgentRun, items []model.AgentTimelineI
 			ID: run.ID, ThreadID: run.ThreadID, Status: run.Status, LastEventSequence: run.LastEventSequence,
 			StateVersion: run.StateVersion, StepNumber: run.StepNumber, MaxSteps: run.MaxSteps,
 			ModelKey: run.ModelKey, ToolSchemaVersion: run.ToolSchemaVersion, RuntimeVersion: run.RuntimeVersion,
-			PolicyVersion: run.PolicyVersion, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
-			CompletedAt: run.CompletedAt,
+			PolicyVersion: run.PolicyVersion, CreatedAt: agentHistoryUTCTime(run.CreatedAt), UpdatedAt: agentHistoryUTCTime(run.UpdatedAt),
+			CompletedAt: agentHistoryUTCTimePointer(run.CompletedAt),
 		},
 		Items: make([]AgentThreadHistoryTimelineItemView, 0, len(items)),
 	}
@@ -150,11 +150,24 @@ func agentThreadHistoryTurnView(run model.AgentRun, items []model.AgentTimelineI
 		}
 		view.Items = append(view.Items, AgentThreadHistoryTimelineItemView{
 			ID: item.ID, RunID: item.RunID, Kind: item.Kind, Status: item.Status, Ordinal: item.Ordinal,
-			SourceEventSequence: item.SourceEventSequence, Content: content, StartedAt: item.StartedAt,
-			CompletedAt: item.CompletedAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
+			SourceEventSequence: item.SourceEventSequence, Content: content, StartedAt: agentHistoryUTCTime(item.StartedAt),
+			CompletedAt: agentHistoryUTCTimePointer(item.CompletedAt), CreatedAt: agentHistoryUTCTime(item.CreatedAt),
+			UpdatedAt: agentHistoryUTCTime(item.UpdatedAt),
 		})
 	}
 	return view, nil
+}
+
+func agentHistoryUTCTime(value time.Time) time.Time {
+	return value.UTC()
+}
+
+func agentHistoryUTCTimePointer(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	normalized := value.UTC()
+	return &normalized
 }
 
 func agentTimelineHistoryContent(item model.AgentTimelineItem) (json.RawMessage, error) {

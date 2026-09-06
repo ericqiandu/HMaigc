@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { expectedDeliverySchema } from "./contracts.js";
+import {
+  expectedDeliverySchema,
+  type LocalAgentExpectedDelivery,
+} from "./contracts.js";
 
 const identifierSchema = z.string().min(1).max(120);
 const displayNameSchema = z.string().min(1).max(240);
@@ -23,6 +26,48 @@ const mediaPromptSchema = z
   .min(1)
   .max(64 * 1024);
 const mediaParameterValueSchema = z.string().min(1).max(240);
+const mcpArtifactSchema = z.enum([
+  "image",
+  "video",
+  "audio",
+  "text",
+  "canvas_revision",
+]);
+const mcpCompletionCriterionSchema = z.union([
+  z
+    .object({
+      fact: z.enum(["final_message", "canvas_revision", "project_revision"]),
+      artifact: z.null().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      fact: z.enum([
+        "artifact",
+        "artifact_revision",
+        "resource",
+        "task_backed_resource",
+        "publication",
+      ]),
+      artifact: mcpArtifactSchema,
+    })
+    .strict(),
+]);
+const mcpExpectedDeliverySchema = z
+  .object({
+    kind: z.enum([
+      "answer",
+      "canvas_change",
+      "generated_asset",
+      "project_change",
+      "mixed",
+    ]),
+    requiredArtifacts: z.array(mcpArtifactSchema).max(5).nullable().optional(),
+    targetCanvasId: identifierSchema.nullable().optional(),
+    targetProjectId: identifierSchema.nullable().optional(),
+    completionCriteria: z.array(mcpCompletionCriterionSchema).min(1).max(20),
+  })
+  .strict();
 const mediaRequestFields = {
   modelRecordId: identifierSchema,
   modelKey: identifierSchema,
@@ -150,13 +195,84 @@ const canvasOperationSchema = z.discriminatedUnion("type", [
     .strict(),
 ]);
 
+const projectCharacterCandidateSchema = z
+  .object({
+    name: displayNameSchema,
+    aliases: z.array(displayNameSchema).max(20),
+    role: z.string().min(1).max(2_048),
+    appearance: z.string().min(1).max(2_048),
+    clothing: z.string().min(1).max(2_048),
+    physique: z.string().min(1).max(2_048),
+    personality: z.string().min(1).max(2_048),
+    props: z.string().max(2_048),
+    consistencyPrompt: z.string().min(1).max(2_048),
+    multiViewPrompt: z.string().min(1).max(2_048),
+    voiceLanguage: z.string().min(1).max(2_048),
+    voiceAge: z.string().min(1).max(2_048),
+    voiceTimbre: z.string().min(1).max(2_048),
+  })
+  .strict();
+
+const projectOperationSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      operationId: identifierSchema,
+      type: z.literal("create_character_candidates"),
+      unitId: identifierSchema,
+      candidates: z.array(projectCharacterCandidateSchema).min(1).max(100),
+    })
+    .strict(),
+  z
+    .object({
+      operationId: identifierSchema,
+      type: z.literal("replace_unit_shots"),
+      unitId: identifierSchema,
+      shots: z
+        .array(
+          z
+            .object({
+              title: displayNameSchema,
+              description: z.string().min(1).max(8 * 1_024),
+              durationMs: z.number().int().min(1_000).max(30_000),
+            })
+            .strict(),
+        )
+        .min(1)
+        .max(200),
+    })
+    .strict(),
+]);
+
 const wrapToolArguments = <Schema extends z.ZodType>(argumentsSchema: Schema) =>
   z
     .object({
       arguments: argumentsSchema,
-      expectedDelivery: expectedDeliverySchema,
+      expectedDelivery: mcpExpectedDeliverySchema,
     })
     .strict();
+
+export function normalizeMcpExpectedDelivery(
+  value: z.infer<typeof mcpExpectedDeliverySchema>,
+): LocalAgentExpectedDelivery {
+  return expectedDeliverySchema.parse({
+    kind: value.kind,
+    completionCriteria: value.completionCriteria.map((criterion) =>
+      criterion.artifact === null || criterion.artifact === undefined
+        ? { fact: criterion.fact }
+        : { fact: criterion.fact, artifact: criterion.artifact },
+    ),
+    ...(value.requiredArtifacts === null ||
+    value.requiredArtifacts === undefined
+      ? {}
+      : { requiredArtifacts: value.requiredArtifacts }),
+    ...(value.targetCanvasId === null || value.targetCanvasId === undefined
+      ? {}
+      : { targetCanvasId: value.targetCanvasId }),
+    ...(value.targetProjectId === null || value.targetProjectId === undefined
+      ? {}
+      : { targetProjectId: value.targetProjectId }),
+  });
+}
 
 export const canvasToolEnvelopeSchema = wrapToolArguments(jsonObjectSchema);
 
@@ -198,6 +314,26 @@ export const assetsPublishToolInputSchema = wrapToolArguments(
       domainProjectId: identifierSchema,
       displayName: displayNameSchema,
       clientMutationId: identifierSchema,
+    })
+    .strict(),
+);
+
+export const projectReadToolInputSchema = wrapToolArguments(
+  z
+    .object({
+      domainProjectId: identifierSchema,
+      canvasId: identifierSchema,
+    })
+    .strict(),
+);
+
+export const projectApplyOpsToolInputSchema = wrapToolArguments(
+  z
+    .object({
+      domainProjectId: identifierSchema,
+      baseRevision: z.number().int().nonnegative(),
+      clientMutationId: identifierSchema,
+      operations: z.array(projectOperationSchema).min(1).max(100),
     })
     .strict(),
 );

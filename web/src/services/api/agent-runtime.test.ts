@@ -17,7 +17,7 @@ const approvalView = {
         maxSteps: 8,
         modelRecordId: "model-1",
         modelKey: "agent-model",
-        toolSchemaVersion: 8,
+        toolSchemaVersion: 10,
         runtimeVersion: 5,
         policyVersion: 5,
         createdAt: "2026-09-01T00:00:00Z",
@@ -296,6 +296,28 @@ test("审批卡严格保留影响、冻结报价、过期时间并提交完整�
             decision: "approved",
         });
         assert.deepEqual(submittedBody, { toolCallId: "call-1", actionVersion: 1, proposalHash: "a".repeat(64), decision: "approved" });
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test("过期审批通过专用入口请求重新生成提案", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestedURL = "";
+    let submittedBody: unknown;
+    globalThis.fetch = (async (input, init) => {
+        requestedURL = String(input);
+        submittedBody = JSON.parse(String(init?.body));
+        return new Response(JSON.stringify({ code: 0, data: approvalView, msg: "ok" }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof fetch;
+    try {
+        await agentRuntimeClient.refreshExpiredApproval("run-1", {
+            toolCallId: "call-1",
+            actionVersion: 1,
+            proposalHash: "a".repeat(64),
+        });
+        assert.match(requestedURL, /\/agent\/runs\/run-1\/approvals\/refresh$/);
+        assert.deepEqual(submittedBody, { toolCallId: "call-1", actionVersion: 1, proposalHash: "a".repeat(64) });
     } finally {
         globalThis.fetch = originalFetch;
     }

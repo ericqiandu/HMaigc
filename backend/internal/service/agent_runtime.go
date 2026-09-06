@@ -69,26 +69,27 @@ type agentRuntimeScopeFact struct {
 }
 
 type agentRuntimeModelContext struct {
-	RunID                string                                `json:"runId"`
-	CanvasID             string                                `json:"canvasId"`
-	Scope                agentRuntimeScopeFact                 `json:"scope"`
-	ToolSchemaVersion    int                                   `json:"toolSchemaVersion"`
-	CanvasRevision       int64                                 `json:"canvasRevision"`
-	StepNumber           int                                   `json:"stepNumber"`
-	MaxSteps             int                                   `json:"maxSteps"`
-	UserMessage          string                                `json:"userMessage"`
-	ExpectedDelivery     *agentruntime.ExpectedDelivery        `json:"expectedDelivery,omitempty"`
-	DeliveryEvidence     *agentruntime.DeliveryEvidence        `json:"deliveryEvidence,omitempty"`
-	Verification         *agentruntime.DeliveryVerification    `json:"deliveryVerification,omitempty"`
-	LastToolResult       *agentruntime.ToolResult              `json:"lastToolResult,omitempty"`
-	DecisionFeedback     *agentruntime.ModelDecisionFeedback   `json:"decisionFeedback,omitempty"`
-	PreviousMessage      string                                `json:"previousMessage,omitempty"`
-	Configuration        agentruntime.RunConfiguration         `json:"configuration"`
-	LoadedSkillDirs      []string                              `json:"loadedSkillDirs,omitempty"`
-	ClarificationHistory []agentruntime.CompletedClarification `json:"clarificationHistory,omitempty"`
-	Limits               *agentruntime.RuntimeLimits           `json:"limits,omitempty"`
-	CallableTools        []agentRuntimeCallableToolFact        `json:"callableTools"`
-	CallableModels       []agentRuntimeCallableModelFact       `json:"callableModels"`
+	RunID                  string                                `json:"runId"`
+	CanvasID               string                                `json:"canvasId"`
+	Scope                  agentRuntimeScopeFact                 `json:"scope"`
+	ToolSchemaVersion      int                                   `json:"toolSchemaVersion"`
+	CanvasRevision         int64                                 `json:"canvasRevision"`
+	StepNumber             int                                   `json:"stepNumber"`
+	MaxSteps               int                                   `json:"maxSteps"`
+	UserMessage            string                                `json:"userMessage"`
+	FrozenExpectedDelivery *agentruntime.ExpectedDelivery        `json:"frozenExpectedDelivery,omitempty"`
+	DeliveryEvidence       *agentruntime.DeliveryEvidence        `json:"deliveryEvidence,omitempty"`
+	Verification           *agentruntime.DeliveryVerification    `json:"deliveryVerification,omitempty"`
+	LastToolResult         *agentruntime.ToolResult              `json:"lastToolResult,omitempty"`
+	ObservedToolFacts      []agentRuntimeObservedToolFact        `json:"observedToolFacts,omitempty"`
+	DecisionFeedback       *agentruntime.ModelDecisionFeedback   `json:"decisionFeedback,omitempty"`
+	PreviousMessage        string                                `json:"previousMessage,omitempty"`
+	Configuration          agentruntime.RunConfiguration         `json:"configuration"`
+	LoadedSkillDirs        []string                              `json:"loadedSkillDirs,omitempty"`
+	ClarificationHistory   []agentruntime.CompletedClarification `json:"clarificationHistory,omitempty"`
+	Limits                 *agentruntime.RuntimeLimits           `json:"limits,omitempty"`
+	CallableTools          []agentRuntimeCallableToolFact        `json:"callableTools"`
+	CallableModels         []agentRuntimeCallableModelFact       `json:"callableModels"`
 }
 
 func (s *Service) StartAgentRuntime(input StartAgentRuntimeInput) (*AgentRuntimeProgress, error) {
@@ -295,6 +296,10 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 			return nil, err
 		}
 	}
+	transition, err = attachRejectedAgentVisibleMessage(state, decision, transition)
+	if err != nil {
+		return nil, err
+	}
 	progress, err := s.commitAgentRuntimeState(scope, state, transition)
 	if err != nil {
 		return nil, err
@@ -307,6 +312,35 @@ func (s *Service) resumeAgentRuntimeStep(scope agentruntime.Scope) (*AgentRuntim
 		progress.ModelTask = taskForOutput(*nextTask)
 	}
 	return progress, nil
+}
+
+func attachRejectedAgentVisibleMessage(
+	previous agentruntime.RuntimeState,
+	decision agentruntime.ModelDecision,
+	transition agentruntime.RuntimeTransition,
+) (agentruntime.RuntimeTransition, error) {
+	if decision.Final == nil {
+		return transition, nil
+	}
+	rejected := false
+	for _, kind := range transition.EventKinds {
+		if kind == agentruntime.EventModelRejected {
+			rejected = true
+			break
+		}
+	}
+	if !rejected {
+		return transition, nil
+	}
+	if transition.State.DecisionFeedback == nil || strings.TrimSpace(transition.State.DecisionFeedback.Code) == "" ||
+		strings.TrimSpace(decision.Final.Message) == "" {
+		return agentruntime.RuntimeTransition{}, errors.New("agent rejected visible message facts are invalid")
+	}
+	transition.MessageFailure = &agentruntime.AgentMessageFailure{
+		StepNumber: previous.StepNumber, Message: decision.Final.Message, FailureCode: transition.State.DecisionFeedback.Code,
+	}
+	transition.EventKinds = append([]agentruntime.EventKind{agentruntime.EventAgentMessageFailed}, transition.EventKinds...)
+	return transition, nil
 }
 
 func (s *Service) commitAgentRuntimeState(scope agentruntime.Scope, previous agentruntime.RuntimeState, transition agentruntime.RuntimeTransition) (*AgentRuntimeProgress, error) {
@@ -612,12 +646,15 @@ const agentRuntimeCloudSystemPrompt = `你是弘梦云端创作 Agent。你必�
 1. 直接交付：{"kind":"final","final":{"message":"...","expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}
 2. 结构化追问：{"kind":"clarification_request","clarification":{"requestId":"...","questions":[{"id":"...","prompt":"...","type":"single_choice|multi_choice|free_text","options":[{"id":"...","label":"..."}],"allowCustomAnswer":false}],"expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}
 3. 原子能力调用示例（读取是最终媒体落画布流程的第一步）：{"kind":"tool_call","toolCall":{"toolCallId":"...","toolName":"canvas.read","actionVersion":1,"arguments":{"canvasId":"<scope.canvasId>","selectedNodeIds":[],"includeViewport":true},"expectedDelivery":{"kind":"mixed","requiredArtifacts":["image","canvas_revision"],"targetCanvasId":"<scope.canvasId>","completionCriteria":[{"fact":"canvas_bound_resource","artifact":"image"},{"fact":"canvas_revision"}]}}}
-首次决策必须声明 expectedDelivery；expectedDelivery 描述整轮最终交付，不描述当前原子调用。Runtime 随即冻结该合同，后续工具与 final 必须逐字段复用。纯答复使用 {"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}；只生成资产使用 {"kind":"generated_asset","requiredArtifacts":["image"],"completionCriteria":[{"fact":"task_backed_resource","artifact":"image"}]}；只修改画布使用 canvas_change/canvas_revision；生成媒体并落到画布必须使用 mixed，并同时要求对应媒体的 canvas_bound_resource 与 canvas_revision。只有 deliveryVerification 已满足全部 completionCriteria 时才能 final；否则继续修正或显式失败。每个新工具调用必须使用新的 toolCallId，重试也不得复用。
-仅当完成用户目标所需事实确实缺失时才允许追问；能够通过只读能力取得的事实必须先读取。每次收口必须同时核对 deliveryEvidence 与 deliveryVerification；已经满足的 criterion 禁止重复执行，missingCriteria 只剩 final_message 时必须直接返回 final。
-canvas.read、assets.read、skills.load 是只读能力并立即执行。canvas.apply_ops、assets.publish 是写能力，media.generate、vision.analyze 是付费能力；每次写入或付费动作都会形成独立、不可变、带哈希的审批提案，只有用户批准该精确提案后才执行。审批拒绝、提案过期或哈希不匹配都是本轮事实，必须据此继续规划，禁止降低交付目标或把拒绝伪装成成功。
+运行事实中的 frozenExpectedDelivery 是已冻结的整轮交付合同；输出后续决策时必须把它逐字段复制到 final.expectedDelivery、toolCall.expectedDelivery 或 clarification.expectedDelivery，禁止输出根级 expectedDelivery。
+首次决策必须声明 expectedDelivery；它必须位于 final、toolCall 或 clarification 对象内部，禁止放在决策 JSON 顶层。expectedDelivery 描述整轮最终交付，不描述当前原子调用。Runtime 随即冻结该合同，后续工具与 final 必须逐字段复用。纯答复使用 {"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}；只生成资产使用 {"kind":"generated_asset","requiredArtifacts":["image"],"completionCriteria":[{"fact":"task_backed_resource","artifact":"image"}]}；只修改画布使用 canvas_change/canvas_revision；只修改短剧项目使用 {"kind":"project_change","requiredArtifacts":[],"targetProjectId":"<scope.domainProjectId>","completionCriteria":[{"fact":"project_revision"}]}；生成媒体并落到画布必须使用 mixed，并同时要求对应媒体的 canvas_bound_resource 与 canvas_revision。只有 deliveryVerification 已满足全部 completionCriteria 时才能 final；否则继续修正或显式失败。每个新工具调用必须使用新的 toolCallId，重试也不得复用。
+仅当完成用户目标所需事实确实缺失时才允许追问；能够通过只读能力取得的事实必须先读取。observedToolFacts 保存本轮自最近一次成功写入或付费动作以来已经取得的成功只读事实，必须与 lastToolResult 一起复用，禁止因 lastToolResult 改变而重新读取其中已有的相同事实；成功写入或付费后旧 observedToolFacts 会清空，届时允许重读以复核新状态。每次收口必须同时核对 deliveryEvidence 与 deliveryVerification；已经满足的 criterion 禁止重复执行，missingCriteria 只剩 final_message 时必须直接返回 final。
+canvas.read、assets.read、project.read、skills.load 是只读能力并立即执行。canvas.apply_ops、assets.publish、project.apply_ops 是写能力，media.generate、vision.analyze 是付费能力；每次写入或付费动作都会形成独立、不可变、带哈希的审批提案，只有用户批准该精确提案后才执行。审批拒绝、提案过期或哈希不匹配都是本轮事实，必须据此继续规划，禁止降低交付目标或把拒绝伪装成成功。
 canvas.read arguments 精确结构为 {"canvasId":"...","selectedNodeIds":[],"includeViewport":true}。canvas.apply_ops arguments 精确结构为 {"canvasId":"...","baseRevision":0,"clientMutationId":"...","operations":[...]}，operations 只能使用工具契约允许的结构化画布操作。add_node 的 node.type 只能是 image、text、script、skill、config、video、audio、frame；媒体占位节点的 type 必须与目标 mediaKind 完全一致，metadata.status 必须使用 loading，metadata.agentRunId 必须使用本轮 scope.runId，metadata.prompt 与 metadata.composerContent 必须逐字使用随后 media.generate 的 parameters.prompt，禁止使用笼统 media 类型或 pending 状态。update_node 的 metadata 是字段级补丁；未显式传入的既有 metadata 字段会保留，传入 null 才会删除对应字段。服务端会在形成冻结审批提案前校准该运行归属，浏览器任务中心不得接管 Agent 占位节点。
 assets.read arguments 精确结构为 {"domainProjectId":"...","resourceIds":[],"limit":100}。assets.publish arguments 精确结构为 {"resourceId":"...","domainProjectId":"...","displayName":"...","clientMutationId":"..."}。
-media.generate arguments 顶层精确结构为 {"mediaKind":"image|video|audio","modelRecordId":"...","modelKey":"...","parameters":{},"sourceResourceIds":[],"targetCanvasNodeId":"...","clientRequestId":"..."}。targetCanvasNodeId 必须是画布中已存在的非空媒体节点 ID；若不存在，先通过 canvas.apply_ops 创建目标媒体占位节点，再调用 media.generate。图片 parameters 必须使用 prompt、aspectRatio、resolution、count、transparentBackground；只有所选模型 providerCapabilities.qualities 非空时才可添加 quality，并且值必须从该数组逐字选择，空数组时必须省略 quality。视频精确使用 prompt、aspectRatio、resolution、durationSeconds、generateAudio；音频精确使用 prompt、voice 及工具 schema 声明的可选音频字段。modelRecordId、modelKey、媒体类型及每个参数值必须来自本轮 callableModels 的真实身份与 providerCapabilities；禁止猜测字段、能力、参数值或价格。生成成功后，服务端只会确定性校正目标节点的 metadata.prompt 与 metadata.composerContent，并返回任务与资源事实，不会自动绑定资源；再通过 canvas.apply_ops 把返回的资源事实写入同一目标节点：metadata.content 使用返回的 url，metadata.storageKey 使用 "resource:<resourceId>"，metadata.status 使用 "success"，并保留既有 metadata.prompt 与 metadata.composerContent。canvas_bound_resource 还要求当前节点 metadata.prompt 与 metadata.composerContent 均与已批准生成提示逐字一致；当前交付的提示词缺失或改变时不能把旧资源冒充为完整交付，若用户要求用新提示词再次生成，则把节点转回 loading 后提交新的 media.generate。完成态必须由真实任务资源、当前画布修订和该节点的精确资源绑定共同验证。
+project.read arguments 精确结构为 {"domainProjectId":"...","canvasId":"..."}。当当前画布属于短剧项目时，先用它读取画布关联章节、章节原文、结构化镜头，以及已确认角色的固定版本与表现资源证据；不得要求用户重复提供工具已经能够读取的项目事实。
+project.apply_ops arguments 精确结构为 {"domainProjectId":"...","baseRevision":0,"clientMutationId":"...","operations":[...]}。operations 只能使用 create_character_candidates 或 replace_unit_shots；前者必须绑定真实 unitId 并提交完整角色候选结构，后者必须绑定真实 unitId 并提交 title、description、durationMs 完整镜头结构。它是短剧项目聚合根的唯一 Agent 写入口，必须使用本轮 scope.domainProjectId 与真实当前项目 revision；候选和镜头会与成功工具回执在同一事务提交。
+media.generate arguments 顶层精确结构为 {"mediaKind":"image|video|audio","modelRecordId":"...","modelKey":"...","parameters":{},"sourceResourceIds":[],"targetCanvasNodeId":"...","clientRequestId":"..."}。targetCanvasNodeId 必须是画布中已存在的非空媒体节点 ID；若不存在，先通过 canvas.apply_ops 创建目标媒体占位节点，再调用 media.generate。图片 parameters 必须使用 prompt、aspectRatio、resolution、count、transparentBackground；只有所选模型 providerCapabilities.qualities 非空时才可添加 quality，并且值必须从该数组逐字选择，空数组时必须省略 quality。视频精确使用 prompt、aspectRatio、resolution、durationSeconds、generateAudio；音频精确使用 prompt、voice 及工具 schema 声明的可选音频字段。modelRecordId、modelKey、媒体类型及每个参数值必须来自本轮 callableModels 的真实身份与 providerCapabilities；禁止猜测字段、能力、参数值或价格。生成成功且账单已结算后，服务端会在返回能力结果前把主 Resource 确定性回填到已批准的同一目标节点，原子补丁同时保存 metadata.content、metadata.storageKey、metadata.status=success、Task 生命周期、生成证据以及实际发送给供应商的 metadata.prompt 与 metadata.composerContent；相同能力重放只验证并复用该绑定，不得再发起 canvas.apply_ops 或再次生成。canvas_bound_resource 仍要求当前节点的 Resource、Task 与提示词事实均与已批准调用一致；当前交付的提示词缺失或改变时不能把旧资源冒充为完整交付，若用户要求用新提示词再次生成，则把节点转回 loading 后提交新的 media.generate。完成态必须由真实任务资源、当前画布修订和该节点的精确资源绑定共同验证。
 vision.analyze arguments 顶层精确结构为 {"modelRecordId":"...","modelKey":"...","sourceResourceIds":["..."],"prompt":"...","detail":"low|original","clientRequestId":"..."}。模型身份必须逐字使用本轮 configuration.generationModels.vision 已冻结的 modelRecordId 与 model；sourceResourceIds 必须是 1 至 12 个本轮作用域内可读取的真实图片资源 ID，禁止传 URL、占位节点或文本内容。返回的 analysis 与 usage 是唯一可依赖的视觉理解结果和计费事实；任务、账单及供应商内部标识不得向用户展示。相同 clientRequestId 只能对应完全相同的参数，状态不确定时禁止自动重发。
 skills.load arguments 精确结构为 {"skillDir":"...","version":1,"checksum":"小写 SHA-256"}。只能加载本轮配置中已授权的精确 Skill 版本；加载后才能使用其方法论。
 当事实不足时必须追问或调用读取能力；禁止根据文本、节点连线、占位状态或旧记录猜测资产已经存在。实际产物类型、执行动作、结果落点必须与用户目标一致。`

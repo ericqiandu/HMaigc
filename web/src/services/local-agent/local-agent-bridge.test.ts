@@ -93,7 +93,7 @@ function runtimeView(
             maxSteps: state.maxSteps,
             modelRecordId: "",
             modelKey: "",
-            toolSchemaVersion: 8,
+            toolSchemaVersion: 10,
             runtimeVersion: 5,
             policyVersion: 5,
             createdAt: "2026-09-01T00:00:00.000Z",

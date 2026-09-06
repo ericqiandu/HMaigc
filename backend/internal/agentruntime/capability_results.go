@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"unicode/utf8"
 )
 
 type ToolExecutionResult struct {
@@ -110,6 +111,69 @@ type AssetsPublishResult struct {
 
 func (AssetsPublishResult) capabilityResult() {}
 
+type ProjectReadShot struct {
+	ShotID      string `json:"shotId"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Position    int    `json:"position"`
+	DurationMS  int64  `json:"durationMs"`
+	Status      string `json:"status"`
+}
+
+type ProjectReadUnit struct {
+	UnitID     string            `json:"unitId"`
+	Kind       string            `json:"kind"`
+	Title      string            `json:"title"`
+	SourceText string            `json:"sourceText"`
+	Status     string            `json:"status"`
+	Position   int               `json:"position"`
+	LinkRole   string            `json:"linkRole"`
+	Shots      []ProjectReadShot `json:"shots"`
+}
+
+type ProjectReadRepresentation struct {
+	RepresentationID string `json:"representationId"`
+	ResourceID       string `json:"resourceId"`
+	MediaType        string `json:"mediaType"`
+	Role             string `json:"role"`
+}
+
+type ProjectReadCharacter struct {
+	AssetID         string                      `json:"assetId"`
+	Name            string                      `json:"name"`
+	VersionID       string                      `json:"versionId"`
+	Version         int                         `json:"version"`
+	Status          string                      `json:"status"`
+	Definition      json.RawMessage             `json:"definition"`
+	Representations []ProjectReadRepresentation `json:"representations"`
+}
+
+type ProjectReadResult struct {
+	DomainProjectID string                 `json:"domainProjectId"`
+	CanvasID        string                 `json:"canvasId"`
+	Name            string                 `json:"name"`
+	ProjectType     string                 `json:"projectType"`
+	AspectRatio     string                 `json:"aspectRatio"`
+	Revision        int64                  `json:"revision"`
+	Units           []ProjectReadUnit      `json:"units"`
+	Characters      []ProjectReadCharacter `json:"characters"`
+}
+
+func (ProjectReadResult) capabilityResult() {}
+
+type ProjectApplyOpsResult struct {
+	DomainProjectID     string   `json:"domainProjectId"`
+	BaseRevision        int64    `json:"baseRevision"`
+	CommittedRevision   int64    `json:"committedRevision"`
+	ClientMutationID    string   `json:"clientMutationId"`
+	ProposalHash        string   `json:"proposalHash"`
+	AppliedOperationIDs []string `json:"appliedOperationIds"`
+	CandidateIDs        []string `json:"candidateIds"`
+	ShotIDs             []string `json:"shotIds"`
+}
+
+func (ProjectApplyOpsResult) capabilityResult() {}
+
 type MediaGenerateResult struct {
 	TaskID          string                         `json:"taskId"`
 	BillingOrderID  string                         `json:"billingOrderId"`
@@ -168,6 +232,10 @@ func DecodeCapabilityResult(name ToolName, payload json.RawMessage) (CapabilityR
 		return decodeAssetsReadResult(payload)
 	case ToolAssetsPublish:
 		return decodeAssetsPublishResult(payload)
+	case ToolProjectRead:
+		return decodeProjectReadResult(payload)
+	case ToolProjectApplyOps:
+		return decodeProjectApplyOpsResult(payload)
 	case ToolMediaGenerate:
 		return decodeMediaGenerateResult(payload)
 	case ToolVisionAnalyze:
@@ -177,6 +245,130 @@ func DecodeCapabilityResult(name ToolName, payload json.RawMessage) (CapabilityR
 	default:
 		return nil, errCapabilityResultInvalid
 	}
+}
+
+func decodeProjectReadResult(payload json.RawMessage) (CapabilityResult, error) {
+	var wire ProjectReadResult
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error { return decoder.Decode(&wire) }, capabilityPayloadLimit) != nil || wire.Revision < 0 || wire.Units == nil || wire.Characters == nil {
+		return nil, errCapabilityResultInvalid
+	}
+	projectID, err := normalizeIdentifier(wire.DomainProjectID, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	canvasID, err := normalizeIdentifier(wire.CanvasID, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	name, err := normalizeText(wire.Name, capabilityDisplayNameLimit)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	projectType, err := normalizeText(wire.ProjectType, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	aspectRatio, err := normalizeText(wire.AspectRatio, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	units := make([]ProjectReadUnit, 0, len(wire.Units))
+	seenUnits := make(map[string]struct{}, len(wire.Units))
+	for _, unit := range wire.Units {
+		unitID, unitErr := normalizeIdentifier(unit.UnitID, capabilityIdentifierLimit)
+		if unitErr != nil || unit.Position < 0 || unit.Shots == nil {
+			return nil, errCapabilityResultInvalid
+		}
+		if _, duplicate := seenUnits[unitID]; duplicate {
+			return nil, errCapabilityResultInvalid
+		}
+		seenUnits[unitID] = struct{}{}
+		kind, kindErr := normalizeText(unit.Kind, capabilityIdentifierLimit)
+		title, titleErr := normalizeText(unit.Title, capabilityDisplayNameLimit)
+		status, statusErr := normalizeText(unit.Status, capabilityIdentifierLimit)
+		linkRole, linkRoleErr := normalizeText(unit.LinkRole, capabilityIdentifierLimit)
+		if kindErr != nil || titleErr != nil || statusErr != nil || linkRoleErr != nil || !utf8.ValidString(unit.SourceText) || utf8.RuneCountInString(unit.SourceText) > 64*1024 {
+			return nil, errCapabilityResultInvalid
+		}
+		shots := make([]ProjectReadShot, 0, len(unit.Shots))
+		for _, shot := range unit.Shots {
+			shotID, shotErr := normalizeIdentifier(shot.ShotID, capabilityIdentifierLimit)
+			shotTitle, shotTitleErr := normalizeText(shot.Title, capabilityDisplayNameLimit)
+			description, descriptionErr := normalizeText(shot.Description, 8*1024)
+			shotStatus, shotStatusErr := normalizeText(shot.Status, capabilityIdentifierLimit)
+			if shotErr != nil || shotTitleErr != nil || descriptionErr != nil || shotStatusErr != nil || shot.Position < 0 || shot.DurationMS < 1_000 || shot.DurationMS > 30_000 {
+				return nil, errCapabilityResultInvalid
+			}
+			shots = append(shots, ProjectReadShot{ShotID: shotID, Title: shotTitle, Description: description, Position: shot.Position, DurationMS: shot.DurationMS, Status: shotStatus})
+		}
+		units = append(units, ProjectReadUnit{UnitID: unitID, Kind: kind, Title: title, SourceText: unit.SourceText, Status: status, Position: unit.Position, LinkRole: linkRole, Shots: shots})
+	}
+	characters := make([]ProjectReadCharacter, 0, len(wire.Characters))
+	seenCharacters := make(map[string]struct{}, len(wire.Characters))
+	for _, character := range wire.Characters {
+		assetID, assetErr := normalizeIdentifier(character.AssetID, capabilityIdentifierLimit)
+		versionID, versionErr := normalizeIdentifier(character.VersionID, capabilityIdentifierLimit)
+		name, nameErr := normalizeText(character.Name, capabilityDisplayNameLimit)
+		status, statusErr := normalizeText(character.Status, capabilityIdentifierLimit)
+		definition, definitionErr := normalizeJSONObject(character.Definition, capabilityInstructionsLimit, false)
+		if assetErr != nil || versionErr != nil || nameErr != nil || statusErr != nil || definitionErr != nil || character.Version < 1 || character.Representations == nil {
+			return nil, errCapabilityResultInvalid
+		}
+		if _, duplicate := seenCharacters[assetID]; duplicate {
+			return nil, errCapabilityResultInvalid
+		}
+		seenCharacters[assetID] = struct{}{}
+		representations := make([]ProjectReadRepresentation, 0, len(character.Representations))
+		for _, representation := range character.Representations {
+			representationID, representationErr := normalizeIdentifier(representation.RepresentationID, capabilityIdentifierLimit)
+			resourceID, resourceErr := normalizeResourceIdentifier(representation.ResourceID)
+			mediaType, mediaErr := normalizeText(representation.MediaType, capabilityIdentifierLimit)
+			role, roleErr := normalizeText(representation.Role, capabilityIdentifierLimit)
+			if representationErr != nil || resourceErr != nil || mediaErr != nil || roleErr != nil {
+				return nil, errCapabilityResultInvalid
+			}
+			representations = append(representations, ProjectReadRepresentation{RepresentationID: representationID, ResourceID: resourceID, MediaType: mediaType, Role: role})
+		}
+		characters = append(characters, ProjectReadCharacter{AssetID: assetID, Name: name, VersionID: versionID, Version: character.Version, Status: status, Definition: definition, Representations: representations})
+	}
+	return ProjectReadResult{DomainProjectID: projectID, CanvasID: canvasID, Name: name, ProjectType: projectType, AspectRatio: aspectRatio, Revision: wire.Revision, Units: units, Characters: characters}, nil
+}
+
+func decodeProjectApplyOpsResult(payload json.RawMessage) (CapabilityResult, error) {
+	var wire struct {
+		DomainProjectID     string   `json:"domainProjectId"`
+		BaseRevision        *int64   `json:"baseRevision"`
+		CommittedRevision   *int64   `json:"committedRevision"`
+		ClientMutationID    string   `json:"clientMutationId"`
+		ProposalHash        string   `json:"proposalHash"`
+		AppliedOperationIDs []string `json:"appliedOperationIds"`
+		CandidateIDs        []string `json:"candidateIds"`
+		ShotIDs             []string `json:"shotIds"`
+	}
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error { return decoder.Decode(&wire) }, capabilityPayloadLimit) != nil || wire.BaseRevision == nil || wire.CommittedRevision == nil || *wire.BaseRevision < 0 || *wire.CommittedRevision != *wire.BaseRevision+1 || wire.AppliedOperationIDs == nil || wire.CandidateIDs == nil || wire.ShotIDs == nil || !validSHA256(wire.ProposalHash) {
+		return nil, errCapabilityResultInvalid
+	}
+	projectID, err := normalizeIdentifier(wire.DomainProjectID, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	mutationID, err := normalizeIdentifier(wire.ClientMutationID, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	operationIDs, err := normalizeIdentifiers(wire.AppliedOperationIDs, capabilityOperationLimit, false)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	candidateIDs, err := normalizeIdentifiers(wire.CandidateIDs, capabilityResourceLimit, true)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	shotIDs, err := normalizeIdentifiers(wire.ShotIDs, 200, true)
+	if err != nil {
+		return nil, errCapabilityResultInvalid
+	}
+	return ProjectApplyOpsResult{DomainProjectID: projectID, BaseRevision: *wire.BaseRevision, CommittedRevision: *wire.CommittedRevision, ClientMutationID: mutationID, ProposalHash: wire.ProposalHash, AppliedOperationIDs: operationIDs, CandidateIDs: candidateIDs, ShotIDs: shotIDs}, nil
 }
 
 func decodeCanvasReadResult(payload json.RawMessage) (CapabilityResult, error) {

@@ -39,9 +39,21 @@ const finalDecisionText = (message: string): string =>
       kind: "answer",
       requiredArtifacts: null,
       targetCanvasId: null,
+      targetProjectId: null,
       completionCriteria: [{ fact: "final_message", artifact: null }],
     },
   });
+
+test("documents every delivery-kind invariant in the Codex runtime instructions", () => {
+  const instructions = buildCanvasAgentInstructions("canvas-1");
+
+  assert.match(instructions, /answer.*final_message.*targetCanvasId.*targetProjectId/);
+  assert.match(instructions, /canvas_change.*targetCanvasId.*canvas_revision/);
+  assert.match(instructions, /project_change.*targetProjectId.*project_revision/);
+  assert.match(instructions, /generated_asset.*requiredArtifacts.*artifact/);
+  assert.match(instructions, /mixed.*revision.*target/);
+  assert.match(instructions, /null.*缺省/);
+});
 
 class FakeCodexThread implements CodexThreadPort {
   id: string | null = null;
@@ -236,6 +248,8 @@ test("starts a model-pinned Codex thread, normalizes events, and records local h
         "canvas_apply_ops",
         "assets_read",
         "assets_publish",
+        "project_read",
+        "project_apply_ops",
         "media_generate",
         "skills_load",
       ],

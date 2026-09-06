@@ -5,6 +5,7 @@ import {
     agentRuntimeClient,
     agentRuntimeHandleStorage,
     AgentRuntimeRequestError,
+    type AgentApprovalRefreshSubmission,
     type AgentApprovalSubmission,
     type AgentClarificationAnswerInput,
     type AgentRuntimeClient,
@@ -472,6 +473,37 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
         [adoptView, busy, client, view],
     );
 
+    const refreshExpiredApproval = useCallback(
+        async (submission: AgentApprovalRefreshSubmission) => {
+            const call = view?.state.status === "waiting_approval" ? view.state.pendingToolCall : undefined;
+            const approval = view?.state.status === "waiting_approval" ? view.pendingApproval : undefined;
+            if (!call || !approval || !view || busy) return;
+            if (submission.toolCallId !== call.toolCallId || submission.actionVersion !== call.actionVersion || submission.proposalHash !== approval.proposalHash) {
+                setError("过期审批身份已变化，请刷新后重试");
+                return;
+            }
+            setBusy(true);
+            setError("");
+            try {
+                adoptView(await client.refreshExpiredApproval(view.run.id, submission));
+            } catch (cause) {
+                if (cause instanceof AgentRuntimeRequestError && cause.status === 409) {
+                    try {
+                        adoptView(await client.getRun(view.run.id));
+                        setError("审批状态已更新，请核对当前提案");
+                    } catch (refreshCause) {
+                        setError(errorMessage(refreshCause, "审批状态刷新失败"));
+                    }
+                    return;
+                }
+                setError(errorMessage(cause, "重新生成审批提案失败"));
+            } finally {
+                setBusy(false);
+            }
+        },
+        [adoptView, busy, client, view],
+    );
+
     const submitClarificationResponse = useCallback(
         async (input: { requestId: string; questionId: string; answer: AgentClarificationAnswerInput; complete: boolean }) => {
             const pending = view?.state.status === "waiting_input" ? view.state.pendingClarification : undefined;
@@ -555,6 +587,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             interrupt,
             submitClarificationResponse,
             decideApproval,
+            refreshExpiredApproval,
             newThread,
             selectThread,
             reloadThreads,
@@ -564,6 +597,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             busy,
             connection,
             decideApproval,
+            refreshExpiredApproval,
             error,
             historyError,
             historyLoading,

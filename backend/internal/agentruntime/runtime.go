@@ -120,11 +120,18 @@ type RuntimeInput struct {
 type RuntimeTransition struct {
 	State                RuntimeState
 	EventKinds           []EventKind
+	MessageFailure       *AgentMessageFailure
 	RejectedToolCall     *ToolCallDecision
 	ToolReplay           *ToolReplay
 	ApprovalProposalHash string
 	ApprovalCostQuote    *ApprovalCostQuote
 	ApprovalResolution   ApprovalResolution
+}
+
+type AgentMessageFailure struct {
+	StepNumber  int
+	Message     string
+	FailureCode string
 }
 
 type ToolResolution struct {
@@ -179,10 +186,11 @@ const (
 )
 
 type ToolApprovalInvalidation struct {
-	ToolCallID    string
-	ActionVersion int
-	ProposalHash  string
-	ErrorCode     string
+	ToolCallID        string
+	ActionVersion     int
+	ProposalHash      string
+	ErrorCode         string
+	RenewedDeadlineAt time.Time
 }
 
 func AppendSteer(current RuntimeState, request SteerRequest) (RuntimeTransition, bool, error) {
@@ -270,9 +278,10 @@ func runtimeStatusTerminal(status RunStatus) bool {
 	return status == RunSucceeded || status == RunFailed || status == RunCancelled
 }
 
-// ExpireRuntimeAt applies the immutable runtime deadline stored in the
-// checkpoint. Recovery calls this before resuming work so a restart cannot
-// extend the execution window.
+// ExpireRuntimeAt applies the runtime deadline stored in the checkpoint.
+// Recovery calls this before resuming work so a restart cannot extend the
+// execution window. Only an explicit expired-approval invalidation may issue
+// a new bounded deadline through InvalidateToolApproval.
 func ExpireRuntimeAt(current RuntimeState, now time.Time) (RuntimeTransition, bool, error) {
 	if err := validateRuntimeState(current); err != nil {
 		return RuntimeTransition{}, false, err
@@ -735,7 +744,14 @@ func InvalidateToolApproval(current RuntimeState, invalidation ToolApprovalInval
 	if invalidation.ErrorCode != ApprovalProposalExpired && invalidation.ErrorCode != ApprovalProposalMismatch {
 		return RuntimeTransition{}, errors.New("agent tool approval invalidation error code is invalid")
 	}
+	if !invalidation.RenewedDeadlineAt.IsZero() {
+		if invalidation.ErrorCode != ApprovalProposalExpired || current.Limits == nil ||
+			!invalidation.RenewedDeadlineAt.After(current.Limits.DeadlineAt) {
+			return RuntimeTransition{}, errors.New("agent tool approval runtime renewal is invalid")
+		}
+	}
 	next := current
+	next.Limits = cloneRuntimeLimits(current.Limits)
 	next.StateVersion++
 	next.Status = RunRunning
 	next.PendingToolCall = nil
@@ -745,6 +761,9 @@ func InvalidateToolApproval(current RuntimeState, invalidation ToolApprovalInval
 		Succeeded: false, Output: json.RawMessage(`{}`), ErrorCode: invalidation.ErrorCode,
 	}
 	next.FailureCode = ""
+	if !invalidation.RenewedDeadlineAt.IsZero() {
+		next.Limits.DeadlineAt = invalidation.RenewedDeadlineAt.UTC()
+	}
 	events := []EventKind{EventToolResult, EventRunStatusChanged}
 	if next.StepNumber >= next.MaxSteps {
 		next.Status = RunFailed

@@ -44,6 +44,10 @@ type agentAssetsReadCapabilityExecutor struct {
 	service *Service
 }
 
+type agentProjectReadCapabilityExecutor struct {
+	service *Service
+}
+
 type agentSkillsLoadCapabilityExecutor struct {
 	service *Service
 }
@@ -142,6 +146,133 @@ func (executor agentAssetsReadCapabilityExecutor) Execute(ctx context.Context, s
 	}
 	result, err := agentruntime.NewToolExecutionResult(agentruntime.ToolAssetsRead, agentruntime.AssetsReadResult{
 		DomainProjectID: scope.DomainProjectID, Resources: resources,
+	})
+	if err != nil {
+		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "capability_result_invalid", Err: err}
+	}
+	return result, nil
+}
+
+func (executor agentProjectReadCapabilityExecutor) Execute(ctx context.Context, scope agentruntime.Scope, call agentruntime.ToolCallDecision) (agentruntime.ToolExecutionResult, error) {
+	if err := ctx.Err(); err != nil {
+		return agentruntime.ToolExecutionResult{}, err
+	}
+	if executor.service == nil {
+		return agentruntime.ToolExecutionResult{}, failAgentCapability("capability_unavailable", "project.read executor is unavailable")
+	}
+	if err := scope.Validate(); err != nil {
+		return agentruntime.ToolExecutionResult{}, failAgentCapability("capability_scope_invalid", err.Error())
+	}
+	decoded, err := agentruntime.DecodeCapabilityArguments(call.ToolName, call.Arguments)
+	if err != nil {
+		return agentruntime.ToolExecutionResult{}, failAgentCapability("capability_arguments_invalid", "project.read arguments are invalid")
+	}
+	arguments, ok := decoded.(agentruntime.ProjectReadArguments)
+	if !ok || call.ToolName != agentruntime.ToolProjectRead || call.ActionVersion != 1 {
+		return agentruntime.ToolExecutionResult{}, failAgentCapability("capability_arguments_invalid", "project.read call identity is invalid")
+	}
+	if arguments.DomainProjectID != scope.DomainProjectID || arguments.CanvasID != scope.CanvasID {
+		return agentruntime.ToolExecutionResult{}, failAgentCapability("capability_scope_conflict", "project.read scope is stale")
+	}
+	canvas, _, err := executor.service.canvasAccess(scope.ActorUserID, scope.CanvasID)
+	if err != nil {
+		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "capability_ownership_forbidden", Err: err}
+	}
+	if canvas.ProjectID != scope.DomainProjectID {
+		return agentruntime.ToolExecutionResult{}, failAgentCapability("capability_scope_conflict", "project.read canvas project scope is stale")
+	}
+	project, err := executor.service.repo.ProjectReadableForUser(scope.ActorUserID, scope.DomainProjectID)
+	if err != nil {
+		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "capability_ownership_forbidden", Err: err}
+	}
+	links, err := executor.service.repo.ProjectCanvasUnitLinks(project.ID)
+	if err != nil {
+		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "project_facts_unavailable", Err: err}
+	}
+	allUnits, err := executor.service.repo.ProjectUnits(project.ID)
+	if err != nil {
+		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "project_facts_unavailable", Err: err}
+	}
+	allShots, err := executor.service.repo.ProjectShots(project.ID)
+	if err != nil {
+		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "project_facts_unavailable", Err: err}
+	}
+	linkRoles := make(map[string]string)
+	for _, link := range links {
+		if link.CanvasID == scope.CanvasID {
+			linkRoles[link.UnitID] = link.Role
+		}
+	}
+	shotsByUnit := make(map[string][]agentruntime.ProjectReadShot)
+	for _, shot := range allShots {
+		if _, linked := linkRoles[shot.UnitID]; !linked {
+			continue
+		}
+		shotsByUnit[shot.UnitID] = append(shotsByUnit[shot.UnitID], agentruntime.ProjectReadShot{
+			ShotID: shot.ID, Title: shot.Title, Description: shot.Description, Position: shot.Position,
+			DurationMS: shot.DurationMs, Status: shot.Status,
+		})
+	}
+	units := make([]agentruntime.ProjectReadUnit, 0, len(linkRoles))
+	for _, unit := range allUnits {
+		linkRole, linked := linkRoles[unit.ID]
+		if !linked {
+			continue
+		}
+		unitShots := shotsByUnit[unit.ID]
+		if unitShots == nil {
+			unitShots = []agentruntime.ProjectReadShot{}
+		}
+		units = append(units, agentruntime.ProjectReadUnit{
+			UnitID: unit.ID, Kind: string(unit.Kind), Title: unit.Title, SourceText: unit.SourceText,
+			Status: string(unit.Status), Position: unit.Position, LinkRole: linkRole, Shots: unitShots,
+		})
+	}
+	assets, err := executor.service.repo.ProjectAssets(scope.ActorUserID, project.ID)
+	if err != nil {
+		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "project_facts_unavailable", Err: err}
+	}
+	characters := make([]agentruntime.ProjectReadCharacter, 0)
+	for _, asset := range assets {
+		if asset.Category != model.AssetCategoryCharacter || asset.Status != model.AssetVersionStatusConfirmed {
+			continue
+		}
+		if strings.TrimSpace(asset.PrimaryVersionID) == "" {
+			return agentruntime.ToolExecutionResult{}, failAgentCapability("project_character_invalid", "confirmed character is missing its primary version")
+		}
+		version, versionErr := executor.service.repo.AssetVersion(asset.PrimaryVersionID)
+		if versionErr != nil {
+			return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "project_character_invalid", Err: versionErr}
+		}
+		if version.AssetID != asset.ID || version.Status != model.AssetVersionStatusConfirmed {
+			return agentruntime.ToolExecutionResult{}, failAgentCapability("project_character_invalid", "confirmed character primary version conflicts with the project asset")
+		}
+		definition := json.RawMessage(version.DefinitionJSON)
+		if !json.Valid(definition) {
+			return agentruntime.ToolExecutionResult{}, failAgentCapability("project_character_invalid", "confirmed character definition is invalid")
+		}
+		storedRepresentations, representationErr := executor.service.repo.AssetRepresentations(version.ID)
+		if representationErr != nil {
+			return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "project_character_invalid", Err: representationErr}
+		}
+		representations := make([]agentruntime.ProjectReadRepresentation, 0, len(storedRepresentations))
+		for _, representation := range storedRepresentations {
+			if strings.TrimSpace(representation.ResourceID) == "" {
+				continue
+			}
+			representations = append(representations, agentruntime.ProjectReadRepresentation{
+				RepresentationID: representation.ID, ResourceID: representation.ResourceID,
+				MediaType: representation.MediaType, Role: representation.Role,
+			})
+		}
+		characters = append(characters, agentruntime.ProjectReadCharacter{
+			AssetID: asset.ID, Name: asset.Title, VersionID: version.ID, Version: version.Version,
+			Status: string(version.Status), Definition: definition, Representations: representations,
+		})
+	}
+	result, err := agentruntime.NewToolExecutionResult(agentruntime.ToolProjectRead, agentruntime.ProjectReadResult{
+		DomainProjectID: project.ID, CanvasID: canvas.ID, Name: project.Name, ProjectType: project.Type,
+		AspectRatio: project.AspectRatio, Revision: project.Revision, Units: units, Characters: characters,
 	})
 	if err != nil {
 		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "capability_result_invalid", Err: err}

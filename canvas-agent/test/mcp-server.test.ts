@@ -9,6 +9,7 @@ import { MCP_TOOL_NAME_MAP, createCanvasMcpServer } from "../src/mcp-server";
 import {
   canvasReadToolInputSchema,
   mediaGenerateToolInputSchema,
+  normalizeMcpExpectedDelivery,
 } from "../src/mcp-tool-schemas";
 
 test("canvas.read MCP contract rejects a viewport scope the backend cannot authorize", () => {
@@ -25,6 +26,28 @@ test("canvas.read MCP contract rejects a viewport scope the backend cannot autho
   };
 
   assert.equal(canvasReadToolInputSchema.safeParse(input).success, false);
+});
+
+test("MCP delivery transport normalizes structured-output nulls to canonical omissions", () => {
+  const parsed = canvasReadToolInputSchema.parse({
+    arguments: {
+      canvasId: "canvas-1",
+      selectedNodeIds: [],
+      includeViewport: true,
+    },
+    expectedDelivery: {
+      kind: "answer",
+      requiredArtifacts: null,
+      targetCanvasId: null,
+      targetProjectId: null,
+      completionCriteria: [{ fact: "final_message", artifact: null }],
+    },
+  });
+
+  assert.deepEqual(normalizeMcpExpectedDelivery(parsed.expectedDelivery), {
+    kind: "answer",
+    completionCriteria: [{ fact: "final_message" }],
+  });
 });
 
 test("media.generate MCP contract rejects guessed image parameter keys", () => {
@@ -52,7 +75,7 @@ test("media.generate MCP contract rejects guessed image parameter keys", () => {
   assert.equal(mediaGenerateToolInputSchema.safeParse(input).success, false);
 });
 
-test("MCP 只暴露六种纯映射能力并通过 CanvasSession 等待权威结果", async () => {
+test("MCP 只暴露八种纯映射能力并通过 CanvasSession 等待权威结果", async () => {
   let emittedResolve: ((value: void) => void) | undefined;
   const emitted = new Promise<void>((resolve) => {
     emittedResolve = resolve;
@@ -98,6 +121,8 @@ test("MCP 只暴露六种纯映射能力并通过 CanvasSession 等待权威结�
       (tool) => tool.name === "canvas_apply_ops",
     );
     const skillsLoad = tools.tools.find((tool) => tool.name === "skills_load");
+    const projectApplyOps = tools.tools.find((tool) => tool.name === "project_apply_ops");
+    const projectRead = tools.tools.find((tool) => tool.name === "project_read");
     assert.match(JSON.stringify(mediaGenerate?.inputSchema), /"mediaKind"/);
     assert.match(JSON.stringify(mediaGenerate?.inputSchema), /"modelRecordId"/);
     assert.match(JSON.stringify(canvasApplyOps?.inputSchema), /"operations"/);
@@ -105,6 +130,10 @@ test("MCP 只暴露六种纯映射能力并通过 CanvasSession 等待权威结�
     assert.match(canvasApplyOps?.description ?? "", /metadata\.prompt/);
     assert.match(mediaGenerate?.description ?? "", /parameters\.prompt/);
     assert.match(JSON.stringify(skillsLoad?.inputSchema), /"checksum"/);
+    assert.match(JSON.stringify(projectApplyOps?.inputSchema), /"create_character_candidates"/);
+    assert.match(JSON.stringify(projectApplyOps?.inputSchema), /"replace_unit_shots"/);
+    assert.match(JSON.stringify(projectRead?.inputSchema), /"domainProjectId"/);
+    assert.match(JSON.stringify(projectRead?.inputSchema), /"canvasId"/);
 
     const call = client.callTool({
       name: "canvas_get_state",

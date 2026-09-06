@@ -23,12 +23,14 @@ const (
 type ToolName string
 
 const (
-	ToolCanvasRead     ToolName = "canvas.read"
-	ToolCanvasApplyOps ToolName = "canvas.apply_ops"
-	ToolAssetsRead     ToolName = "assets.read"
-	ToolAssetsPublish  ToolName = "assets.publish"
-	ToolMediaGenerate  ToolName = "media.generate"
-	ToolSkillsLoad     ToolName = "skills.load"
+	ToolCanvasRead      ToolName = "canvas.read"
+	ToolCanvasApplyOps  ToolName = "canvas.apply_ops"
+	ToolAssetsRead      ToolName = "assets.read"
+	ToolAssetsPublish   ToolName = "assets.publish"
+	ToolProjectRead     ToolName = "project.read"
+	ToolProjectApplyOps ToolName = "project.apply_ops"
+	ToolMediaGenerate   ToolName = "media.generate"
+	ToolSkillsLoad      ToolName = "skills.load"
 
 	// Retired tool identities remain available only for decoding historical
 	// audit facts. They are never valid for the current schema.
@@ -45,6 +47,8 @@ func (name ToolName) Valid() bool {
 
 func (name ToolName) Known() bool {
 	return name.ValidForToolSchema(CurrentToolSchemaVersion) ||
+		name.ValidForToolSchema(RetiredProjectToolSchemaVersion) ||
+		name.ValidForToolSchema(RetiredProjectMutationToolSchemaVersion) ||
 		name.ValidForToolSchema(RetiredCloudToolSchemaVersion) ||
 		name.ValidForToolSchema(ProductionToolSchemaVersion) ||
 		name.ValidForToolSchema(LegacyToolSchemaVersion)
@@ -73,9 +77,23 @@ func (name ToolName) ValidForToolSchema(toolSchemaVersion int) bool {
 		default:
 			return false
 		}
-	case CurrentToolSchemaVersion:
+	case RetiredProjectToolSchemaVersion:
 		switch name {
 		case ToolCanvasRead, ToolCanvasApplyOps, ToolAssetsRead, ToolAssetsPublish, ToolMediaGenerate, ToolVisionAnalyze, ToolSkillsLoad:
+			return true
+		default:
+			return false
+		}
+	case RetiredProjectMutationToolSchemaVersion:
+		switch name {
+		case ToolCanvasRead, ToolCanvasApplyOps, ToolAssetsRead, ToolAssetsPublish, ToolProjectApplyOps, ToolMediaGenerate, ToolVisionAnalyze, ToolSkillsLoad:
+			return true
+		default:
+			return false
+		}
+	case CurrentToolSchemaVersion:
+		switch name {
+		case ToolCanvasRead, ToolCanvasApplyOps, ToolAssetsRead, ToolAssetsPublish, ToolProjectRead, ToolProjectApplyOps, ToolMediaGenerate, ToolVisionAnalyze, ToolSkillsLoad:
 			return true
 		default:
 			return false

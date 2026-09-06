@@ -206,7 +206,7 @@ export function CanvasLocalAgentWorkspace({ projectId, canvasRevision, selectedN
                 )}
                 {configurationError || local.error ? <LocalAgentError message={configurationError || local.error} /> : null}
                 {local.view?.state.status === "waiting_approval" && local.view.state.pendingToolCall && local.view.pendingApproval ? (
-                    <AgentApprovalCard call={local.view.state.pendingToolCall} approval={local.view.pendingApproval} busy={local.busy} muted={theme.node.muted} onDecision={local.decideApproval} />
+                    <AgentApprovalCard call={local.view.state.pendingToolCall} approval={local.view.pendingApproval} busy={local.busy} muted={theme.node.muted} onDecision={local.decideApproval} onRefresh={local.refreshExpiredApproval} />
                 ) : null}
             </section>
             <AgentChatComposer

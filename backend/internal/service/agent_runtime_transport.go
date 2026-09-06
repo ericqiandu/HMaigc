@@ -445,6 +445,38 @@ func (s *Service) SubmitScopedAgentApproval(actor *model.User, runID string, inp
 	return s.agentRuntimeViewForProgress(scope, progress)
 }
 
+func (s *Service) RefreshScopedExpiredAgentApproval(actor *model.User, runID string, input AgentToolApprovalRefreshSubmission) (*AgentRuntimeView, error) {
+	scope, err := s.scopeForAgentRun(actor, runID)
+	if err != nil {
+		return nil, err
+	}
+	progress, err := s.RefreshExpiredAgentToolApproval(scope, input)
+	if err != nil {
+		return nil, s.mapAgentApprovalRefreshError(scope, err)
+	}
+	return s.agentRuntimeViewForProgress(scope, progress)
+}
+
+func (s *Service) mapAgentApprovalRefreshError(scope agentruntime.Scope, err error) error {
+	if !errors.Is(err, errAgentApprovalRefreshFactsConflict) &&
+		!errors.Is(err, errAgentApprovalProposalNotExpired) &&
+		!errors.Is(err, agentruntime.ErrApprovalProposalMismatch) {
+		return s.mapAgentItemStateConflict(scope, err)
+	}
+	latest, loadErr := s.repo.LoadAgentCheckpoint(scope)
+	if loadErr != nil {
+		return errors.Join(err, loadErr)
+	}
+	message := "审批状态已经变化，请重新读取当前提案"
+	if errors.Is(err, errAgentApprovalProposalNotExpired) {
+		message = "当前审批仍在有效期内，请直接批准或拒绝"
+	}
+	return &AgentControlError{
+		Status: http.StatusConflict, ErrorCode: "agent_approval_refresh_conflict", Message: message,
+		LatestStateVersion: latest.StateVersion, Cause: err,
+	}
+}
+
 func (s *Service) SubmitScopedAgentClarificationResponse(actor *model.User, runID string, requestID string, submission agentruntime.ClarificationResponseSubmission) (*AgentRuntimeView, error) {
 	scope, err := s.scopeForAgentRun(actor, runID)
 	if err != nil {

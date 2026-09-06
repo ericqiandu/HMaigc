@@ -11,6 +11,7 @@ const (
 	DeliveryAnswer         DeliveryKind = "answer"
 	DeliveryCanvasChange   DeliveryKind = "canvas_change"
 	DeliveryGeneratedAsset DeliveryKind = "generated_asset"
+	DeliveryProjectChange  DeliveryKind = "project_change"
 	DeliveryMixed          DeliveryKind = "mixed"
 )
 
@@ -44,6 +45,7 @@ const (
 	DeliveryFactPublication         DeliveryFact = "publication"
 	DeliveryFactTaskBackedResource  DeliveryFact = "task_backed_resource"
 	DeliveryFactCanvasBoundResource DeliveryFact = "canvas_bound_resource"
+	DeliveryFactProjectRevision     DeliveryFact = "project_revision"
 )
 
 type DeliveryCriterion struct {
@@ -55,11 +57,12 @@ type ExpectedDelivery struct {
 	Kind               DeliveryKind        `json:"kind"`
 	RequiredArtifacts  []ArtifactKind      `json:"requiredArtifacts,omitempty"`
 	TargetCanvasID     string              `json:"targetCanvasId,omitempty"`
+	TargetProjectID    string              `json:"targetProjectId,omitempty"`
 	CompletionCriteria []DeliveryCriterion `json:"completionCriteria"`
 }
 
 func (expected ExpectedDelivery) Equal(other ExpectedDelivery) bool {
-	if expected.Kind != other.Kind || expected.TargetCanvasID != other.TargetCanvasID ||
+	if expected.Kind != other.Kind || expected.TargetCanvasID != other.TargetCanvasID || expected.TargetProjectID != other.TargetProjectID ||
 		len(expected.RequiredArtifacts) != len(other.RequiredArtifacts) ||
 		len(expected.CompletionCriteria) != len(other.CompletionCriteria) {
 		return false
@@ -78,13 +81,13 @@ func (expected ExpectedDelivery) Equal(other ExpectedDelivery) bool {
 }
 
 func (expected ExpectedDelivery) Validate() error {
-	if expected.Kind != DeliveryAnswer && expected.Kind != DeliveryCanvasChange && expected.Kind != DeliveryGeneratedAsset && expected.Kind != DeliveryMixed {
+	if expected.Kind != DeliveryAnswer && expected.Kind != DeliveryCanvasChange && expected.Kind != DeliveryGeneratedAsset && expected.Kind != DeliveryProjectChange && expected.Kind != DeliveryMixed {
 		return errors.New("expected delivery kind is invalid")
 	}
 	if len(expected.CompletionCriteria) == 0 || len(expected.CompletionCriteria) > 16 {
 		return errors.New("expected delivery criteria are invalid")
 	}
-	if (expected.Kind == DeliveryCanvasChange || expected.Kind == DeliveryMixed) && strings.TrimSpace(expected.TargetCanvasID) == "" {
+	if expected.Kind == DeliveryCanvasChange && strings.TrimSpace(expected.TargetCanvasID) == "" {
 		return errors.New("expected delivery canvas is required")
 	}
 	required := make(map[ArtifactKind]struct{}, len(expected.RequiredArtifacts))
@@ -100,6 +103,7 @@ func (expected ExpectedDelivery) Validate() error {
 	criteriaArtifacts := make(map[ArtifactKind]struct{})
 	hasFinalMessage := false
 	hasCanvasRevision := false
+	hasProjectRevision := false
 	for _, criterion := range expected.CompletionCriteria {
 		switch criterion.Fact {
 		case DeliveryFactFinalMessage:
@@ -109,6 +113,11 @@ func (expected ExpectedDelivery) Validate() error {
 			}
 		case DeliveryFactCanvasRevision:
 			hasCanvasRevision = true
+			if criterion.Artifact != "" {
+				return errors.New("expected delivery criterion artifact is unexpected")
+			}
+		case DeliveryFactProjectRevision:
+			hasProjectRevision = true
 			if criterion.Artifact != "" {
 				return errors.New("expected delivery criterion artifact is unexpected")
 			}
@@ -134,19 +143,26 @@ func (expected ExpectedDelivery) Validate() error {
 	}
 	switch expected.Kind {
 	case DeliveryAnswer:
-		if !hasFinalMessage || hasCanvasRevision || len(criteriaArtifacts) > 0 || strings.TrimSpace(expected.TargetCanvasID) != "" {
+		if !hasFinalMessage || hasCanvasRevision || hasProjectRevision || len(criteriaArtifacts) > 0 || strings.TrimSpace(expected.TargetCanvasID) != "" || strings.TrimSpace(expected.TargetProjectID) != "" {
 			return errors.New("answer delivery facts are inconsistent")
 		}
 	case DeliveryCanvasChange:
-		if !hasCanvasRevision || len(criteriaArtifacts) > 0 {
+		if !hasCanvasRevision || hasProjectRevision || len(criteriaArtifacts) > 0 || strings.TrimSpace(expected.TargetProjectID) != "" {
 			return errors.New("canvas delivery facts are inconsistent")
 		}
 	case DeliveryGeneratedAsset:
-		if len(required) == 0 || len(criteriaArtifacts) == 0 || hasCanvasRevision || strings.TrimSpace(expected.TargetCanvasID) != "" {
+		if len(required) == 0 || len(criteriaArtifacts) == 0 || hasCanvasRevision || hasProjectRevision || strings.TrimSpace(expected.TargetCanvasID) != "" || strings.TrimSpace(expected.TargetProjectID) != "" {
 			return errors.New("generated asset delivery facts are inconsistent")
 		}
+	case DeliveryProjectChange:
+		if !hasProjectRevision || hasCanvasRevision || len(criteriaArtifacts) > 0 || strings.TrimSpace(expected.TargetProjectID) == "" || strings.TrimSpace(expected.TargetCanvasID) != "" {
+			return errors.New("project delivery facts are inconsistent")
+		}
 	case DeliveryMixed:
-		if !hasCanvasRevision || (!hasFinalMessage && len(criteriaArtifacts) == 0) {
+		hasCanvasTarget := strings.TrimSpace(expected.TargetCanvasID) != ""
+		hasProjectTarget := strings.TrimSpace(expected.TargetProjectID) != ""
+		if (!hasCanvasRevision && !hasProjectRevision) || (!hasFinalMessage && len(criteriaArtifacts) == 0 && !hasProjectRevision) ||
+			hasCanvasRevision != hasCanvasTarget || hasProjectRevision != hasProjectTarget {
 			return errors.New("mixed delivery facts are incomplete")
 		}
 	}
@@ -170,11 +186,14 @@ type DeliveryArtifact struct {
 }
 
 type DeliveryEvidence struct {
-	FinalMessage   string             `json:"finalMessage,omitempty"`
-	CanvasID       string             `json:"canvasId,omitempty"`
-	CanvasRevision int64              `json:"canvasRevision,omitempty"`
-	CanvasCurrent  bool               `json:"canvasCurrent,omitempty"`
-	Artifacts      []DeliveryArtifact `json:"artifacts,omitempty"`
+	FinalMessage    string             `json:"finalMessage,omitempty"`
+	CanvasID        string             `json:"canvasId,omitempty"`
+	CanvasRevision  int64              `json:"canvasRevision,omitempty"`
+	CanvasCurrent   bool               `json:"canvasCurrent,omitempty"`
+	ProjectID       string             `json:"projectId,omitempty"`
+	ProjectRevision int64              `json:"projectRevision,omitempty"`
+	ProjectCurrent  bool               `json:"projectCurrent,omitempty"`
+	Artifacts       []DeliveryArtifact `json:"artifacts,omitempty"`
 }
 
 type VerificationStatus string
@@ -210,6 +229,8 @@ func VerifyDelivery(expected ExpectedDelivery, evidence DeliveryEvidence) Delive
 			satisfied = strings.TrimSpace(evidence.FinalMessage) != ""
 		case DeliveryFactCanvasRevision:
 			satisfied = evidence.CanvasRevision > 0 && evidence.CanvasID == expected.TargetCanvasID && evidence.CanvasCurrent
+		case DeliveryFactProjectRevision:
+			satisfied = evidence.ProjectRevision > 0 && evidence.ProjectID == expected.TargetProjectID && evidence.ProjectCurrent
 		case DeliveryFactArtifact:
 			satisfied = deliveryArtifactMatches(artifacts[criterion.Artifact], func(artifact DeliveryArtifact) bool {
 				if criterion.Artifact == ArtifactText {

@@ -45,7 +45,7 @@ func TestAgentRuntimeModelTaskSettlesCreditsAndResumesFromStoredDecision(t *test
 		}
 		encoded, _ := json.Marshal(body)
 		systemPrompt := body.Messages[0].Content
-		currentTools := []string{"canvas.read", "canvas.apply_ops", "assets.read", "assets.publish", "media.generate", "vision.analyze", "skills.load"}
+		currentTools := []string{"canvas.read", "canvas.apply_ops", "assets.read", "assets.publish", "project.read", "project.apply_ops", "media.generate", "vision.analyze", "skills.load"}
 		retiredTools := []string{"specialist.delegate", "canvas.project", "production.plan", "production.render", "canvas.commit", "generation.submit", "skill.load"}
 		contractMismatch := body.Model != "gpt-5.5" || body.ResponseFormat.Type != "json_object" || len(body.Messages) != 2 ||
 			!strings.Contains(systemPrompt, "每个新工具调用必须使用新的 toolCallId，重试也不得复用") ||
@@ -459,6 +459,65 @@ func TestAgentRuntimeRepairsSingleInvalidDecision(t *testing.T) {
 	}
 	if completed.State.Status != agentruntime.RunSucceeded || completed.State.FinalMessage != "已完成修复" || calls.Load() != 2 {
 		t.Fatalf("repaired runtime = %#v; calls=%d", completed, calls.Load())
+	}
+}
+
+func TestAgentRuntimeRepairReceivesStrictDecisionDecodeProblem(t *testing.T) {
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var body struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		attempt := calls.Add(1)
+		content := `{"kind":"tool_call","expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]},"toolCall":{"toolCallId":"read-with-misplaced-delivery","toolName":"canvas.read","actionVersion":1,"arguments":{"canvasId":"canvas-1","selectedNodeIds":[],"includeViewport":true}}}`
+		if attempt == 2 {
+			combined := ""
+			for _, message := range body.Messages {
+				combined += message.Content
+			}
+			if !strings.Contains(combined, "unknown_field:expectedDelivery") {
+				t.Errorf("repair prompt lacks the strict structural problem: %s", combined)
+			}
+			content = `{"kind":"final","final":{"message":"已按协议修复","expectedDelivery":{"kind":"answer","requiredArtifacts":[],"completionCriteria":[{"fact":"final_message"}]}}}`
+		}
+		writeAgentRuntimeChatStream(t, writer, "chatcmpl-structural-repair", content, 0, 0, 0)
+	}))
+	defer server.Close()
+
+	svc, _, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	input := StartAgentRuntimeInput{
+		Scope: agentRuntimeServiceScope(), ClientRequestID: "client-strict-decision-repair",
+		UserMessage: "告诉我下一步", MaxSteps: 4, Configuration: guidedAgentRuntimeConfigurationInput(),
+	}
+	if _, err := svc.StartAgentRuntime(input); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	repairing, err := svc.ResumeAgentRuntime(input.Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repairing.State.DecisionFeedback == nil || !strings.Contains(repairing.State.DecisionFeedback.Reason, "unknown_field:expectedDelivery") {
+		t.Fatalf("repair feedback lacks the strict structural problem: %#v", repairing.State.DecisionFeedback)
+	}
+	if err := svc.ProcessNextTask(); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := svc.ResumeAgentRuntime(input.Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.State.Status != agentruntime.RunSucceeded || completed.State.FinalMessage != "已按协议修复" || calls.Load() != 2 {
+		t.Fatalf("strict decision repair did not complete: %#v; calls=%d", completed, calls.Load())
 	}
 }
 
