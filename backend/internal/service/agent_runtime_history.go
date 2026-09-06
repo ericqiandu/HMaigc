@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -214,15 +213,5 @@ func decodeHistoricalAgentArtifactTimelinePayload(raw string) (agentHistoricalAr
 }
 
 func decodeAgentRuntimeState(stateJSON string) (agentruntime.RuntimeState, error) {
-	decoder := json.NewDecoder(bytes.NewBufferString(stateJSON))
-	decoder.DisallowUnknownFields()
-	var state agentruntime.RuntimeState
-	if err := decoder.Decode(&state); err != nil {
-		return agentruntime.RuntimeState{}, errors.New("agent checkpoint state is invalid")
-	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return agentruntime.RuntimeState{}, errors.New("agent checkpoint state is invalid")
-	}
-	return state, nil
+	return agentruntime.DecodeCheckpointState(stateJSON)
 }

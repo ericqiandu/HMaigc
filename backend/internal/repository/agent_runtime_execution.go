@@ -1,11 +1,9 @@
 package repository
 
 import (
-	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -1152,15 +1150,11 @@ func decodeAgentCheckpointState(
 	runMaxSteps int,
 	runStatus agentruntime.RunStatus,
 ) (agentruntime.RuntimeState, error) {
-	decoder := json.NewDecoder(bytes.NewBufferString(stateJSON))
-	decoder.DisallowUnknownFields()
-	var state agentruntime.RuntimeState
-	if err := decoder.Decode(&state); err != nil {
-		return agentruntime.RuntimeState{}, errors.New("agent checkpoint state is invalid")
+	state, err := agentruntime.DecodeCheckpointState(stateJSON)
+	if err != nil {
+		return agentruntime.RuntimeState{}, err
 	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) ||
-		state.StateVersion != checkpointStateVersion || state.StateVersion != runStateVersion ||
+	if state.StateVersion != checkpointStateVersion || state.StateVersion != runStateVersion ||
 		state.StepNumber != runStepNumber || state.MaxSteps != runMaxSteps || state.Status != runStatus {
 		return agentruntime.RuntimeState{}, errors.New("agent checkpoint state is inconsistent")
 	}
