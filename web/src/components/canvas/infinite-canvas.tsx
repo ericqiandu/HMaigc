@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
-import { applyCanvasLiveViewport, subscribeCanvasViewportPreview } from "@/lib/canvas/canvas-live-viewport";
+import { applyCanvasLiveViewport, CANVAS_GRID_SCREEN_SIZE, subscribeCanvasViewportPreview } from "@/lib/canvas/canvas-live-viewport";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ViewportTransform } from "@/types/canvas";
 
@@ -96,6 +96,16 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
             const container = containerRef.current;
             if (container) container.dataset.canvasViewportInteracting = "true";
             nextViewportRef.current = next;
+            // 绘制帧可能延迟；每次滚轮输入都必须独立刷新最终提交计时器。
+            if (commitAfterIdle) {
+                if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+                syncTimerRef.current = setTimeout(() => {
+                    interactingRef.current = false;
+                    delete containerRef.current?.dataset.canvasViewportInteracting;
+                    syncViewport();
+                    syncTimerRef.current = null;
+                }, 120);
+            }
             if (frameRef.current) return;
             frameRef.current = requestAnimationFrame((now) => {
                 frameRef.current = null;
@@ -105,14 +115,6 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
                 applyCanvasLiveViewport(containerRef.current, pending, notify);
                 if (notify) lastPreviewNotifyRef.current = now;
             });
-            if (!commitAfterIdle) return;
-            if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
-            syncTimerRef.current = setTimeout(() => {
-                interactingRef.current = false;
-                delete containerRef.current?.dataset.canvasViewportInteracting;
-                syncViewport();
-                syncTimerRef.current = null;
-            }, 120);
         },
         [containerRef, onViewportPreviewChange, syncViewport],
     );
@@ -374,10 +376,10 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
                 "--canvas-live-y": `${viewport.y}px`,
                 "--canvas-live-scale": viewport.k,
                 "--canvas-live-inverse-scale": 1 / viewport.k,
-                "--canvas-grid-size": `${48 * viewport.k}px`,
-                "--canvas-grid-x": `${viewport.x % (48 * viewport.k)}px`,
-                "--canvas-grid-y": `${viewport.y % (48 * viewport.k)}px`,
-                "--canvas-dot-size": viewport.k < 0.12 ? "0.8px" : "1.15px",
+                "--canvas-grid-size": `${CANVAS_GRID_SCREEN_SIZE}px`,
+                "--canvas-grid-x": `${viewport.x % CANVAS_GRID_SCREEN_SIZE}px`,
+                "--canvas-grid-y": `${viewport.y % CANVAS_GRID_SCREEN_SIZE}px`,
+                "--canvas-dot-size": "1.15px",
             } as React.CSSProperties}
             onPointerDown={handlePointerDown}
             onDoubleClick={(event) => {
