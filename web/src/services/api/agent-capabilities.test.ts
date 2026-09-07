@@ -103,6 +103,22 @@ describe("agent capability wire contracts", () => {
         assert.throws(() => parseAgentCapabilityResult("vision.analyze", { ...result, sourceResourceIds: ["resource-1", "resource-1"] }), /重复/);
     });
 
+    test("strictly decodes a generated media receipt", () => {
+        const result = {
+            taskId: "task-1",
+            billingOrderId: "billing-1",
+            mediaKind: "video",
+            clientRequestId: "request-1",
+            resources: [{ resourceId: "resource-1", kind: "video", url: "/api/resources/resource-1/file" }],
+        } as const;
+
+        assert.deepEqual(parseAgentCapabilityResult("media.generate", result), result);
+        assert.throws(() => parseAgentCapabilityResult("media.generate", { ...result, providerRequestId: "provider-secret" }), /未知字段/);
+        assert.throws(() => parseAgentCapabilityResult("media.generate", { ...result, resources: [] }), /数量/);
+        assert.throws(() => parseAgentCapabilityResult("media.generate", { ...result, resources: [{ ...result.resources[0], kind: "image" }] }), /kind/);
+        assert.throws(() => parseAgentCapabilityResult("media.generate", { ...result, resources: [{ ...result.resources[0], url: "https://example.com/private.mp4" }] }), /url/);
+    });
+
     test("rejects retired tools, unknown fields, and malformed operations", () => {
         assert.throws(() => parseAgentCapabilityArguments("canvas.project", {}), /不受支持/);
         assert.throws(() => parseAgentCapabilityArguments("canvas.read", { canvasId: "canvas-1", selectedNodeIds: [], includeViewport: true, fallback: true }), /未知字段/);

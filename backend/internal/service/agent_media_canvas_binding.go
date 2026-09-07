@@ -86,6 +86,18 @@ func (s *Service) persistAgentMediaResultOnCanvas(
 	if err != nil || resource.Status != model.ResourceStatusReady || resource.Kind != string(arguments.MediaKind) {
 		return errors.Join(errors.New("media.generate primary resource is unavailable in the approved tenant scope"), err)
 	}
+	order, err := s.repo.BillingOrder(task.BillingOrderID)
+	if err != nil {
+		return errors.Join(errors.New("media.generate billing model facts are unavailable"), err)
+	}
+	if order.ID != receipt.BillingOrderID || order.UserID != scope.ActorUserID || order.TeamID != taskTeamID(scope) || order.TaskID != task.ID ||
+		order.ChannelID == "" || order.ChannelModelID != arguments.ModelRecordID || order.Model != arguments.ModelKey ||
+		order.Capability != string(arguments.MediaKind) || order.PriceVersion < 1 || order.Status != model.BillingStatusSettled {
+		return errors.New("media.generate billing model facts conflict with the approved generation")
+	}
+	generationModel := agentruntime.GenerationModelSelection{
+		ChannelID: order.ChannelID, ModelRecordID: order.ChannelModelID, Model: order.Model, PriceVersion: order.PriceVersion,
+	}
 	clientMutationID := agentMediaResultCanvasMutationID(scope, call)
 	for attempt := 0; attempt < agentMediaResultCanvasCommitAttempts; attempt++ {
 		canvas, _, err := s.canvasAccess(scope.ActorUserID, scope.CanvasID)
@@ -102,6 +114,7 @@ func (s *Service) persistAgentMediaResultOnCanvas(
 			*resource,
 			call,
 			arguments,
+			generationModel,
 			scope.RunID,
 		)
 		if err != nil {
@@ -136,8 +149,13 @@ func agentMediaResultBoundNode(
 	resource model.Resource,
 	call agentruntime.ToolCallDecision,
 	arguments agentruntime.MediaGenerateArguments,
+	generationModel agentruntime.GenerationModelSelection,
 	runID string,
 ) (json.RawMessage, bool, error) {
+	if generationModel.ChannelID == "" || generationModel.ModelRecordID != arguments.ModelRecordID ||
+		generationModel.Model != arguments.ModelKey || generationModel.PriceVersion < 1 {
+		return nil, false, errors.New("media.generate generation model facts conflict with the approved request")
+	}
 	var document agentCanvasStoredDocument
 	if json.Unmarshal([]byte(payload), &document) != nil || document.Nodes == nil {
 		return nil, false, errors.New("media.generate target canvas facts are invalid")
@@ -173,7 +191,7 @@ func agentMediaResultBoundNode(
 		"content": primary.URL, "storageKey": "resource:" + primary.ResourceID, "status": "success",
 		"taskId": task.ID, "taskStatus": string(model.TaskStatusSucceeded), "taskStage": task.Stage,
 		"taskCreatedAt": task.CreatedAt.UTC().Format(time.RFC3339Nano), "taskUpdatedAt": task.UpdatedAt.UTC().Format(time.RFC3339Nano),
-		"mimeType": resource.MimeType,
+		"mimeType": resource.MimeType, "channelId": generationModel.ChannelID, "model": generationModel.Model,
 	}
 	for key, value := range requestFacts.StringMetadata {
 		values[key] = value
@@ -207,8 +225,10 @@ func agentMediaResultBoundNode(
 		BillingOrderID       string `json:"billingOrderId"`
 		ResourceID           string `json:"resourceId"`
 		ClientRequestID      string `json:"clientRequestId"`
+		ChannelID            string `json:"channelId"`
 		ModelRecordID        string `json:"modelRecordId"`
 		ModelKey             string `json:"modelKey"`
+		PriceVersion         int64  `json:"priceVersion"`
 		RequestedAspectRatio string `json:"requestedAspectRatio,omitempty"`
 		RequestedResolution  string `json:"requestedResolution,omitempty"`
 		ActualWidth          int    `json:"actualWidth,omitempty"`
@@ -217,7 +237,8 @@ func agentMediaResultBoundNode(
 	}{
 		RunID: runID, ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
 		TaskID: task.ID, BillingOrderID: task.BillingOrderID, ResourceID: primary.ResourceID,
-		ClientRequestID: arguments.ClientRequestID, ModelRecordID: arguments.ModelRecordID, ModelKey: arguments.ModelKey,
+		ClientRequestID: arguments.ClientRequestID, ChannelID: generationModel.ChannelID,
+		ModelRecordID: generationModel.ModelRecordID, ModelKey: generationModel.Model, PriceVersion: generationModel.PriceVersion,
 		RequestedAspectRatio: requestFacts.RequestedAspectRatio, RequestedResolution: requestFacts.RequestedResolution,
 		ActualWidth: resource.Width, ActualHeight: resource.Height, ActualDurationMS: resource.DurationMs,
 	})

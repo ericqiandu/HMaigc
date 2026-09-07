@@ -408,6 +408,8 @@ func TestAgentMediaCapabilityPersistsSuccessfulResultOnTargetCanvasNode(t *testi
 				Status          string `json:"status"`
 				TaskID          string `json:"taskId"`
 				TaskStatus      string `json:"taskStatus"`
+				ChannelID       string `json:"channelId"`
+				Model           string `json:"model"`
 			} `json:"metadata"`
 		} `json:"nodes"`
 	}
@@ -420,7 +422,9 @@ func TestAgentMediaCapabilityPersistsSuccessfulResultOnTargetCanvasNode(t *testi
 		document.Nodes[0].Metadata.Content != "/api/resources/generated-prompt-image/file" ||
 		document.Nodes[0].Metadata.StorageKey != "resource:generated-prompt-image" ||
 		document.Nodes[0].Metadata.Status != "success" || document.Nodes[0].Metadata.TaskID != task.ID ||
-		document.Nodes[0].Metadata.TaskStatus != string(model.TaskStatusSucceeded) {
+		document.Nodes[0].Metadata.TaskStatus != string(model.TaskStatusSucceeded) ||
+		document.Nodes[0].Metadata.ChannelID != "runtime-image-channel" ||
+		document.Nodes[0].Metadata.Model != "kz_gpt_image2" {
 		t.Fatalf("successful media result was not persisted on the target node: revision=%d payload=%s", canvas.Revision, canvas.PayloadJSON)
 	}
 	if result := db.Model(&model.AgentToolCall{}).
@@ -444,8 +448,8 @@ func TestAgentMediaCapabilityPersistsSuccessfulResultOnTargetCanvasNode(t *testi
 
 func TestAgentMediaResultBindingSkipsCanvasMutationWhenResultIsAlreadyExact(t *testing.T) {
 	payload := `{"nodes":[{"id":"image-node-1","type":"image","title":"Agent image","position":{"x":0,"y":0},"width":320,"height":180,"metadata":{"status":"loading"}}],"connections":[]}`
-	task, primary, resource, call, arguments := agentMediaResultBindingFacts(agentruntime.MediaKindImage)
-	updated, changed, err := agentMediaResultBoundNode(payload, "image-node-1", agentruntime.MediaKindImage, "鲜橙产品特写", task, primary, resource, call, arguments, "runtime-run")
+	task, primary, resource, call, arguments, generationModel := agentMediaResultBindingFacts(agentruntime.MediaKindImage)
+	updated, changed, err := agentMediaResultBoundNode(payload, "image-node-1", agentruntime.MediaKindImage, "鲜橙产品特写", task, primary, resource, call, arguments, generationModel, "runtime-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,7 +457,7 @@ func TestAgentMediaResultBindingSkipsCanvasMutationWhenResultIsAlreadyExact(t *t
 		t.Fatal("initial media result did not request a canvas mutation")
 	}
 	document := fmt.Sprintf(`{"nodes":[%s],"connections":[]}`, updated)
-	replayed, changed, err := agentMediaResultBoundNode(document, "image-node-1", agentruntime.MediaKindImage, "鲜橙产品特写", task, primary, resource, call, arguments, "runtime-run")
+	replayed, changed, err := agentMediaResultBoundNode(document, "image-node-1", agentruntime.MediaKindImage, "鲜橙产品特写", task, primary, resource, call, arguments, generationModel, "runtime-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,8 +477,8 @@ func TestAgentMediaResultBindingSupportsEveryMediaKind(t *testing.T) {
 				`{"nodes":[{"id":"target-node","type":%q,"title":"Agent media","position":{"x":0,"y":0},"width":320,"height":180,"metadata":{"prompt":"旧提示词","composerContent":"旧提示词","status":"loading"}}],"connections":[]}`,
 				mediaKind,
 			)
-			task, primary, resource, call, arguments := agentMediaResultBindingFacts(mediaKind)
-			updated, changed, err := agentMediaResultBoundNode(payload, "target-node", mediaKind, "权威生成提示词", task, primary, resource, call, arguments, "runtime-run")
+			task, primary, resource, call, arguments, generationModel := agentMediaResultBindingFacts(mediaKind)
+			updated, changed, err := agentMediaResultBoundNode(payload, "target-node", mediaKind, "权威生成提示词", task, primary, resource, call, arguments, generationModel, "runtime-run")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -489,6 +493,8 @@ func TestAgentMediaResultBindingSupportsEveryMediaKind(t *testing.T) {
 					StorageKey      string `json:"storageKey"`
 					Status          string `json:"status"`
 					TaskID          string `json:"taskId"`
+					ChannelID       string `json:"channelId"`
+					Model           string `json:"model"`
 				} `json:"metadata"`
 			}
 			if err := json.Unmarshal(updated, &node); err != nil {
@@ -496,8 +502,29 @@ func TestAgentMediaResultBindingSupportsEveryMediaKind(t *testing.T) {
 			}
 			if node.Metadata.Prompt != "权威生成提示词" || node.Metadata.ComposerContent != "权威生成提示词" ||
 				node.Metadata.Content != primary.URL || node.Metadata.StorageKey != "resource:"+primary.ResourceID ||
-				node.Metadata.Status != "success" || node.Metadata.TaskID != task.ID {
+				node.Metadata.Status != "success" || node.Metadata.TaskID != task.ID ||
+				node.Metadata.ChannelID != generationModel.ChannelID || node.Metadata.Model != generationModel.Model {
 				t.Fatalf("bound %s prompt facts = %#v", mediaKind, node.Metadata)
+			}
+		})
+	}
+}
+
+func TestAgentMediaResultBindingRejectsModelFactsOutsideTheApprovedRequest(t *testing.T) {
+	payload := `{"nodes":[{"id":"target-node","type":"video","title":"Agent video","position":{"x":0,"y":0},"width":320,"height":180,"metadata":{"status":"loading"}}],"connections":[]}`
+	task, primary, resource, call, arguments, generationModel := agentMediaResultBindingFacts(agentruntime.MediaKindVideo)
+	for _, test := range []struct {
+		name  string
+		model agentruntime.GenerationModelSelection
+	}{
+		{name: "missing channel", model: agentruntime.GenerationModelSelection{ModelRecordID: arguments.ModelRecordID, Model: arguments.ModelKey, PriceVersion: generationModel.PriceVersion}},
+		{name: "wrong record", model: agentruntime.GenerationModelSelection{ChannelID: generationModel.ChannelID, ModelRecordID: "other-record", Model: arguments.ModelKey, PriceVersion: generationModel.PriceVersion}},
+		{name: "wrong model", model: agentruntime.GenerationModelSelection{ChannelID: generationModel.ChannelID, ModelRecordID: arguments.ModelRecordID, Model: "other-model", PriceVersion: generationModel.PriceVersion}},
+		{name: "missing price version", model: agentruntime.GenerationModelSelection{ChannelID: generationModel.ChannelID, ModelRecordID: arguments.ModelRecordID, Model: arguments.ModelKey}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, _, err := agentMediaResultBoundNode(payload, "target-node", agentruntime.MediaKindVideo, "权威生成提示词", task, primary, resource, call, arguments, test.model, "runtime-run"); err == nil {
+				t.Fatal("media result binding accepted generation model facts outside the approved request")
 			}
 		})
 	}
@@ -505,13 +532,13 @@ func TestAgentMediaResultBindingSupportsEveryMediaKind(t *testing.T) {
 
 func TestAgentMediaResultBindingSeparatesRequestedVideoFormatFromActualDimensions(t *testing.T) {
 	payload := `{"nodes":[{"id":"target-node","type":"video","title":"月夜追逐","position":{"x":0,"y":0},"width":480,"height":270,"metadata":{"status":"loading","size":"1:1","naturalWidth":320,"naturalHeight":320}}],"connections":[]}`
-	task, primary, resource, call, arguments := agentMediaResultBindingFacts(agentruntime.MediaKindVideo)
+	task, primary, resource, call, arguments, generationModel := agentMediaResultBindingFacts(agentruntime.MediaKindVideo)
 	resource.Width = 941
 	resource.Height = 1672
 	resource.DurationMs = 4_900
 	arguments.Parameters = json.RawMessage(`{"prompt":"白兔沿湖岸奔跑","aspectRatio":"16:9","resolution":"720P","durationSeconds":5,"generateAudio":true}`)
 
-	updated, changed, err := agentMediaResultBoundNode(payload, "target-node", agentruntime.MediaKindVideo, "白兔沿湖岸奔跑", task, primary, resource, call, arguments, "runtime-run")
+	updated, changed, err := agentMediaResultBoundNode(payload, "target-node", agentruntime.MediaKindVideo, "白兔沿湖岸奔跑", task, primary, resource, call, arguments, generationModel, "runtime-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -530,6 +557,10 @@ func TestAgentMediaResultBindingSeparatesRequestedVideoFormatFromActualDimension
 			NaturalHeight int    `json:"naturalHeight"`
 			DurationMS    int64  `json:"durationMs"`
 			Evidence      struct {
+				ChannelID            string `json:"channelId"`
+				ModelRecordID        string `json:"modelRecordId"`
+				ModelKey             string `json:"modelKey"`
+				PriceVersion         int64  `json:"priceVersion"`
 				RequestedAspectRatio string `json:"requestedAspectRatio"`
 				RequestedResolution  string `json:"requestedResolution"`
 				ActualWidth          int    `json:"actualWidth"`
@@ -554,16 +585,20 @@ func TestAgentMediaResultBindingSeparatesRequestedVideoFormatFromActualDimension
 		node.Metadata.Evidence.ActualWidth != 941 || node.Metadata.Evidence.ActualHeight != 1672 || node.Metadata.Evidence.ActualDurationMS != 4_900 {
 		t.Fatalf("video generation evidence = %#v", node.Metadata.Evidence)
 	}
+	if node.Metadata.Evidence.ChannelID != generationModel.ChannelID || node.Metadata.Evidence.ModelRecordID != generationModel.ModelRecordID ||
+		node.Metadata.Evidence.ModelKey != generationModel.Model || node.Metadata.Evidence.PriceVersion != generationModel.PriceVersion {
+		t.Fatalf("video generation model evidence = %#v", node.Metadata.Evidence)
+	}
 }
 
 func TestAgentMediaResultBindingClearsStaleActualMediaFactsWhenUnavailable(t *testing.T) {
 	payload := `{"nodes":[{"id":"target-node","type":"video","title":"月夜追逐","position":{"x":0,"y":0},"width":480,"height":270,"metadata":{"status":"loading","naturalWidth":1920,"naturalHeight":1080,"durationMs":5000}}],"connections":[]}`
-	task, primary, resource, call, arguments := agentMediaResultBindingFacts(agentruntime.MediaKindVideo)
+	task, primary, resource, call, arguments, generationModel := agentMediaResultBindingFacts(agentruntime.MediaKindVideo)
 	resource.Width = 0
 	resource.Height = 0
 	resource.DurationMs = 0
 
-	updated, changed, err := agentMediaResultBoundNode(payload, "target-node", agentruntime.MediaKindVideo, "权威生成提示词", task, primary, resource, call, arguments, "runtime-run")
+	updated, changed, err := agentMediaResultBoundNode(payload, "target-node", agentruntime.MediaKindVideo, "权威生成提示词", task, primary, resource, call, arguments, generationModel, "runtime-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -585,10 +620,10 @@ func TestAgentMediaResultBindingClearsStaleActualMediaFactsWhenUnavailable(t *te
 
 func TestAgentMediaResultBindingClearsOmittedAudioRequestFacts(t *testing.T) {
 	payload := `{"nodes":[{"id":"target-node","type":"audio","title":"旁白","position":{"x":0,"y":0},"width":480,"height":180,"metadata":{"status":"loading","audioVoice":"old-voice","audioEmotion":"angry","audioInstructions":"old instructions"}}],"connections":[]}`
-	task, primary, resource, call, arguments := agentMediaResultBindingFacts(agentruntime.MediaKindAudio)
+	task, primary, resource, call, arguments, generationModel := agentMediaResultBindingFacts(agentruntime.MediaKindAudio)
 	arguments.Parameters = json.RawMessage(`{"prompt":"权威生成提示词","voice":"female-1"}`)
 
-	updated, _, err := agentMediaResultBoundNode(payload, "target-node", agentruntime.MediaKindAudio, "权威生成提示词", task, primary, resource, call, arguments, "runtime-run")
+	updated, _, err := agentMediaResultBoundNode(payload, "target-node", agentruntime.MediaKindAudio, "权威生成提示词", task, primary, resource, call, arguments, generationModel, "runtime-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -614,6 +649,7 @@ func agentMediaResultBindingFacts(mediaKind agentruntime.MediaKind) (
 	model.Resource,
 	agentruntime.ToolCallDecision,
 	agentruntime.MediaGenerateArguments,
+	agentruntime.GenerationModelSelection,
 ) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	resourceID := "generated-" + string(mediaKind)
@@ -645,7 +681,8 @@ func agentMediaResultBindingFacts(mediaKind agentruntime.MediaKind) (
 	case agentruntime.MediaKindAudio:
 		arguments.Parameters = json.RawMessage(`{"prompt":"权威生成提示词","voice":"female-1"}`)
 	}
-	return task, primary, resource, call, arguments
+	generationModel := agentruntime.GenerationModelSelection{ChannelID: "channel-id", ModelRecordID: arguments.ModelRecordID, Model: arguments.ModelKey, PriceVersion: 1}
+	return task, primary, resource, call, arguments, generationModel
 }
 
 func TestAgentMediaCapabilityDeliveryRejectsReceiptResourceOutsideTaskResult(t *testing.T) {

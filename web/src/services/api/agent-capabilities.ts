@@ -58,6 +58,14 @@ export type AgentVisionAnalyzeResult = {
     usage: { inputTokens: number; cachedTokens: number; outputTokens: number };
 };
 
+export type AgentMediaGenerateResult = {
+    taskId: string;
+    billingOrderId: string;
+    mediaKind: "image" | "video" | "audio";
+    clientRequestId: string;
+    resources: Array<{ resourceId: string; kind: "image" | "video" | "audio"; url: string }>;
+};
+
 const toolNames = new Set<AgentToolName>(["canvas.read", "canvas.apply_ops", "assets.read", "assets.publish", "project.read", "project.apply_ops", "media.generate", "vision.analyze", "skills.load"]);
 
 export function isAgentToolName(value: unknown): value is AgentToolName {
@@ -231,9 +239,36 @@ function parseProjectCharacterCandidate(value: unknown, label: string): AgentPro
 }
 
 export function parseAgentCapabilityResult(toolName: "vision.analyze", value: unknown): AgentVisionAnalyzeResult;
+export function parseAgentCapabilityResult(toolName: "media.generate", value: unknown): AgentMediaGenerateResult;
 export function parseAgentCapabilityResult(toolName: AgentToolName, value: unknown): Record<string, unknown>;
 export function parseAgentCapabilityResult(toolName: string, value: unknown): Record<string, unknown> {
     if (!isAgentToolName(toolName)) throw new Error(`不受支持的 Agent 工具: ${toolName}`);
+    if (toolName === "media.generate") {
+        const source = exactObject(value, "media.generate result", ["taskId", "billingOrderId", "mediaKind", "clientRequestId", "resources"]);
+        if (source.mediaKind !== "image" && source.mediaKind !== "video" && source.mediaKind !== "audio") {
+            throw new Error(`media.generate result.mediaKind 不受支持: ${String(source.mediaKind)}`);
+        }
+        const rawResources = array(source.resources, "media.generate result.resources");
+        if (rawResources.length < 1 || rawResources.length > 100) throw new Error("media.generate result.resources 数量无效");
+        const resources = rawResources.map((value, index) => {
+            const resource = exactObject(value, `media.generate result.resources[${index}]`, ["resourceId", "kind", "url"]);
+            const resourceId = capabilityResourceIdentifier(resource.resourceId, `media.generate result.resources[${index}].resourceId`);
+            if (resource.kind !== source.mediaKind) throw new Error(`media.generate result.resources[${index}].kind 与 mediaKind 不一致`);
+            const expectedURL = `/api/resources/${resourceId}/file`;
+            if (resource.url !== expectedURL) throw new Error(`media.generate result.resources[${index}].url 无效`);
+            return { resourceId, kind: source.mediaKind, url: expectedURL };
+        });
+        if (new Set(resources.map((resource) => resource.resourceId)).size !== resources.length) {
+            throw new Error("media.generate result.resources 不能包含重复资源");
+        }
+        return {
+            taskId: capabilityIdentifier(source.taskId, "media.generate result.taskId"),
+            billingOrderId: capabilityIdentifier(source.billingOrderId, "media.generate result.billingOrderId"),
+            mediaKind: source.mediaKind,
+            clientRequestId: capabilityIdentifier(source.clientRequestId, "media.generate result.clientRequestId"),
+            resources,
+        };
+    }
     if (toolName !== "vision.analyze") return { ...object(value, `${toolName} result`) };
 
     const source = exactObject(value, "vision.analyze result", ["taskId", "billingOrderId", "modelRecordId", "modelKey", "clientRequestId", "sourceResourceIds", "detail", "analysis", "usage"]);

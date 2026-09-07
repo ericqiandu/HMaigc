@@ -10,7 +10,14 @@ import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resour
 import copyToClipboard from "copy-to-clipboard";
 import { nanoid } from "nanoid";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
-import { agentCanvasCommittedReceipt, agentCanvasCommittedReceiptFromToolResult, type AgentCanvasApplyOpsReceipt } from "@/lib/canvas/canvas-agent-runtime-event";
+import {
+    agentCanvasCommittedReceipt,
+    agentCanvasCommittedReceiptFromToolResult,
+    agentMediaGeneratedCanvasRefreshDecision,
+    agentMediaGeneratedCanvasRefreshDecisionFromToolResult,
+    type AgentCanvasApplyOpsReceipt,
+    type AgentMediaCanvasRefreshDecision,
+} from "@/lib/canvas/canvas-agent-runtime-event";
 import type { LocalAgentAuthoritativeToolResult } from "@/services/local-agent/local-agent-bridge";
 import { prepareAgentCanvasRun } from "@/lib/canvas/canvas-collaboration-preflight";
 import { normalizeRestoredCanvasViewport } from "@/lib/canvas/canvas-viewport";
@@ -486,19 +493,37 @@ function InfiniteCanvasPage() {
         },
         [collaboration.refreshRemoteState, fitCanvasSelection, message, projectId],
     );
+    const applyAgentMediaCanvasRefreshDecision = useCallback((decision: AgentMediaCanvasRefreshDecision) => {
+        if (decision.kind === "not_applicable") return;
+        if (decision.kind === "invalid") {
+            message.error(`Agent 媒体成功回执校验失败：${decision.message}`);
+            return;
+        }
+        void collaboration.refreshRemoteState().catch((cause: unknown) => {
+            message.error(cause instanceof Error ? `Agent 媒体结果刷新失败：${cause.message}` : "Agent 媒体结果刷新失败");
+        });
+    }, [collaboration.refreshRemoteState, message]);
     const handleAgentToolResult = useCallback(
         (event: AgentRuntimeEvent) => {
             const receipt = agentCanvasCommittedReceipt(event, projectId);
-            if (receipt) applyAgentCanvasReceipt(receipt);
+            if (receipt) {
+                applyAgentCanvasReceipt(receipt);
+                return;
+            }
+            applyAgentMediaCanvasRefreshDecision(agentMediaGeneratedCanvasRefreshDecision(event));
         },
-        [applyAgentCanvasReceipt, projectId],
+        [applyAgentCanvasReceipt, applyAgentMediaCanvasRefreshDecision, projectId],
     );
     const handleLocalAgentToolResult = useCallback(
         (result: LocalAgentAuthoritativeToolResult) => {
             const receipt = agentCanvasCommittedReceiptFromToolResult(result, projectId);
-            if (receipt) applyAgentCanvasReceipt(receipt);
+            if (receipt) {
+                applyAgentCanvasReceipt(receipt);
+                return;
+            }
+            applyAgentMediaCanvasRefreshDecision(agentMediaGeneratedCanvasRefreshDecisionFromToolResult(result));
         },
-        [applyAgentCanvasReceipt, projectId],
+        [applyAgentCanvasReceipt, applyAgentMediaCanvasRefreshDecision, projectId],
     );
     const handleCollaborationPointerMove = useCallback(
         (event: React.PointerEvent<HTMLElement>) => {

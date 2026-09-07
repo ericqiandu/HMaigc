@@ -26,6 +26,11 @@ export type AgentAuthoritativeToolResult = {
     output: unknown;
 };
 
+export type AgentMediaCanvasRefreshDecision =
+    | { kind: "not_applicable" }
+    | { kind: "refresh" }
+    | { kind: "invalid"; message: string };
+
 const receiptKeys = ["canvasId", "baseRevision", "committedRevision", "clientMutationId", "proposalHash", "appliedOperationIds", "evidence"] as const;
 const evidenceKeys = ["addedNodeIds", "updatedNodeIds", "deletedNodeIds", "upsertedConnectionIds", "deletedConnectionIds", "selectedNodeIds", "viewportApplied"] as const;
 
@@ -59,6 +64,25 @@ export function agentCanvasCommittedReceiptFromToolResult(result: AgentAuthorita
         appliedOperationIds,
         evidence: { addedNodeIds, updatedNodeIds, deletedNodeIds, upsertedConnectionIds, deletedConnectionIds, selectedNodeIds, viewportApplied: evidence.viewportApplied },
     };
+}
+
+export function agentMediaGeneratedCanvasRefreshDecision(event: AgentRuntimeEvent): AgentMediaCanvasRefreshDecision {
+    if (event.kind !== "item.completed" || event.itemKind !== "tool_call" || typeof event.payload.toolName !== "string") return { kind: "not_applicable" };
+    return agentMediaGeneratedCanvasRefreshDecisionFromToolResult({
+        toolName: event.payload.toolName,
+        succeeded: event.payload.succeeded === true,
+        output: event.payload.output,
+    });
+}
+
+export function agentMediaGeneratedCanvasRefreshDecisionFromToolResult(result: AgentAuthoritativeToolResult): AgentMediaCanvasRefreshDecision {
+    if (result.toolName !== "media.generate" || !result.succeeded) return { kind: "not_applicable" };
+    try {
+        parseAgentCapabilityResult("media.generate", result.output);
+        return { kind: "refresh" };
+    } catch (cause: unknown) {
+        return { kind: "invalid", message: cause instanceof Error ? cause.message : "media.generate 成功回执格式无效" };
+    }
 }
 
 export function agentVisionAnalyzeResultFromToolResult(result: AgentAuthoritativeToolResult): AgentVisionAnalyzeResult | undefined {

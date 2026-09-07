@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import type { AgentRuntimeEvent } from "@/services/api/agent-runtime";
-import { agentCanvasCommittedReceipt, agentCanvasCommittedReceiptFromToolResult, agentVisionAnalyzeResultFromToolResult } from "./canvas-agent-runtime-event";
+import {
+    agentCanvasCommittedReceipt,
+    agentCanvasCommittedReceiptFromToolResult,
+    agentMediaGeneratedCanvasRefreshDecision,
+    agentMediaGeneratedCanvasRefreshDecisionFromToolResult,
+    agentVisionAnalyzeResultFromToolResult,
+} from "./canvas-agent-runtime-event";
 
 const proposalHash = "a".repeat(64);
 
@@ -77,5 +83,28 @@ describe("agentVisionAnalyzeResultFromToolResult", () => {
         assert.equal(agentVisionAnalyzeResultFromToolResult({ toolName: "vision.analyze", succeeded: false, output }), undefined);
         assert.equal(agentVisionAnalyzeResultFromToolResult({ toolName: "media.generate", succeeded: true, output }), undefined);
         assert.equal(agentVisionAnalyzeResultFromToolResult({ toolName: "vision.analyze", succeeded: true, output: { ...output, providerRequestId: "private" } }), undefined);
+    });
+});
+
+describe("agentMediaGeneratedCanvasRefreshDecision", () => {
+    const output = {
+        taskId: "task-1",
+        billingOrderId: "billing-1",
+        mediaKind: "video",
+        clientRequestId: "request-1",
+        resources: [{ resourceId: "resource-1", kind: "video", url: "/api/resources/resource-1/file" }],
+    } as const;
+
+    test("requires a refresh after an authoritative generated-media completion", () => {
+        assert.deepEqual(agentMediaGeneratedCanvasRefreshDecision(completedEvent("media.generate", output)), { kind: "refresh" });
+        assert.deepEqual(agentMediaGeneratedCanvasRefreshDecisionFromToolResult({ toolName: "media.generate", succeeded: true, output }), { kind: "refresh" });
+    });
+
+    test("distinguishes failed or unrelated tools from malformed successful media receipts", () => {
+        assert.deepEqual(agentMediaGeneratedCanvasRefreshDecision(completedEvent("vision.analyze", output)), { kind: "not_applicable" });
+        assert.deepEqual(agentMediaGeneratedCanvasRefreshDecisionFromToolResult({ toolName: "media.generate", succeeded: false, output }), { kind: "not_applicable" });
+        const malformed = agentMediaGeneratedCanvasRefreshDecisionFromToolResult({ toolName: "media.generate", succeeded: true, output: { ...output, resources: [] } });
+        assert.equal(malformed.kind, "invalid");
+        if (malformed.kind === "invalid") assert.match(malformed.message, /resources/);
     });
 });
