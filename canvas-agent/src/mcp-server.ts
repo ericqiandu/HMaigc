@@ -54,7 +54,7 @@ export function createCanvasMcpServer(
     "canvas_apply_ops",
     {
       description:
-        "基于刚读取的 baseRevision 原子提交闭合画布操作；每项 operationId 与 clientMutationId 必须唯一且稳定。媒体占位节点的 metadata.prompt 与 metadata.composerContent 必须逐字保存随后 media_generate 的 parameters.prompt；update_node.metadata 是字段级补丁，不得清空生成提示词。",
+        "基于刚读取的 baseRevision 原子提交闭合画布操作；每项 operationId 与 clientMutationId 必须唯一且稳定。node.title 只保存稳定的创作名称，运行状态只保存到 metadata.status、metadata.taskStatus 与 metadata.taskStage。媒体占位节点的 metadata.prompt 与 metadata.composerContent 必须逐字保存随后 media_generate 的 parameters.prompt；update_node.metadata 是字段级补丁，不得清空生成提示词。",
       inputSchema: canvasApplyOpsToolInputSchema,
     },
     async (input) => executeCanvasTool(options, "canvas.apply_ops", input),

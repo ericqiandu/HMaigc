@@ -100,6 +100,125 @@ func TestAtomicCompletionCommitsResultSettlementAndTaskOutboxTogether(t *testing
 	}
 }
 
+func TestSucceededFinalizationPreservesDurableAsyncProviderIdentity(t *testing.T) {
+	_, db := newMembershipTestService(t)
+	now := time.Now().UTC()
+	account := model.CreditAccount{UserID: "provider-success-user", AvailableMicrocredits: 9_000_000, ReservedMicrocredits: 1_000_000, CreatedAt: now, UpdatedAt: now}
+	order := model.BillingOrder{
+		ID: "provider-success-order", UserID: account.UserID, TaskID: "provider-success-task", IdempotencyKey: "provider-success-order",
+		ChannelID: "channel", Model: "model", Capability: "video", Scene: "agent", BillingMode: "fixed_request",
+		AmountMicrocredits: 1_000_000, Status: model.BillingStatusRunning, ProviderRequestID: "provider-success-id", CreatedAt: now, UpdatedAt: now,
+	}
+	leaseExpiry := now.Add(time.Minute)
+	stored := model.Task{
+		ID: order.TaskID, UserID: account.UserID, Type: "canvas_video", Status: model.TaskStatusRunning, BillingOrderID: order.ID,
+		ProviderRequestID: order.ProviderRequestID, PollStage: "accepted", LeaseOwner: "provider-success-worker", LeaseExpiresAt: &leaseExpiry,
+		LeaseGeneration: 1, LeaseToken: "3123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	completion := stored
+	completion.ProviderRequestID = ""
+	completion.PollStage = ""
+	completion.Status = model.TaskStatusSucceeded
+	completion.Stage = "任务完成"
+	completion.Progress = 100
+	completion.CompletedAt = &now
+	if err := repository.New(db).FinalizeSucceededTaskAndBilling(repository.SucceededTaskFinalization{
+		Task: &completion, BillingAction: repository.CompletedTaskBillingSettle,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var actual model.Task
+	if err := db.First(&actual, "id = ?", stored.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if actual.ProviderRequestID != stored.ProviderRequestID || actual.PollStage != stored.PollStage {
+		t.Fatalf("provider recovery facts were lost: %#v", actual)
+	}
+}
+
+func TestSucceededFinalizationRejectsConflictingAsyncProviderIdentity(t *testing.T) {
+	_, db := newMembershipTestService(t)
+	now := time.Now().UTC()
+	leaseExpiry := now.Add(time.Minute)
+	stored := model.Task{
+		ID: "provider-conflict-task", UserID: "provider-conflict-user", Type: "canvas_video", Status: model.TaskStatusRunning,
+		ProviderRequestID: "durable-provider-id", PollStage: "accepted", LeaseOwner: "provider-conflict-worker", LeaseExpiresAt: &leaseExpiry,
+		LeaseGeneration: 1, LeaseToken: "5123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	completion := stored
+	completion.ProviderRequestID = "stale-provider-id"
+	completion.Status = model.TaskStatusSucceeded
+	completion.Stage = "任务完成"
+	completion.Progress = 100
+	completion.CompletedAt = &now
+	err := repository.New(db).FinalizeSucceededTaskAndBilling(repository.SucceededTaskFinalization{
+		Task: &completion, BillingAction: repository.CompletedTaskBillingSettle,
+	})
+	if !errors.Is(err, repository.ErrTaskCompletionStateConflict) {
+		t.Fatalf("conflicting provider identity error = %v, want task completion conflict", err)
+	}
+	var actual model.Task
+	if err := db.First(&actual, "id = ?", stored.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if actual.Status != model.TaskStatusRunning || actual.ProviderRequestID != stored.ProviderRequestID || actual.PollStage != stored.PollStage {
+		t.Fatalf("conflicting completion mutated durable task facts: %#v", actual)
+	}
+}
+
+func TestFailedFinalizationPreservesDurableAsyncProviderIdentity(t *testing.T) {
+	_, db := newMembershipTestService(t)
+	now := time.Now().UTC()
+	account := model.CreditAccount{UserID: "provider-failure-user", AvailableMicrocredits: 9_000_000, ReservedMicrocredits: 1_000_000, CreatedAt: now, UpdatedAt: now}
+	order := model.BillingOrder{
+		ID: "provider-failure-order", UserID: account.UserID, TaskID: "provider-failure-task", IdempotencyKey: "provider-failure-order",
+		ChannelID: "channel", Model: "model", Capability: "video", Scene: "agent", BillingMode: "fixed_request",
+		AmountMicrocredits: 1_000_000, Status: model.BillingStatusRunning, ProviderRequestID: "provider-failure-id", CreatedAt: now, UpdatedAt: now,
+	}
+	leaseExpiry := now.Add(time.Minute)
+	stored := model.Task{
+		ID: order.TaskID, UserID: account.UserID, Type: "canvas_video", Status: model.TaskStatusRunning, BillingOrderID: order.ID,
+		ProviderRequestID: order.ProviderRequestID, PollStage: "accepted", LeaseOwner: "provider-failure-worker", LeaseExpiresAt: &leaseExpiry,
+		LeaseGeneration: 1, LeaseToken: "4123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	failure := stored
+	failure.ProviderRequestID = ""
+	failure.PollStage = ""
+	failure.Stage = "任务失败"
+	failure.Error = "post-processing failed"
+	if err := repository.New(db).FinalizeFailedTaskAndBilling(&failure, repository.FailedTaskBillingUncertain, failure.Error); err != nil {
+		t.Fatal(err)
+	}
+	var actual model.Task
+	if err := db.First(&actual, "id = ?", stored.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if actual.ProviderRequestID != stored.ProviderRequestID || actual.PollStage != stored.PollStage {
+		t.Fatalf("provider recovery facts were lost: %#v", actual)
+	}
+}
+
 func TestAtomicCompletionRollsBackWhenTaskOutboxCannotPersist(t *testing.T) {
 	_, db := newMembershipTestService(t)
 	if err := db.AutoMigrate(&model.Result{}, &model.TaskOutbox{}); err != nil {
@@ -278,8 +397,8 @@ func TestTaskOutboxCrashRecoveryRetriesAgentTimelineDelivery(t *testing.T) {
 	svc := New(repo, t.TempDir())
 	now := time.Now().UTC()
 	if err := db.Create(&model.Task{
-		ID: "timeline-recovery-task", UserID: "timeline-user", Type: "canvas_video",
-		Status: model.TaskStatusSucceeded, Operation: agentMediaGenerationOperationForRun("timeline-run"), CreatedAt: now, UpdatedAt: now,
+		ID: "timeline-recovery-task", UserID: "timeline-user", Type: agentVisionTaskType,
+		Status: model.TaskStatusSucceeded, Operation: agentVisionOperationForRun("timeline-run"), CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -332,8 +451,8 @@ func TestTaskOutboxRejectsRunScopeThatConflictsWithTerminalTask(t *testing.T) {
 	svc := New(repo, t.TempDir())
 	now := time.Now().UTC()
 	if err := db.Create(&model.Task{
-		ID: "scope-conflict-task", UserID: "scope-user", Type: "canvas_video",
-		Status: model.TaskStatusSucceeded, Operation: agentMediaGenerationOperationForRun("task-run"), CreatedAt: now, UpdatedAt: now,
+		ID: "scope-conflict-task", UserID: "scope-user", Type: agentVisionTaskType,
+		Status: model.TaskStatusSucceeded, Operation: agentVisionOperationForRun("task-run"), CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}

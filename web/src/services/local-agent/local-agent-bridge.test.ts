@@ -592,7 +592,7 @@ describe("LocalAgentBridge", () => {
         assert.equal(bridge.state.kind, "failed");
     });
 
-    it("submits the structured final decision without inferring delivery", async () => {
+    it("settles an accepted final decision without depending on a second terminal event", async () => {
         const decisions: Array<Parameters<AgentLocalRuntimeClient["submitDecision"]>[1]> = [];
         const { bridge } = makeBridge({
             submitDecision: async (_runId, input) => {
@@ -604,10 +604,35 @@ describe("LocalAgentBridge", () => {
         const event: LocalAgentEvent = { kind: "final_decision", threadId: "thread-1", turnId: "turn-1", message: "已完成", expectedDelivery: delivery };
         await bridge.handleEvent(event);
         assert.deepEqual(decisions[0]?.decision, { kind: "final", final: { message: "已完成", expectedDelivery: delivery } });
-        assert.equal(bridge.state.kind, "reasoning");
-        assert.equal(bridge.hasActiveTurn, true);
+        assert.equal(bridge.state.kind, "idle");
+        assert.equal(bridge.hasActiveTurn, false);
         await bridge.handleEvent({ kind: "turn_completed", threadId: "thread-1", turnId: "turn-1", event: { type: "turn.completed" } });
         assert.equal(bridge.state.kind, "idle");
+        assert.equal(bridge.hasActiveTurn, false);
+    });
+
+    it("interrupts the audit run when a terminal local turn cannot submit its final decision", async () => {
+        const interrupts: string[] = [];
+        const { bridge } = makeBridge({
+            submitDecision: async () => {
+                throw new AgentRuntimeRequestError("最终决策传输失败", 503, "agent_final_decision_unavailable");
+            },
+            interrupt: async (runId) => {
+                interrupts.push(runId);
+                return runtimeView({ status: "cancelled", stateVersion: 3 });
+            },
+        });
+        await bridge.start({ requestId: "turn-request-1", message: "说明结果", attachments: [] });
+
+        await assert.rejects(
+            bridge.handleEvent({ kind: "final_decision", threadId: "thread-1", turnId: "turn-1", message: "已完成", expectedDelivery: delivery }),
+            /最终决策传输失败/,
+        );
+
+        assert.deepEqual(interrupts, ["run-1"]);
+        assert.equal(bridge.hasActiveTurn, false);
+        assert.deepEqual(bridge.state, { kind: "failed", code: "agent_final_decision_unavailable", message: "最终决策传输失败" });
+        await bridge.handleEvent({ kind: "turn_completed", threadId: "thread-1", turnId: "turn-1", event: { type: "turn.completed" } });
         assert.equal(bridge.hasActiveTurn, false);
     });
 
@@ -646,7 +671,6 @@ describe("LocalAgentBridge", () => {
 
         await bridge.start({ requestId: "turn-request-1", message: "生成完整视频", attachments: [] });
         await bridge.handleEvent({ kind: "final_decision", threadId: "thread-1", turnId: "turn-1", message: "已完成", expectedDelivery: delivery });
-        await bridge.handleEvent({ kind: "turn_completed", threadId: "thread-1", turnId: "turn-1", event: { type: "turn.completed" } });
 
         assert.equal(interrupts.length, 0);
         assert.equal(local.starts.length, 2);
@@ -656,7 +680,6 @@ describe("LocalAgentBridge", () => {
         assert.deepEqual(bridge.state, { kind: "reasoning", threadId: "thread-1", turnId: "turn-2", runId: "run-1" });
 
         await bridge.handleEvent({ kind: "final_decision", threadId: "thread-1", turnId: "turn-2", message: "已校验完成", expectedDelivery: delivery });
-        await bridge.handleEvent({ kind: "turn_completed", threadId: "thread-1", turnId: "turn-2", event: { type: "turn.completed" } });
         assert.equal(bridge.state.kind, "idle");
         assert.equal(bridge.hasActiveTurn, false);
     });
@@ -681,11 +704,10 @@ describe("LocalAgentBridge", () => {
             interrupt: async () => runtimeView({ status: "cancelled", stateVersion: 4 }),
         });
         await bridge.start({ requestId: "turn-request-1", message: "生成完整视频", attachments: [] });
-        await bridge.handleEvent({ kind: "final_decision", threadId: "thread-1", turnId: "turn-1", message: "已完成", expectedDelivery: delivery });
         local.cancelFailure = new Error("mismatched turn could not be cancelled");
 
         await assert.rejects(
-            bridge.handleEvent({ kind: "turn_completed", threadId: "thread-1", turnId: "turn-1", event: { type: "turn.completed" } }),
+            bridge.handleEvent({ kind: "final_decision", threadId: "thread-1", turnId: "turn-1", message: "已完成", expectedDelivery: delivery }),
             (cause: unknown) => cause instanceof AggregateError && cause.message.includes("线程归属冲突") && cause.message.includes("could not be cancelled"),
         );
         assert.equal(bridge.hasActiveTurn, true);

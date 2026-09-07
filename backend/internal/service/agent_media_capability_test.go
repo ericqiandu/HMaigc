@@ -503,6 +503,111 @@ func TestAgentMediaResultBindingSupportsEveryMediaKind(t *testing.T) {
 	}
 }
 
+func TestAgentMediaResultBindingSeparatesRequestedVideoFormatFromActualDimensions(t *testing.T) {
+	payload := `{"nodes":[{"id":"target-node","type":"video","title":"月夜追逐","position":{"x":0,"y":0},"width":480,"height":270,"metadata":{"status":"loading","size":"1:1","naturalWidth":320,"naturalHeight":320}}],"connections":[]}`
+	task, primary, resource, call, arguments := agentMediaResultBindingFacts(agentruntime.MediaKindVideo)
+	resource.Width = 941
+	resource.Height = 1672
+	resource.DurationMs = 4_900
+	arguments.Parameters = json.RawMessage(`{"prompt":"白兔沿湖岸奔跑","aspectRatio":"16:9","resolution":"720P","durationSeconds":5,"generateAudio":true}`)
+
+	updated, changed, err := agentMediaResultBoundNode(payload, "target-node", agentruntime.MediaKindVideo, "白兔沿湖岸奔跑", task, primary, resource, call, arguments, "runtime-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("video result binding did not persist authoritative request and actual media facts")
+	}
+	var node struct {
+		Width    float64 `json:"width"`
+		Height   float64 `json:"height"`
+		Metadata struct {
+			Size          string `json:"size"`
+			VideoQuality  string `json:"vquality"`
+			Seconds       string `json:"seconds"`
+			GenerateAudio string `json:"generateAudio"`
+			NaturalWidth  int    `json:"naturalWidth"`
+			NaturalHeight int    `json:"naturalHeight"`
+			DurationMS    int64  `json:"durationMs"`
+			Evidence      struct {
+				RequestedAspectRatio string `json:"requestedAspectRatio"`
+				RequestedResolution  string `json:"requestedResolution"`
+				ActualWidth          int    `json:"actualWidth"`
+				ActualHeight         int    `json:"actualHeight"`
+				ActualDurationMS     int64  `json:"actualDurationMs"`
+			} `json:"generationEvidence"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(updated, &node); err != nil {
+		t.Fatal(err)
+	}
+	if node.Width != 480 || node.Height != 270 {
+		t.Fatalf("server projection changed canvas geometry before the browser applied intrinsic layout: %.0fx%.0f", node.Width, node.Height)
+	}
+	if node.Metadata.Size != "16:9" || node.Metadata.VideoQuality != "720P" || node.Metadata.Seconds != "5" || node.Metadata.GenerateAudio != "true" {
+		t.Fatalf("requested video format facts = %#v", node.Metadata)
+	}
+	if node.Metadata.NaturalWidth != 941 || node.Metadata.NaturalHeight != 1672 || node.Metadata.DurationMS != 4_900 {
+		t.Fatalf("actual video facts = %#v", node.Metadata)
+	}
+	if node.Metadata.Evidence.RequestedAspectRatio != "16:9" || node.Metadata.Evidence.RequestedResolution != "720P" ||
+		node.Metadata.Evidence.ActualWidth != 941 || node.Metadata.Evidence.ActualHeight != 1672 || node.Metadata.Evidence.ActualDurationMS != 4_900 {
+		t.Fatalf("video generation evidence = %#v", node.Metadata.Evidence)
+	}
+}
+
+func TestAgentMediaResultBindingClearsStaleActualMediaFactsWhenUnavailable(t *testing.T) {
+	payload := `{"nodes":[{"id":"target-node","type":"video","title":"月夜追逐","position":{"x":0,"y":0},"width":480,"height":270,"metadata":{"status":"loading","naturalWidth":1920,"naturalHeight":1080,"durationMs":5000}}],"connections":[]}`
+	task, primary, resource, call, arguments := agentMediaResultBindingFacts(agentruntime.MediaKindVideo)
+	resource.Width = 0
+	resource.Height = 0
+	resource.DurationMs = 0
+
+	updated, changed, err := agentMediaResultBoundNode(payload, "target-node", agentruntime.MediaKindVideo, "权威生成提示词", task, primary, resource, call, arguments, "runtime-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("video result binding did not clear stale actual media facts")
+	}
+	var node struct {
+		Metadata map[string]json.RawMessage `json:"metadata"`
+	}
+	if err := json.Unmarshal(updated, &node); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"naturalWidth", "naturalHeight", "durationMs"} {
+		if _, exists := node.Metadata[key]; exists {
+			t.Fatalf("stale actual media fact %q remains in metadata: %s", key, updated)
+		}
+	}
+}
+
+func TestAgentMediaResultBindingClearsOmittedAudioRequestFacts(t *testing.T) {
+	payload := `{"nodes":[{"id":"target-node","type":"audio","title":"旁白","position":{"x":0,"y":0},"width":480,"height":180,"metadata":{"status":"loading","audioVoice":"old-voice","audioEmotion":"angry","audioInstructions":"old instructions"}}],"connections":[]}`
+	task, primary, resource, call, arguments := agentMediaResultBindingFacts(agentruntime.MediaKindAudio)
+	arguments.Parameters = json.RawMessage(`{"prompt":"权威生成提示词","voice":"female-1"}`)
+
+	updated, _, err := agentMediaResultBoundNode(payload, "target-node", agentruntime.MediaKindAudio, "权威生成提示词", task, primary, resource, call, arguments, "runtime-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var node struct {
+		Metadata map[string]json.RawMessage `json:"metadata"`
+	}
+	if err := json.Unmarshal(updated, &node); err != nil {
+		t.Fatal(err)
+	}
+	if string(node.Metadata["audioVoice"]) != `"female-1"` {
+		t.Fatalf("authoritative audio voice = %s", node.Metadata["audioVoice"])
+	}
+	for _, key := range []string{"audioEmotion", "audioInstructions"} {
+		if _, exists := node.Metadata[key]; exists {
+			t.Fatalf("omitted audio request fact %q remains in metadata: %s", key, updated)
+		}
+	}
+}
+
 func agentMediaResultBindingFacts(mediaKind agentruntime.MediaKind) (
 	model.Task,
 	agentruntime.MediaGeneratedResourceResult,
@@ -531,6 +636,14 @@ func agentMediaResultBindingFacts(mediaKind agentruntime.MediaKind) (
 	arguments := agentruntime.MediaGenerateArguments{
 		MediaKind: mediaKind, ModelRecordID: "model-record", ModelKey: "model-key",
 		TargetCanvasNodeID: "target-node", ClientRequestID: "request-" + string(mediaKind),
+	}
+	switch mediaKind {
+	case agentruntime.MediaKindImage:
+		arguments.Parameters = json.RawMessage(`{"prompt":"权威生成提示词","aspectRatio":"16:9","resolution":"1K","count":1}`)
+	case agentruntime.MediaKindVideo:
+		arguments.Parameters = json.RawMessage(`{"prompt":"权威生成提示词","aspectRatio":"16:9","resolution":"720P","durationSeconds":5,"generateAudio":false}`)
+	case agentruntime.MediaKindAudio:
+		arguments.Parameters = json.RawMessage(`{"prompt":"权威生成提示词","voice":"female-1"}`)
 	}
 	return task, primary, resource, call, arguments
 }

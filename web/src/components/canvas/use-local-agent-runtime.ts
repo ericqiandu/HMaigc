@@ -93,9 +93,7 @@ export function useLocalAgentRuntime({
     );
 
     const adoptView = useCallback((next: AgentRuntimeView) => {
-        if (runtimeRunIdRef.current === next.run.id) {
-            runtimeCursorRef.current = Math.max(runtimeCursorRef.current, next.run.lastEventSequence);
-        } else {
+        if (runtimeRunIdRef.current !== next.run.id) {
             runtimeRunIdRef.current = next.run.id;
             runtimeCursorRef.current = next.run.lastEventSequence;
             setRuntimeEvents([]);
@@ -383,7 +381,7 @@ export function useLocalAgentRuntime({
     }, [adoptView, runtimeClient, view]);
 
     const runId = view?.run.id ?? "";
-    const liveBackendRun = Boolean(view && !isTerminalStatus(view.state.status));
+    const liveBackendRun = Boolean(view && (!isTerminalStatus(view.state.status) || runtimeCursorRef.current < view.run.lastEventSequence));
     useEffect(() => {
         if (!runId || !liveBackendRun) {
             setBackendConnection("idle");

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -78,7 +79,7 @@ func TestResumeTaskWithUncertainBillingPreservesExistingProviderRequest(t *testi
 		t.Fatal(err)
 	}
 
-	resumed, err := New(db).ResumeTaskWithUncertainBilling("user", task.ID, ActiveTaskPolicy{Unlimited: true})
+	resumed, err := New(db).ResumeTaskWithProviderRequest("user", task.ID, ActiveTaskPolicy{Unlimited: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,6 +92,68 @@ func TestResumeTaskWithUncertainBillingPreservesExistingProviderRequest(t *testi
 	}
 	if storedOrder.Status != model.BillingStatusUncertain || storedOrder.ProviderRequestID != task.ProviderRequestID {
 		t.Fatalf("billing order = %#v", storedOrder)
+	}
+}
+
+func TestResumeTaskWithSettledProviderSuccessRestoresProviderRequest(t *testing.T) {
+	db := openProviderRepositorySQLite(t)
+	now := time.Now().UTC()
+	task := model.Task{
+		ID: "resume-settled-video", UserID: "user", Type: "canvas_video", Capability: "video", Status: model.TaskStatusFailed,
+		Stage: "任务结果保存失败", Progress: 90, Error: "ffprobe unavailable", BillingOrderID: "resume-settled-order",
+		CreatedAt: now, UpdatedAt: now,
+	}
+	order := model.BillingOrder{
+		ID: "resume-settled-order", UserID: task.UserID, TaskID: task.ID, IdempotencyKey: "resume-settled-order",
+		Status: model.BillingStatusSettled, ProviderRequestID: "provider-settled-video", ProviderTaskStatus: "succeeded",
+		AmountMicrocredits: 119_600_000, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	resumed, err := New(db).ResumeTaskWithProviderRequest(task.UserID, task.ID, ActiveTaskPolicy{Unlimited: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Status != model.TaskStatusQueued || resumed.ProviderRequestID != order.ProviderRequestID ||
+		resumed.BillingOrderID != order.ID || resumed.PollStage != "provider_resume" {
+		t.Fatalf("resumed settled task = %#v", resumed)
+	}
+	var storedOrder model.BillingOrder
+	if err := db.First(&storedOrder, "id = ?", order.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if storedOrder.Status != model.BillingStatusSettled || storedOrder.ProviderRequestID != order.ProviderRequestID ||
+		storedOrder.ProviderTaskStatus != "succeeded" {
+		t.Fatalf("settled billing was mutated = %#v", storedOrder)
+	}
+}
+
+func TestResumeTaskWithSettledBillingRejectsMissingProviderSuccess(t *testing.T) {
+	db := openProviderRepositorySQLite(t)
+	now := time.Now().UTC()
+	task := model.Task{
+		ID: "reject-settled-video", UserID: "user", Type: "canvas_video", Capability: "video", Status: model.TaskStatusFailed,
+		BillingOrderID: "reject-settled-order", CreatedAt: now, UpdatedAt: now,
+	}
+	order := model.BillingOrder{
+		ID: task.BillingOrderID, UserID: task.UserID, TaskID: task.ID, IdempotencyKey: task.BillingOrderID,
+		Status: model.BillingStatusSettled, ProviderRequestID: "provider-settled-video", ProviderTaskStatus: "failed",
+		AmountMicrocredits: 119_600_000, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := New(db).ResumeTaskWithProviderRequest(task.UserID, task.ID, ActiveTaskPolicy{Unlimited: true}); !errors.Is(err, ErrBillingStateConflict) {
+		t.Fatalf("resume error = %v, want billing state conflict", err)
 	}
 }
 

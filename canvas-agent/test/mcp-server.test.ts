@@ -128,6 +128,8 @@ test("MCP 只暴露八种纯映射能力并通过 CanvasSession 等待权威结�
     assert.match(JSON.stringify(canvasApplyOps?.inputSchema), /"operations"/);
     assert.match(JSON.stringify(canvasApplyOps?.inputSchema), /"add_node"/);
     assert.match(canvasApplyOps?.description ?? "", /metadata\.prompt/);
+    assert.match(canvasApplyOps?.description ?? "", /node\.title/);
+    assert.match(canvasApplyOps?.description ?? "", /metadata\.taskStage/);
     assert.match(mediaGenerate?.description ?? "", /parameters\.prompt/);
     assert.match(JSON.stringify(skillsLoad?.inputSchema), /"checksum"/);
     assert.match(JSON.stringify(projectApplyOps?.inputSchema), /"create_character_candidates"/);

@@ -31,7 +31,7 @@ export function createShortDramaPipeline(center: Position) {
         workflowDescription: "待选择",
         fontSize: 14,
     });
-    styleNode.title = "项目画风 · 待选择";
+    styleNode.title = "项目画风";
     styleNode.width = 360;
     styleNode.height = 220;
 
@@ -57,7 +57,7 @@ export function createShortDramaPipeline(center: Position) {
             referenceNodeIds: [],
         },
     });
-    scriptNode.title = "分镜脚本 · 待生成";
+    scriptNode.title = "分镜脚本";
 
     const connections: CanvasConnection[] = [
         { id: nanoid(), fromNodeId: styleNode.id, toNodeId: scriptNode.id, toHandleId: "storyboard:context" },

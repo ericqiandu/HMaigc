@@ -120,6 +120,9 @@ func (r *Repository) FinalizeSucceededTaskAndBilling(input SucceededTaskFinaliza
 		return ErrTaskCompletionStateConflict
 	}
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := preserveDurableProviderIdentityTx(tx, task); err != nil {
+			return err
+		}
 		if err := r.finalizeSucceededBillingTx(tx, task, input); err != nil {
 			return err
 		}
@@ -255,6 +258,9 @@ func (r *Repository) FinalizeFailedTaskAndBillingWithOutbox(task *model.Task, ac
 		return ErrTaskCompletionStateConflict
 	}
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := preserveDurableProviderIdentityTx(tx, task); err != nil {
+			return err
+		}
 		if err := r.finalizeFailedBillingTx(tx, task.BillingOrderID, task.ID, task.ProviderRequestID, action, errorText); err != nil {
 			return err
 		}
@@ -278,6 +284,32 @@ func (r *Repository) FinalizeFailedTaskAndBillingWithOutbox(task *model.Task, ac
 		}
 		return nil
 	})
+}
+
+func preserveDurableProviderIdentityTx(tx *gorm.DB, task *model.Task) error {
+	var stored model.Task
+	query := tx.Where(
+		"id = ? AND user_id = ? AND status = ? AND lease_owner = ? AND lease_generation = ? AND lease_token = ?",
+		task.ID, task.UserID, model.TaskStatusRunning, task.LeaseOwner, task.LeaseGeneration, task.LeaseToken,
+	)
+	if tx.Dialector.Name() == "postgres" {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	if err := query.Take(&stored).Error; err != nil {
+		return ErrTaskCompletionStateConflict
+	}
+	providerRequestID := strings.TrimSpace(task.ProviderRequestID)
+	durableProviderRequestID := strings.TrimSpace(stored.ProviderRequestID)
+	if providerRequestID != "" && durableProviderRequestID != "" && providerRequestID != durableProviderRequestID {
+		return ErrTaskCompletionStateConflict
+	}
+	if durableProviderRequestID != "" {
+		task.ProviderRequestID = durableProviderRequestID
+	}
+	if strings.TrimSpace(stored.PollStage) != "" {
+		task.PollStage = stored.PollStage
+	}
+	return nil
 }
 
 func (r *Repository) EnqueueTaskOutbox(taskID string, draft TaskOutboxDraft) error {

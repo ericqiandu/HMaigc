@@ -150,6 +150,7 @@ export function buildCanvasAgentInstructions(canvasId: string): string {
     "最终结构化回答的全部字段都必须出现；无值字段用 null 表示缺省，无 artifact 的完成条件也用 artifact: null。MCP 工具提案中的缺省字段可以省略或传 null。",
     "调用 MCP 工具后必须等待该工具返回成功或失败结果，才能输出最终结构化回答；等待网站审批或工具执行期间禁止提前结束 turn。",
     "不得绕过工具直接写入 HMaigc，不得把提案、占位状态或未确认结果描述为已经完成。",
+    "node.title 只保存稳定的创作名称，禁止把运行阶段编码进标题；运行状态只保存到 metadata.status、metadata.taskStatus 与 metadata.taskStage。",
     "根据用户当前意图自主决定是否调用工具；事实不足时显式说明缺失事实。",
   ].join("\n");
 }

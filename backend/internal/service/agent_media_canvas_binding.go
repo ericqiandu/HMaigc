@@ -16,6 +16,14 @@ import (
 
 const agentMediaResultCanvasCommitAttempts = 3
 
+type agentMediaCanvasRequestFacts struct {
+	RequestedAspectRatio string
+	RequestedResolution  string
+	StringMetadata       map[string]string
+	NumberMetadata       map[string]int64
+	NullMetadata         []string
+}
+
 func (s *Service) validateAgentMediaTargetCanvasNode(scope agentruntime.Scope, nodeID string, mediaKind agentruntime.MediaKind) error {
 	canvas, _, err := s.canvasAccess(scope.ActorUserID, scope.CanvasID)
 	if err != nil {
@@ -152,6 +160,13 @@ func agentMediaResultBoundNode(
 		"errorDetails":            json.RawMessage("null"),
 		"generationErrorCode":     json.RawMessage("null"),
 		"failedPromptFingerprint": json.RawMessage("null"),
+		"naturalWidth":            json.RawMessage("null"),
+		"naturalHeight":           json.RawMessage("null"),
+		"durationMs":              json.RawMessage("null"),
+	}
+	requestFacts, err := agentMediaCanvasRequestMetadata(arguments)
+	if err != nil {
+		return nil, false, err
 	}
 	values := map[string]string{
 		"prompt": prompt, "composerContent": prompt,
@@ -160,6 +175,12 @@ func agentMediaResultBoundNode(
 		"taskCreatedAt": task.CreatedAt.UTC().Format(time.RFC3339Nano), "taskUpdatedAt": task.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		"mimeType": resource.MimeType,
 	}
+	for key, value := range requestFacts.StringMetadata {
+		values[key] = value
+	}
+	for _, key := range requestFacts.NullMetadata {
+		metadata[key] = json.RawMessage("null")
+	}
 	for key, value := range values {
 		encoded, err := json.Marshal(value)
 		if err != nil {
@@ -167,7 +188,11 @@ func agentMediaResultBoundNode(
 		}
 		metadata[key] = encoded
 	}
-	for key, value := range map[string]int64{"taskProgress": 100, "bytes": resource.Size} {
+	numberValues := map[string]int64{"taskProgress": 100, "bytes": resource.Size}
+	for key, value := range requestFacts.NumberMetadata {
+		numberValues[key] = value
+	}
+	for key, value := range numberValues {
 		encoded, err := json.Marshal(value)
 		if err != nil {
 			return nil, false, err
@@ -175,19 +200,26 @@ func agentMediaResultBoundNode(
 		metadata[key] = encoded
 	}
 	evidence, err := json.Marshal(struct {
-		RunID           string `json:"runId"`
-		ToolCallID      string `json:"toolCallId"`
-		ActionVersion   int    `json:"actionVersion"`
-		TaskID          string `json:"taskId"`
-		BillingOrderID  string `json:"billingOrderId"`
-		ResourceID      string `json:"resourceId"`
-		ClientRequestID string `json:"clientRequestId"`
-		ModelRecordID   string `json:"modelRecordId"`
-		ModelKey        string `json:"modelKey"`
+		RunID                string `json:"runId"`
+		ToolCallID           string `json:"toolCallId"`
+		ActionVersion        int    `json:"actionVersion"`
+		TaskID               string `json:"taskId"`
+		BillingOrderID       string `json:"billingOrderId"`
+		ResourceID           string `json:"resourceId"`
+		ClientRequestID      string `json:"clientRequestId"`
+		ModelRecordID        string `json:"modelRecordId"`
+		ModelKey             string `json:"modelKey"`
+		RequestedAspectRatio string `json:"requestedAspectRatio,omitempty"`
+		RequestedResolution  string `json:"requestedResolution,omitempty"`
+		ActualWidth          int    `json:"actualWidth,omitempty"`
+		ActualHeight         int    `json:"actualHeight,omitempty"`
+		ActualDurationMS     int64  `json:"actualDurationMs,omitempty"`
 	}{
 		RunID: runID, ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
 		TaskID: task.ID, BillingOrderID: task.BillingOrderID, ResourceID: primary.ResourceID,
 		ClientRequestID: arguments.ClientRequestID, ModelRecordID: arguments.ModelRecordID, ModelKey: arguments.ModelKey,
+		RequestedAspectRatio: requestFacts.RequestedAspectRatio, RequestedResolution: requestFacts.RequestedResolution,
+		ActualWidth: resource.Width, ActualHeight: resource.Height, ActualDurationMS: resource.DurationMs,
 	})
 	if err != nil {
 		return nil, false, err
@@ -230,6 +262,54 @@ func agentMediaResultBoundNode(
 		return nil, false, nil
 	}
 	return updated, true, nil
+}
+
+func agentMediaCanvasRequestMetadata(arguments agentruntime.MediaGenerateArguments) (agentMediaCanvasRequestFacts, error) {
+	facts := agentMediaCanvasRequestFacts{StringMetadata: map[string]string{}, NumberMetadata: map[string]int64{}}
+	switch arguments.MediaKind {
+	case agentruntime.MediaKindImage:
+		parameters, err := decodeAgentImageGenerationParameters(arguments.Parameters)
+		if err != nil {
+			return agentMediaCanvasRequestFacts{}, errors.Join(errors.New("media.generate approved image parameters are invalid"), err)
+		}
+		facts.RequestedAspectRatio = parameters.AspectRatio
+		facts.RequestedResolution = parameters.Resolution
+		facts.StringMetadata["size"] = parameters.AspectRatio
+		facts.StringMetadata["quality"] = parameters.Quality
+		facts.StringMetadata["transparentBackground"] = fmt.Sprintf("%t", parameters.TransparentBackground)
+		facts.NumberMetadata["count"] = int64(parameters.Count)
+	case agentruntime.MediaKindVideo:
+		parameters, err := decodeAgentVideoGenerationParameters(arguments.Parameters)
+		if err != nil {
+			return agentMediaCanvasRequestFacts{}, errors.Join(errors.New("media.generate approved video parameters are invalid"), err)
+		}
+		facts.RequestedAspectRatio = parameters.AspectRatio
+		facts.RequestedResolution = parameters.Resolution
+		facts.StringMetadata["size"] = parameters.AspectRatio
+		facts.StringMetadata["vquality"] = parameters.Resolution
+		facts.StringMetadata["seconds"] = fmt.Sprintf("%d", parameters.DurationSeconds)
+		facts.StringMetadata["generateAudio"] = fmt.Sprintf("%t", parameters.GenerateAudio)
+	case agentruntime.MediaKindAudio:
+		parameters, err := decodeAgentAudioGenerationParameters(arguments.Parameters)
+		if err != nil {
+			return agentMediaCanvasRequestFacts{}, errors.Join(errors.New("media.generate approved audio parameters are invalid"), err)
+		}
+		for key, value := range map[string]string{
+			"audioVoice": parameters.Voice, "audioFormat": parameters.Format, "audioSpeed": parameters.Speed,
+			"audioVolume": parameters.Volume, "audioPitch": parameters.Pitch, "audioEmotion": parameters.Emotion,
+			"audioLanguageBoost": parameters.LanguageBoost, "audioSampleRate": parameters.SampleRate,
+			"audioBitrate": parameters.Bitrate, "audioChannel": parameters.Channel, "audioInstructions": parameters.Instructions,
+		} {
+			if value != "" {
+				facts.StringMetadata[key] = value
+			} else {
+				facts.NullMetadata = append(facts.NullMetadata, key)
+			}
+		}
+	default:
+		return agentMediaCanvasRequestFacts{}, errors.New("media.generate approved media kind is invalid")
+	}
+	return facts, nil
 }
 
 func agentMediaResultCanvasMutationID(scope agentruntime.Scope, call agentruntime.ToolCallDecision) string {

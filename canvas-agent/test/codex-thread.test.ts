@@ -55,6 +55,13 @@ test("documents every delivery-kind invariant in the Codex runtime instructions"
   assert.match(instructions, /null.*缺省/);
 });
 
+test("keeps creative node titles separate from lifecycle fields", () => {
+  const instructions = buildCanvasAgentInstructions("canvas-1");
+
+  assert.match(instructions, /node\.title.*稳定的创作名称/);
+  assert.match(instructions, /metadata\.status.*metadata\.taskStatus.*metadata\.taskStage/);
+});
+
 class FakeCodexThread implements CodexThreadPort {
   id: string | null = null;
   readonly inputs: Input[] = [];

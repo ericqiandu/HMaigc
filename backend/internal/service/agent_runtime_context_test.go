@@ -759,6 +759,17 @@ func TestAgentRuntimeSystemPromptDeclaresFinalDeliveryAndMediaCanvasLifecycle(t 
 	}
 }
 
+func TestAgentRuntimeSystemPromptSeparatesCreativeNodeTitlesFromLifecycleFacts(t *testing.T) {
+	for _, required := range []string{
+		"node.title 只保存稳定的创作名称",
+		"运行状态只保存到 metadata.status、metadata.taskStatus 与 metadata.taskStage",
+	} {
+		if !strings.Contains(agentRuntimeCloudSystemPrompt, required) {
+			t.Fatalf("agent runtime system prompt is missing title ownership rule %q", required)
+		}
+	}
+}
+
 type agentRuntimePromptContextForTest struct {
 	Scope struct {
 		TenantKind      agentruntime.TenantKind `json:"tenantKind"`

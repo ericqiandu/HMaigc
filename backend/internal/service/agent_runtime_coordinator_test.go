@@ -246,6 +246,57 @@ func TestCoordinatePendingCloudReadsStopWhenFactsRepeatWithoutProgress(t *testin
 	}
 }
 
+func TestCoordinatePendingCloudReadStopsAfterIdenticalFailureRepeats(t *testing.T) {
+	server, _ := newAgentRuntimeDecisionServer(t, `{"kind":"final","final":{"message":"完成。","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
+	defer server.Close()
+	svc, _, _ := newAgentRuntimeServiceFixture(t, server.URL)
+	scope := agentRuntimeServiceScope()
+	if _, err := svc.StartAgentRuntime(StartAgentRuntimeInput{
+		Scope: scope, ClientRequestID: "repeated-cloud-read-failures", UserMessage: "读取不存在的项目资产",
+		MaxSteps: 8, Configuration: AgentRuntimeConfigurationInput{ExecutionMode: agentruntime.ExecutionAutomatic},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	arguments := json.RawMessage(`{"domainProjectId":"runtime-project","resourceIds":["missing-resource"],"limit":100}`)
+	runRead := func(toolCallID string) AgentRuntimeProgress {
+		t.Helper()
+		state, err := svc.repo.LoadAgentCheckpoint(scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requested, err := agentruntime.Advance(state, agentruntime.RuntimeInput{Decision: agentruntime.ModelDecision{
+			Kind: agentruntime.DecisionToolCall,
+			ToolCall: &agentruntime.ToolCallDecision{
+				ToolCallID: toolCallID, ToolName: agentruntime.ToolAssetsRead, ActionVersion: 1,
+				Arguments: arguments, ExpectedDelivery: agentRuntimeTestAnswerDelivery(),
+			},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.repo.CommitAgentRuntimeTransition(scope, state, requested, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		progress, err := svc.coordinatePendingAgentTool(scope, CoordinateAgentToolInput{ToolCallID: toolCallID, ActionVersion: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return *progress
+	}
+
+	first := runRead("missing-assets-first")
+	if first.State.Status != agentruntime.RunRunning || first.State.LastToolResult == nil || first.State.LastToolResult.Succeeded ||
+		first.State.LastToolResult.ErrorCode != "capability_ownership_forbidden" {
+		t.Fatalf("first failed read = status:%q result:%#v", first.State.Status, first.State.LastToolResult)
+	}
+	second := runRead("missing-assets-second")
+	if second.State.Status != agentruntime.RunFailed || second.State.FailureCode != "tool_no_progress" || second.State.LastToolResult == nil ||
+		second.State.LastToolResult.Succeeded || second.State.LastToolResult.ErrorCode != "tool_no_progress" {
+		t.Fatalf("repeated failed read = status:%q failure:%q result:%#v", second.State.Status, second.State.FailureCode, second.State.LastToolResult)
+	}
+}
+
 func TestCoordinatePendingAgentToolRejectsRetiredRunContractBeforeExecution(t *testing.T) {
 	server, _ := newAgentRuntimeDecisionServer(t, `{"kind":"final","final":{"message":"完成。","expectedDelivery":{"kind":"answer","completionCriteria":[{"fact":"final_message"}]}}}`)
 	defer server.Close()

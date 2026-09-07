@@ -305,6 +305,19 @@ func (s *Service) coordinatePendingAgentTool(scope agentruntime.Scope, input Coo
 		if errors.As(executionErr, &capabilityFailure) {
 			failureCode = capabilityFailure.Code
 		}
+		noProgressClass, noProgress, noProgressErr := s.repeatedAgentReadFailureClass(scope, call, nil, failureCode)
+		if noProgressErr != nil {
+			return nil, noProgressErr
+		}
+		if noProgress {
+			failureOutput, marshalErr := json.Marshal(map[string]string{
+				"reason": "identical read failure was already observed without an intervening successful write or paid action",
+			})
+			if marshalErr != nil {
+				return nil, marshalErr
+			}
+			return s.resolvePendingAgentToolFailureWithJSONOutputClass(scope, state, call, "tool_no_progress", failureOutput, noProgressClass)
+		}
 		return s.resolvePendingAgentToolFailureWithOutput(scope, state, call, failureCode, map[string]string{"reason": executionErr.Error()})
 	}
 	if execution.Pending {
@@ -327,7 +340,7 @@ func (s *Service) coordinatePendingAgentTool(scope agentruntime.Scope, input Coo
 		return s.agentRuntimeProgressForCurrentState(scope, progress.State)
 	}
 	output := execution.Output
-	noProgressClass, noProgress, err := s.repeatedAgentReadFailureClass(scope, call, output)
+	noProgressClass, noProgress, err := s.repeatedAgentReadFailureClass(scope, call, output, "")
 	if err != nil {
 		return nil, err
 	}
@@ -364,6 +377,7 @@ func (s *Service) repeatedAgentReadFailureClass(
 	scope agentruntime.Scope,
 	call *agentruntime.ToolCallDecision,
 	output json.RawMessage,
+	errorCode string,
 ) (agentruntime.ToolFailureClass, bool, error) {
 	if call == nil {
 		return "", false, errors.New("agent read progress facts are missing")
@@ -391,6 +405,10 @@ func (s *Service) repeatedAgentReadFailureClass(
 		if previous.Status == agentruntime.ToolCallFailed && previous.ErrorCode == "tool_no_progress" {
 			priorNoProgress = true
 			continue
+		}
+		if errorCode != "" && previous.Status == agentruntime.ToolCallFailed && previous.ErrorCode == errorCode &&
+			previous.ToolName == string(call.ToolName) && equalAgentToolArguments(previous.InputJSON, call.Arguments) {
+			return agentruntime.ToolFailureTerminal, true, nil
 		}
 		if previous.Status != agentruntime.ToolCallSucceeded || previous.ToolName != string(call.ToolName) ||
 			!equalAgentToolArguments(previous.InputJSON, call.Arguments) || !equalAgentToolArguments(previous.OutputJSON, output) {

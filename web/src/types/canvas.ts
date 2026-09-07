@@ -235,6 +235,11 @@ export type CanvasNodeMetadata = {
         clientRequestId: string;
         modelRecordId: string;
         modelKey: string;
+        requestedAspectRatio?: string;
+        requestedResolution?: string;
+        actualWidth?: number;
+        actualHeight?: number;
+        actualDurationMs?: number;
     };
     taskId?: string;
     taskStatus?: "queued" | "running" | "succeeded" | "failed" | "cancelled" | string;

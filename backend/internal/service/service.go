@@ -775,9 +775,24 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	if hasUncertainBilling {
+	var existingOrder *model.BillingOrder
+	if strings.TrimSpace(task.BillingOrderID) != "" {
+		existingOrder, err = s.repo.BillingOrder(task.BillingOrderID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	settledProviderSuccess := existingOrder != nil && existingOrder.Status == model.BillingStatusSettled &&
+		strings.TrimSpace(existingOrder.ProviderTaskStatus) == "succeeded" && strings.TrimSpace(existingOrder.ProviderRequestID) != "" &&
+		(strings.TrimSpace(task.ProviderRequestID) == "" || strings.TrimSpace(task.ProviderRequestID) == strings.TrimSpace(existingOrder.ProviderRequestID))
+	if existingOrder != nil && existingOrder.Status == model.BillingStatusSettled && !settledProviderSuccess {
+		return nil, BadAuthRequest("该任务已经结算，但缺少可恢复的供应商成功结果；禁止再次生成，请由管理员核对")
+	}
+	if hasUncertainBilling || settledProviderSuccess {
 		if strings.TrimSpace(task.ProviderRequestID) == "" {
-			return nil, BadAuthRequest("该任务的上游费用状态仍待核对，不能重新生成，请先由管理员完成计费核对")
+			if !settledProviderSuccess {
+				return nil, BadAuthRequest("该任务的上游费用状态仍待核对，不能重新生成，请先由管理员完成计费核对")
+			}
 		}
 		policy, policyErr := s.RuntimePolicy()
 		if policyErr != nil {
@@ -786,15 +801,14 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 		if err := s.ensureTaskProjectActive(userID, task.ProjectID); err != nil {
 			return nil, err
 		}
-		order, orderErr := s.repo.BillingOrder(task.BillingOrderID)
-		if orderErr != nil {
-			return nil, orderErr
+		if existingOrder == nil {
+			return nil, errors.New("恢复上游任务失败：计费订单事实缺失")
 		}
-		activeTaskPolicy, concurrencyClass, policyErr := s.membershipActiveTaskPolicy(userID, billingAccountScope{TeamID: order.TeamID}, task.Type, policy)
+		activeTaskPolicy, concurrencyClass, policyErr := s.membershipActiveTaskPolicy(userID, billingAccountScope{TeamID: existingOrder.TeamID}, task.Type, policy)
 		if policyErr != nil {
 			return nil, policyErr
 		}
-		resumed, resumeErr := s.repo.ResumeTaskWithUncertainBilling(userID, task.ID, activeTaskPolicy)
+		resumed, resumeErr := s.repo.ResumeTaskWithProviderRequest(userID, task.ID, activeTaskPolicy)
 		if errors.Is(resumeErr, repository.ErrCapabilityTaskLimit) {
 			return nil, BadAuthRequest(capabilityLimitMessage(concurrencyClass, activeTaskPolicy.ClassLimit))
 		}
@@ -807,7 +821,7 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 		if resumeErr != nil {
 			return nil, resumeErr
 		}
-		_ = s.log(userID, task.ID, "info", "继续核对既有上游任务", task.ProviderRequestID)
+		_ = s.log(userID, task.ID, "info", "继续恢复既有上游任务", resumed.ProviderRequestID)
 		return taskForOutput(*resumed), nil
 	}
 	if isContentModerationFailure(task.Error) {
@@ -1275,12 +1289,14 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 
 	reconcilingCancellation := task.Status == model.TaskStatusCancelled
 	tokenBilledTask := false
+	providerResultRecovery := false
 	if strings.TrimSpace(task.BillingOrderID) != "" {
 		order, orderErr := s.repo.BillingOrder(task.BillingOrderID)
 		if orderErr != nil {
 			return orderErr
 		}
 		tokenBilledTask = order.BillingMode == "token_usage"
+		providerResultRecovery = isSettledProviderResultRecovery(task, order)
 	}
 	if !reconcilingCancellation {
 		task.Stage = "调用生成模型"
@@ -1298,7 +1314,7 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 				return orderErr
 			}
 		}
-		if !billingAlreadyUncertain && !visionTask {
+		if !billingAlreadyUncertain && !providerResultRecovery && !visionTask {
 			var billingStartErr error
 			if tokenBilledTask {
 				billingStartErr = s.BeginTokenBillingRequest(task.BillingOrderID)
@@ -1890,7 +1906,7 @@ func buildAgentStoryboardResult(task model.Task, plan agentStoryboardPlan, asset
 		nodeOpWithMetadata(sceneID, "text", "场景设定", sceneX, 0, map[string]any{"workflowKind": "scene", "workflowTitle": "场景", "status": "success", "content": listContent("场景", plan.Locations)}),
 		nodeOpWithMetadata(styleID, "text", "风格板", styleX, 0, map[string]any{"workflowKind": "styleboard", "workflowTitle": "风格板", "status": "success", "content": plan.StyleGuide}),
 		nodeOpWithMetadata(referenceID, "text", "参考素材组", 0, 270, map[string]any{"workflowKind": "reference_set", "workflowTitle": "参考素材组", "status": "success", "content": storyboardAssetsContent(assets)}),
-		nodeOpWithMetadata(finalID, "video", "成片 · 待生成", styleX, 270, map[string]any{"workflowKind": "final", "workflowTitle": "成片", "status": "idle"}),
+		nodeOpWithMetadata(finalID, "video", "成片", styleX, 270, map[string]any{"workflowKind": "final", "workflowTitle": "成片", "status": "idle"}),
 		connectOp(scriptID, sceneID),
 	}
 	resultShots := make([]map[string]any, 0, len(plan.Shots))

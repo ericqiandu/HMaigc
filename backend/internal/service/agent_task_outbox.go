@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,7 +55,7 @@ func taskAgentRunOutboxDraft(task model.Task, availableAt time.Time) (*repositor
 		return nil, err
 	}
 	return &repository.TaskOutboxDraft{
-		IdempotencyKey: "agent-run:" + runID + ":task:" + task.ID + ":terminal",
+		IdempotencyKey: "agent-run:" + runID + ":task:" + task.ID + ":attempt:" + strconv.Itoa(task.Attempts) + ":terminal",
 		EventType:      model.TaskOutboxAgentRunWakeup, PayloadJSON: string(payload), AvailableAt: availableAt.UTC(),
 	}, nil
 }
@@ -158,15 +159,20 @@ func (s *Service) dispatchTaskOutboxWithDelivery(now time.Time, limit int, deliv
 	var deliveryErrors []error
 	for index := range records {
 		record := records[index]
+		var task *model.Task
 		payload, deliveryErr := decodeAgentTaskOutbox(record)
 		if deliveryErr == nil {
-			var task *model.Task
 			task, deliveryErr = s.repo.Task(record.TaskID)
 			if deliveryErr == nil && task.Status != model.TaskStatusSucceeded && task.Status != model.TaskStatusCancelled && task.Status != model.TaskStatusFailed {
 				deliveryErr = errors.New("task outbox terminal task fact is unavailable")
 			}
 			if deliveryErr == nil {
 				deliveryErr = validateAgentTaskOutboxScope(*task, payload)
+			}
+		}
+		if deliveryErr == nil {
+			if _, mediaTask := agentMediaGenerationRunID(task.Operation); mediaTask && task.Status == model.TaskStatusSucceeded {
+				deliveryErr = s.projectCompletedAgentMediaTaskResult(task)
 			}
 		}
 		if deliveryErr == nil {

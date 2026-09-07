@@ -63,6 +63,22 @@ func TestBuildAgentStoryboardResultGuidedDoesNotStartGeneration(t *testing.T) {
 	}
 }
 
+func TestBuildAgentStoryboardResultKeepsLifecycleOutOfCreativeNodeTitle(t *testing.T) {
+	plan := agentStoryboardPlan{Title: "方案", Shots: []agentStoryboardShot{{Title: "镜头", Duration: 6, VideoPrompt: "提示词"}}}
+	_, ops, err := buildAgentStoryboardResult(model.Task{ID: "task-title"}, plan, nil, "guided", agentDeliverySpec{})
+	if err != nil {
+		t.Fatalf("build result: %v", err)
+	}
+	finalNode := findCanvasOp(t, ops, "add_node", "agent-task-title-final")
+	if finalNode["title"] != "成片" {
+		t.Fatalf("final creative title = %#v, want 成片", finalNode["title"])
+	}
+	metadata, ok := finalNode["metadata"].(map[string]any)
+	if !ok || metadata["status"] != "idle" {
+		t.Fatalf("final lifecycle metadata = %#v", finalNode["metadata"])
+	}
+}
+
 func findCanvasOp(t *testing.T, ops []map[string]any, opType string, id string) map[string]any {
 	t.Helper()
 	for _, op := range ops {
