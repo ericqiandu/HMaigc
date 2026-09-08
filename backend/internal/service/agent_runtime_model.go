@@ -27,7 +27,11 @@ type agentRuntimeModelDecisionRejectedError struct {
 
 var errAgentRuntimeStateObservation = errors.New("Agent 运行状态观察失败")
 
-const agentRuntimeStateObservationInterval = 250 * time.Millisecond
+const agentRuntimeStateObservationInterval = time.Second
+const agentRuntimeStateObservationFailureLimit = 3
+const agentRuntimePostStreamObservationAttempts = 3
+const agentRuntimePostStreamObservationRetryDelay = 100 * time.Millisecond
+const agentRuntimeVisibleMessageFlushInterval = 200 * time.Millisecond
 
 func (err *agentRuntimeModelDecisionRejectedError) Error() string {
 	return err.feedback.Reason
@@ -70,34 +74,46 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 		}
 		observer := agentruntime.NewDecisionStreamObserverForToolSchema(run.ToolSchemaVersion)
 		itemID := agentruntime.AgentMessageItemID(runID, state.StepNumber)
-		started := false
-		visibleMessage := ""
+		projector := newAgentVisibleMessageProjector(agentRuntimeVisibleMessageFlushInterval, func(delta string, message string, started bool) error {
+			payload, marshalErr := json.Marshal(agentVisibleModelDeltaPayload{ItemID: itemID, Delta: delta, UserVisible: true, Started: started})
+			if marshalErr != nil {
+				return marshalErr
+			}
+			if _, appendErr := s.repo.AppendAgentMessageDelta(repository.AppendAgentMessageDeltaInput{
+				Scope: scope, ItemID: itemID, PayloadJSON: string(payload), Message: message, Started: started, Now: time.Now().UTC(),
+			}); appendErr != nil {
+				return fmt.Errorf("agent_visible_delta_projection_failed: %w", appendErr)
+			}
+			return nil
+		})
 		providerContext, cancelProvider := context.WithCancelCause(ctx)
 		stopObservation := make(chan struct{})
-		observationStopped := make(chan struct{})
+		observationStopped := make(chan agentRuntimeStateObservationReport, 1)
 		go s.observeAgentRuntimeModelRequest(providerContext, cancelProvider, stopObservation, observationStopped, scope)
 		result, requestErr := runAgentTextCompletionStream(providerContext, canvasGenerationInput{Mode: "text", Prompt: input.Prompt, Config: config}, func(rawDelta string) error {
 			visible, observeErr := observer.Push(rawDelta)
 			if observeErr != nil || visible == "" {
 				return observeErr
 			}
-			payload, marshalErr := json.Marshal(agentVisibleModelDeltaPayload{ItemID: itemID, Delta: visible, UserVisible: true, Started: !started})
-			if marshalErr != nil {
-				return marshalErr
-			}
-			nextVisibleMessage := visibleMessage + visible
-			if _, appendErr := s.repo.AppendAgentMessageDelta(repository.AppendAgentMessageDeltaInput{Scope: scope, ItemID: itemID, PayloadJSON: string(payload), Message: nextVisibleMessage, Started: !started, Now: time.Now().UTC()}); appendErr != nil {
-				return fmt.Errorf("agent_visible_delta_projection_failed: %w", appendErr)
-			}
-			visibleMessage = nextVisibleMessage
-			started = true
-			return nil
+			return projector.Push(visible, time.Now().UTC())
 		})
+		if flushErr := projector.Flush(time.Now().UTC()); flushErr != nil {
+			requestErr = combineAgentRuntimeRequestErrors(requestErr, flushErr)
+		}
+		visibleMessage := projector.PersistedMessage()
 		close(stopObservation)
-		<-observationStopped
+		observationReport := <-observationStopped
 		providerCause := context.Cause(providerContext)
 		if providerCause == nil {
-			latestState, stateErr := s.repo.LoadAgentCheckpoint(scope)
+			latestState, retryReport, stateErr := loadAgentRuntimeCheckpointWithRetry(
+				providerContext,
+				agentRuntimePostStreamObservationAttempts,
+				agentRuntimePostStreamObservationRetryDelay,
+				func() (agentruntime.RuntimeState, error) { return s.repo.LoadAgentCheckpoint(scope) },
+			)
+			observationReport.TotalFailures += retryReport.TotalFailures
+			observationReport.ConsecutiveFailures = retryReport.ConsecutiveFailures
+			observationReport.ThresholdExceeded = observationReport.ThresholdExceeded || retryReport.ThresholdExceeded
 			switch {
 			case stateErr != nil:
 				providerCause = fmt.Errorf("%w: %v", errAgentRuntimeStateObservation, stateErr)
@@ -107,9 +123,9 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 		}
 		cancelProvider(nil)
 		if providerCause != nil {
-			requestErr = providerCause
+			requestErr = combineAgentRuntimeRequestErrors(requestErr, providerCause)
 		}
-		if evidenceErr := s.persistAgentRuntimeProviderStreamEvidence(task, result, requestErr); evidenceErr != nil {
+		if evidenceErr := s.persistAgentRuntimeProviderStreamEvidence(task, result, requestErr, observationReport); evidenceErr != nil {
 			return agentRuntimeModelTaskResult{}, evidenceErr
 		}
 		if requestErr != nil {
@@ -139,7 +155,8 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 		}
 		text = result.Text
 		if _, finishErr := observer.Finish(); finishErr != nil {
-			if diagnosticErr := s.persistAgentRuntimeDecisionDiagnostic(task, []byte(strings.TrimSpace(text)), finishErr); diagnosticErr != nil {
+			payload := []byte(strings.TrimSpace(text))
+			if diagnosticErr := s.persistAgentRuntimeDecisionDiagnostic(task, payload, finishErr); diagnosticErr != nil {
 				return agentRuntimeModelTaskResult{}, errors.New("Agent 决策诊断保存失败")
 			}
 			if failErr := s.failAgentRuntimeVisibleMessage(scope, itemID, visibleMessage, "model_decision_invalid"); failErr != nil {
@@ -150,7 +167,8 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 					return agentRuntimeModelTaskResult{}, evidenceErr
 				}
 			}
-			return agentRuntimeModelTaskResult{Mode: "text", DecisionFeedback: &agentruntime.ModelDecisionFeedback{Code: "model_decision_invalid", Reason: finishErr.Error()}}, nil
+			feedback := agentRuntimeDecisionFeedback(payload, finishErr)
+			return agentRuntimeModelTaskResult{Mode: "text", DecisionFeedback: &feedback}, nil
 		}
 		if config.MaxOutputTokens > 0 {
 			if evidenceErr := s.persistAgentRuntimeTokenBillingEvidence(task, result, "等待 Agent 结果持久化后核对"); evidenceErr != nil {
@@ -160,12 +178,14 @@ func (s *Service) processAgentRuntimeModelText(ctx context.Context, task model.T
 	}
 	text = strings.TrimSpace(text)
 	if _, err := agentruntime.ParseModelDecisionForToolSchema([]byte(text), toolSchemaVersion); err != nil {
-		if diagnosticErr := s.persistAgentRuntimeDecisionDiagnostic(task, []byte(text), err); diagnosticErr != nil {
+		payload := []byte(text)
+		if diagnosticErr := s.persistAgentRuntimeDecisionDiagnostic(task, payload, err); diagnosticErr != nil {
 			return agentRuntimeModelTaskResult{}, errors.New("Agent 决策诊断保存失败")
 		}
+		feedback := agentRuntimeDecisionFeedback(payload, err)
 		return agentRuntimeModelTaskResult{
 			Mode:             "text",
-			DecisionFeedback: &agentruntime.ModelDecisionFeedback{Code: "model_decision_invalid", Reason: err.Error()},
+			DecisionFeedback: &feedback,
 		}, nil
 	}
 	return agentRuntimeModelTaskResult{Mode: "text", Text: text}, nil
@@ -175,10 +195,14 @@ func (s *Service) observeAgentRuntimeModelRequest(
 	ctx context.Context,
 	cancel context.CancelCauseFunc,
 	stop <-chan struct{},
-	stopped chan<- struct{},
+	stopped chan<- agentRuntimeStateObservationReport,
 	scope agentruntime.Scope,
 ) {
-	defer close(stopped)
+	policy := newAgentRuntimeStateObservationFailurePolicy(agentRuntimeStateObservationFailureLimit)
+	defer func() {
+		stopped <- policy.Report()
+		close(stopped)
+	}()
 	ticker := time.NewTicker(agentRuntimeStateObservationInterval)
 	defer ticker.Stop()
 	for {
@@ -190,9 +214,13 @@ func (s *Service) observeAgentRuntimeModelRequest(
 		case <-ticker.C:
 			state, err := s.repo.LoadAgentCheckpoint(scope)
 			if err != nil {
-				cancel(fmt.Errorf("%w: %v", errAgentRuntimeStateObservation, err))
-				return
+				if policy.Record(err) {
+					cancel(fmt.Errorf("%w: %v", errAgentRuntimeStateObservation, err))
+					return
+				}
+				continue
 			}
+			policy.Record(nil)
 			if agentRuntimeRunTerminal(state.Status) {
 				cancel(context.Canceled)
 				return
@@ -238,20 +266,42 @@ func (s *Service) failAgentRuntimeVisibleMessage(scope agentruntime.Scope, itemI
 	return nil
 }
 
-func (s *Service) persistAgentRuntimeProviderStreamEvidence(task model.Task, result providerTextStreamResult, streamErr error) error {
+func (s *Service) persistAgentRuntimeProviderStreamEvidence(
+	task model.Task,
+	result providerTextStreamResult,
+	streamErr error,
+	observation agentRuntimeStateObservationReport,
+) error {
+	if err := observation.Validate(); err != nil {
+		return err
+	}
 	failureReason := ""
 	if streamErr != nil {
 		failureReason = agentRuntimeProviderStreamFailureReason(streamErr)
 	}
 	payload, err := json.Marshal(struct {
-		ProviderRequestID string `json:"providerRequestId,omitempty"`
-		FinishReason      string `json:"finishReason,omitempty"`
-		UsageAvailable    bool   `json:"usageAvailable"`
-		ErrorCode         string `json:"errorCode,omitempty"`
-		FailureReason     string `json:"failureReason,omitempty"`
+		ProviderRequestID            string                             `json:"providerRequestId,omitempty"`
+		FinishReason                 string                             `json:"finishReason,omitempty"`
+		UsageAvailable               bool                               `json:"usageAvailable"`
+		EventCount                   int                                `json:"eventCount"`
+		OutputTextDeltaCount         int                                `json:"outputTextDeltaCount"`
+		OutputTextDoneCount          int                                `json:"outputTextDoneCount"`
+		ReasoningTextDeltaCount      int                                `json:"reasoningTextDeltaCount"`
+		CompletedOutputItemTypes     []string                           `json:"completedOutputItemTypes,omitempty"`
+		CompletedContentPartTypes    []string                           `json:"completedContentPartTypes,omitempty"`
+		CompletedOutputTextPartCount int                                `json:"completedOutputTextPartCount"`
+		StateObservation             agentRuntimeStateObservationReport `json:"stateObservation"`
+		ErrorCode                    string                             `json:"errorCode,omitempty"`
+		FailureReason                string                             `json:"failureReason,omitempty"`
 	}{
 		ProviderRequestID: result.ProviderRequestID, FinishReason: result.FinishReason, UsageAvailable: result.Usage.Available,
-		ErrorCode: agentRuntimeProviderStreamFailureCode(streamErr), FailureReason: failureReason,
+		EventCount: result.Diagnostics.EventCount, OutputTextDeltaCount: result.Diagnostics.OutputTextDeltaCount,
+		OutputTextDoneCount: result.Diagnostics.OutputTextDoneCount, ReasoningTextDeltaCount: result.Diagnostics.ReasoningTextDeltaCount,
+		CompletedOutputItemTypes:     result.Diagnostics.CompletedOutputItemTypes,
+		CompletedContentPartTypes:    result.Diagnostics.CompletedContentPartTypes,
+		CompletedOutputTextPartCount: result.Diagnostics.CompletedOutputTextPartCount,
+		StateObservation:             observation,
+		ErrorCode:                    agentRuntimeProviderStreamFailureCode(streamErr), FailureReason: failureReason,
 	})
 	if err != nil || s.log(task.UserID, task.ID, "info", "Agent provider stream evidence", string(payload)) != nil {
 		return errors.New("Agent 供应商流式事实保存失败")
@@ -278,6 +328,8 @@ func agentRuntimeProviderStreamFailureCode(streamErr error) string {
 		return "agent_provider_stream_truncated"
 	case errors.Is(streamErr, errAgentProviderStreamProtocolInvalid):
 		return "agent_provider_stream_protocol_invalid"
+	case errors.Is(streamErr, errProviderTextMissing):
+		return "agent_provider_text_missing"
 	case streamErr != nil:
 		return "agent_provider_stream_failed"
 	default:

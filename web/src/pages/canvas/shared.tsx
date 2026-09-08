@@ -313,6 +313,7 @@ export default function SharedCanvasPage() {
                             scale={viewport.k}
                             isSelected={selectedNodeId === node.id}
                             isDropTarget={false}
+                            mediaVisibilityTier="visible"
                             readOnly
                             onMouseDown={(event, nodeId) => {
                                 event.stopPropagation();
@@ -323,7 +324,7 @@ export default function SharedCanvasPage() {
                                 dragRef.current = { primaryId: nodeId, nodeIds: dragged.map((item) => item.id), startX: event.clientX, startY: event.clientY, origins: new Map(dragged.map((item) => [item.id, item.position])), moved: false };
                                 document.body.style.cursor = "grabbing";
                             }}
-                            onResize={() => undefined}
+                            onResizeCommit={() => undefined}
                             onToggleCollapsed={toggleFrame}
                             onTitleChange={unauthorized}
                             onHoverStart={keepToolbar}
@@ -342,6 +343,7 @@ export default function SharedCanvasPage() {
                             isConnectionTarget={false}
                             isConnecting={false}
                             showImageInfo={false}
+                            mediaVisibilityTier="visible"
                             readOnly
                             renderNodeContent={renderSharedNode}
                             onMouseDown={(event, nodeId) => {
@@ -357,7 +359,7 @@ export default function SharedCanvasPage() {
                             onHoverStart={keepToolbar}
                             onHoverEnd={hideToolbar}
                             onConnectStart={unauthorized}
-                            onResize={() => undefined}
+                            onResizeCommit={() => undefined}
                             onContentChange={unauthorized}
                             onRetry={unauthorized}
                             onCancelTask={unauthorized}
@@ -387,6 +389,7 @@ export default function SharedCanvasPage() {
                 onSaveAsset={unauthorized}
                 onMaskEdit={unauthorized}
                 onEmotion={unauthorized}
+                onPortraitTexture={unauthorized}
                 onCrop={unauthorized}
                 onSplit={unauthorized}
                 onUpscale={unauthorized}
@@ -395,6 +398,7 @@ export default function SharedCanvasPage() {
                 onViewImage={unauthorized}
                 onExtractVideoLastFrame={unauthorized}
                 extractingVideoFrame={false}
+                portraitTextureEnabled={false}
                 onReversePrompt={unauthorized}
                 onRetry={unauthorized}
                 onToggleFreeResize={unauthorized}

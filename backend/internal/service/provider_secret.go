@@ -95,6 +95,9 @@ func (s *Service) ValidateProviderSecretRuntime() error {
 }
 
 func (s *Service) ValidateStartupRuntime() error {
+	if s.runtimeErr != nil {
+		return s.runtimeErr
+	}
 	if err := validateProviderRegistryRuntime(kuaiziProviderAdapterDescriptors()); err != nil {
 		return err
 	}

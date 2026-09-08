@@ -1,0 +1,7 @@
+# Agent checkpoint 解码诊断
+
+历史读取和运行恢复共用严格解码器。未知字段、类型错误、语法错误、空或截断输入、尾随数据均显式失败，返回原因类别、字节偏移和 SHA-256 内容指纹前缀，不回显 checkpoint 内容。
+
+诊断不修改数据、不放宽校验、不代表 Agent 可以恢复。运行记录的版本、步骤与状态一致性校验仍在 repository 执行。判断部署兼容性必须使用实际版本和数据证据，不能仅凭构建通过。
+
+回归：`go test ./internal/service ./internal/repository -run 'TestCheckpoint' -count=1`；另需后端构建。真实服务只有部署包含该解码器的版本后才会返回新的诊断。

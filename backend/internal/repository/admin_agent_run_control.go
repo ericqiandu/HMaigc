@@ -60,6 +60,7 @@ type adminAgentRunControlTarget struct {
 	BillingOrderID    string           `gorm:"column:billing_order_id"`
 	ProviderRequestID string           `gorm:"column:provider_request_id"`
 	PollStage         string           `gorm:"column:poll_stage"`
+	Operation         string           `gorm:"column:operation"`
 }
 
 type adminAgentRunScopeFacts struct {
@@ -166,7 +167,7 @@ func (r *Repository) InterruptAdminAgentRun(command AdminAgentRunInterruptComman
 		if err := failAdminAgentRunPendingFacts(tx, scope, current, command.Now); err != nil {
 			return err
 		}
-		taskDispositions, reconciliationPending, err := disposeAdminAgentRunControlTargets(tx, targets, command.Reason, command.Now, false)
+		taskDispositions, reconciliationPending, err := disposeAdminAgentRunControlTargets(tx, scope.RunID, targets, command.Reason, command.Now, false)
 		if err != nil {
 			return err
 		}
@@ -197,13 +198,29 @@ func loadAdminAgentRunControlTargets(db *gorm.DB, runID string) ([]adminAgentRun
 	}
 	var visionTargets []adminAgentRunControlTarget
 	if err := db.Model(&model.Task{}).
-		Select("id AS task_id, 'vision' AS kind, user_id, status, billing_order_id, provider_request_id, poll_stage").
+		Select("id AS task_id, 'vision' AS kind, user_id, status, billing_order_id, provider_request_id, poll_stage, operation").
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("operation = ? AND type = ? AND audience = ? AND status IN ?", "agent_vision:"+runID, "agent_vision_analysis", model.TaskAudienceInternal, []model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}).
 		Find(&visionTargets).Error; err != nil {
 		return nil, err
 	}
 	for _, target := range visionTargets {
+		targetByID[target.TaskID] = target
+	}
+	// 原子媒体工具不再创建 production_artifact，归属以 Run 与任务操作身份为准。
+	var capabilityMediaTargets []adminAgentRunControlTarget
+	if err := db.Model(&model.Task{}).
+		Select("id AS task_id, 'media' AS kind, user_id, status, billing_order_id, provider_request_id, poll_stage, operation").
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where(`operation = ? AND audience = ? AND status IN ? AND EXISTS (
+			SELECT 1 FROM agent_runs JOIN agent_threads ON agent_threads.id = agent_runs.thread_id
+			WHERE agent_runs.id = ? AND agent_runs.actor_user_id = tasks.user_id AND agent_threads.canvas_id = tasks.project_id
+		)`, "media_generation:"+runID, model.TaskAudienceInternal,
+			[]model.TaskStatus{model.TaskStatusQueued, model.TaskStatusRunning}, runID).
+		Find(&capabilityMediaTargets).Error; err != nil {
+		return nil, err
+	}
+	for _, target := range capabilityMediaTargets {
 		targetByID[target.TaskID] = target
 	}
 	var mediaTargets []adminAgentRunControlTarget
@@ -293,6 +310,7 @@ func adminAgentRunHasUnresolvedBilling(db *gorm.DB, runID string, targets []admi
 
 func disposeAdminAgentRunControlTargets(
 	db *gorm.DB,
+	runID string,
 	targets []adminAgentRunControlTarget,
 	reason string,
 	now time.Time,
@@ -365,6 +383,11 @@ func disposeAdminAgentRunControlTargets(
 		}
 		if result.RowsAffected != 1 {
 			return nil, false, ErrAdminAgentRunStateConflict
+		}
+		if target.Operation == "media_generation:"+runID || target.Operation == "agent_vision:"+runID {
+			if err := enqueueCancelledAgentTaskWakeup(db, runID, target, now); err != nil {
+				return nil, false, err
+			}
 		}
 		dispositions = append(dispositions, AdminAgentRunTaskDisposition{
 			TaskID: target.TaskID, Kind: target.Kind, PreviousStatus: target.Status, Status: model.TaskStatusCancelled,

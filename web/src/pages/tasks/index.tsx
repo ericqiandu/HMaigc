@@ -9,8 +9,10 @@ import { WorkspaceState } from "@/components/layout/workspace-state";
 import { CONTENT_MODERATION_ERROR_CODE, generationErrorMessage, isContentModerationError } from "@/lib/generation-error";
 import { formatTaskKind, operationOptions, statusLabel } from "@/lib/generation-task-display";
 import { systemProviderTaskConfig } from "@/lib/ai/system-provider-config";
+import { buildTaskBillingQuoteRequest } from "@/lib/billing/task-billing-quote";
+import { createPaidCommandGate } from "@/lib/billing/paid-command-gate";
 
-import { cancelGenerationTask, createAgentSession, createGenerationTask, listGenerationTasks, listTaskLogs, queryGenerationTask, retryGenerationTask, type CreateTaskInput, type GenerationTask, type TaskLog, type TaskStatus } from "@/services/api/task-center";
+import { cancelGenerationTask, createAgentSession, createGenerationTask, listGenerationTasks, listTaskLogs, queryGenerationTask, requestTaskBillingQuote, retryGenerationTask, type CreateTaskInput, type GenerationTask, type TaskLog, type TaskStatus } from "@/services/api/task-center";
 import { syncGenerationTaskToCanvasStore } from "@/lib/canvas/canvas-generation-task-sync";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { modelOptionName, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -25,7 +27,7 @@ function taskStatusFilter(value: string | null): TaskStatusFilter {
 }
 
 export default function TasksPage() {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const [searchParams, setSearchParams] = useSearchParams();
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
@@ -63,6 +65,7 @@ export default function TasksPage() {
     const [mediaPreview, setMediaPreview] = useState<{ url: string; kind: "image" | "video"; title: string } | null>(null);
     const syncedCanvasTaskIdsRef = useRef(new Set<string>());
     const tasksRef = useRef<GenerationTask[]>([]);
+    const paidTaskGateRef = useRef(createPaidCommandGate());
 
     const canvasById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
     const domainProjectNameById = useMemo(() => new Map(domainProjects.map((item) => [item.project.id, item.project.name])), [domainProjects]);
@@ -230,7 +233,7 @@ export default function TasksPage() {
                     model = requestConfig.model;
                     config = systemProviderTaskConfig(requestConfig);
                 }
-                const task = await createGenerationTask({
+                const taskInput: CreateTaskInput = {
                     projectId: values.projectId,
                     type: `video_${values.operation}`,
                     operation: values.operation,
@@ -244,8 +247,36 @@ export default function TasksPage() {
                         config,
                         metadata: { videoEditOperation: values.operation },
                     },
-                });
-                setTasks((items) => [task, ...items]);
+                };
+                if (isVersionComparison) {
+                    const task = await createGenerationTask(taskInput);
+                    setTasks((items) => [task, ...items]);
+                } else {
+                    if (!config) throw new Error("视频任务缺少可报价的模型配置");
+                    const quoteResult = await paidTaskGateRef.current.run({
+                        commandKey: `tasks-page:${values.projectId}:${values.operation}`,
+                        loadQuote: () => requestTaskBillingQuote(buildTaskBillingQuoteRequest({
+                            projectId: values.projectId || "",
+                            mode: "video",
+                            operation: values.operation,
+                            batchCount: 1,
+                            usage: { referenceImageCount: 0, referenceVideoCount: 0 },
+                            config,
+                        })),
+                        confirm: (quote) => new Promise<boolean>((resolve) => modal.confirm({
+                            title: "确认创建视频任务",
+                            content: `模型：${modelOptionName(videoModel) || videoModel}；预计消耗 ${formatCredits(quote.amountMicrocredits)} 积分。`,
+                            okText: "确认创建",
+                            cancelText: "取消",
+                            centered: true,
+                            onOk: () => resolve(true),
+                            onCancel: () => resolve(false),
+                        })),
+                        execute: (expectedQuote) => createGenerationTask(taskInput, { expectedQuote }),
+                    });
+                    if (quoteResult.status === "rejected") return;
+                    setTasks((items) => [quoteResult.value, ...items]);
+                }
             }
             setStatusFilter("active");
             setPage(1);

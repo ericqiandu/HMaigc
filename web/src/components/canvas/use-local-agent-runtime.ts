@@ -4,6 +4,7 @@ import { nanoid } from "nanoid";
 import {
     agentLocalRuntimeClient,
     agentRuntimeClient,
+    type AgentApprovalRefreshSubmission,
     type AgentApprovalSubmission,
     type AgentLocalRuntimeClient,
     type AgentRuntimeClient,
@@ -22,7 +23,7 @@ type UseLocalAgentRuntimeInput = {
     sessionStore?: LocalAgentSessionStore;
     createClient?: (connection: LocalAgentConnection) => LocalAgentClientPort;
     localRuntimeClient?: AgentLocalRuntimeClient;
-    runtimeClient?: Pick<AgentRuntimeClient, "submitApproval" | "interrupt" | "getRun" | "subscribe">;
+    runtimeClient?: Pick<AgentRuntimeClient, "submitApproval" | "refreshExpiredApproval" | "interrupt" | "getRun" | "subscribe">;
     beforeToolProposal?: () => Promise<void>;
     onRuntimeView?: (view: AgentRuntimeView) => void;
     onRuntimeEvent?: (event: AgentRuntimeEvent) => void;
@@ -92,9 +93,7 @@ export function useLocalAgentRuntime({
     );
 
     const adoptView = useCallback((next: AgentRuntimeView) => {
-        if (runtimeRunIdRef.current === next.run.id) {
-            runtimeCursorRef.current = Math.max(runtimeCursorRef.current, next.run.lastEventSequence);
-        } else {
+        if (runtimeRunIdRef.current !== next.run.id) {
             runtimeRunIdRef.current = next.run.id;
             runtimeCursorRef.current = next.run.lastEventSequence;
             setRuntimeEvents([]);
@@ -340,6 +339,27 @@ export function useLocalAgentRuntime({
         [adoptView, runtimeClient, view],
     );
 
+    const refreshExpiredApproval = useCallback(
+        async (submission: AgentApprovalRefreshSubmission) => {
+            const current = view;
+            const bridge = bridgeRef.current;
+            if (!current || current.state.status !== "waiting_approval" || !bridge) throw new Error("当前没有等待审批的本机 Agent Run");
+            setBusy(true);
+            setError("");
+            try {
+                const next = await runtimeClient.refreshExpiredApproval(current.run.id, submission);
+                adoptView(next);
+                await bridge.acceptRuntimeView(next);
+            } catch (cause) {
+                setError(publicError(cause, "本机 Agent 重新生成审批提案失败"));
+                throw cause;
+            } finally {
+                setBusy(false);
+            }
+        },
+        [adoptView, runtimeClient, view],
+    );
+
     const interrupt = useCallback(async () => {
         const current = view;
         const bridge = bridgeRef.current;
@@ -361,7 +381,7 @@ export function useLocalAgentRuntime({
     }, [adoptView, runtimeClient, view]);
 
     const runId = view?.run.id ?? "";
-    const liveBackendRun = Boolean(view && !isTerminalStatus(view.state.status));
+    const liveBackendRun = Boolean(view && (!isTerminalStatus(view.state.status) || runtimeCursorRef.current < view.run.lastEventSequence));
     useEffect(() => {
         if (!runId || !liveBackendRun) {
             setBackendConnection("idle");
@@ -423,6 +443,7 @@ export function useLocalAgentRuntime({
         disconnect,
         submit,
         decideApproval,
+        refreshExpiredApproval,
         interrupt,
         reloadThreads,
         selectThread,

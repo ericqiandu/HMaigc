@@ -1,0 +1,281 @@
+import { FRAME_HEADER_HEIGHT, canFrameContain, isFrameNode } from "@/lib/canvas/canvas-frame";
+import type { CanvasNodeData, Position } from "@/types/canvas";
+
+export type CanvasResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+
+export type CanvasResizePreview = {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+};
+
+export type CanvasResizeInput = {
+    initial: CanvasResizePreview;
+    delta: Position;
+    corner: CanvasResizeCorner;
+    minWidth: number;
+    minHeight: number;
+    aspectRatio?: number;
+};
+
+export type CanvasLiveConnectionDragTarget = {
+    paths: Array<{ element: SVGPathElement; initialPath: string }>;
+    gradient: SVGLinearGradientElement | null;
+    initialGradient: { x1: string | null; y1: string | null; x2: string | null; y2: string | null } | null;
+    start: Position;
+    end: Position;
+    movesStart: boolean;
+    movesEnd: boolean;
+};
+
+export type FrameDropContext = {
+    draggedNodes: Array<{ centerX: number; centerY: number }>;
+    frames: Array<{ id: string; left: number; top: number; right: number; bottom: number }>;
+};
+
+export type CanvasSelectionCandidate = {
+    id: string;
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+};
+
+export type CanvasSelectionIndex = {
+    query: (bounds: Omit<CanvasSelectionCandidate, "id">) => string[];
+};
+
+type IndexedSelectionCandidate = CanvasSelectionCandidate & { sourceIndex: number };
+
+type CanvasSelectionTree = {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+    entries?: IndexedSelectionCandidate[];
+    first?: CanvasSelectionTree;
+    second?: CanvasSelectionTree;
+};
+
+const SELECTION_TREE_LEAF_SIZE = 16;
+
+export function calculateCanvasResizePreview(input: CanvasResizeInput): CanvasResizePreview {
+    const numericValues = [input.initial.x, input.initial.y, input.initial.width, input.initial.height, input.delta.x, input.delta.y, input.minWidth, input.minHeight];
+    if (!numericValues.every(Number.isFinite)) throw new Error("画布 resize 输入必须是有限数字");
+    if (input.initial.width <= 0 || input.initial.height <= 0 || input.minWidth <= 0 || input.minHeight <= 0) throw new Error("画布 resize 尺寸必须大于 0");
+    if (input.aspectRatio !== undefined && (!Number.isFinite(input.aspectRatio) || input.aspectRatio <= 0)) throw new Error("画布 resize 宽高比必须是正有限数字");
+
+    let width = Math.max(input.minWidth, input.initial.width + input.delta.x);
+    let height = Math.max(input.minHeight, input.initial.height + input.delta.y);
+    if (input.aspectRatio !== undefined) {
+        if (Math.abs(input.delta.x) >= Math.abs(input.delta.y)) height = width / input.aspectRatio;
+        else width = height * input.aspectRatio;
+        if (height < input.minHeight) {
+            height = input.minHeight;
+            width = height * input.aspectRatio;
+        }
+        if (width < input.minWidth) {
+            width = input.minWidth;
+            height = width / input.aspectRatio;
+        }
+    }
+
+    const fromLeft = input.corner.includes("left");
+    const fromTop = input.corner.includes("top");
+    return {
+        x: fromLeft ? input.initial.x + input.initial.width - width : input.initial.x,
+        y: fromTop ? input.initial.y + input.initial.height - height : input.initial.y,
+        width,
+        height,
+    };
+}
+
+export function createCanvasSelectionIndex(candidates: readonly CanvasSelectionCandidate[]): CanvasSelectionIndex {
+    const entries = candidates.map((candidate, sourceIndex) => {
+        if (!candidate.id.trim()) throw new Error("画布框选候选节点必须包含 id");
+        if (![candidate.left, candidate.top, candidate.right, candidate.bottom].every(Number.isFinite)) throw new Error("画布框选候选节点边界必须是有限数字");
+        if (candidate.right <= candidate.left || candidate.bottom <= candidate.top) throw new Error("画布框选候选节点边界无效");
+        return { ...candidate, sourceIndex };
+    });
+    const tree = buildCanvasSelectionTree(entries);
+    return {
+        query: (bounds) => {
+            if (![bounds.left, bounds.top, bounds.right, bounds.bottom].every(Number.isFinite)) throw new Error("画布框选查询边界必须是有限数字");
+            if (bounds.right <= bounds.left || bounds.bottom <= bounds.top || !tree) return [];
+            const matches: IndexedSelectionCandidate[] = [];
+            queryCanvasSelectionTree(tree, bounds, matches);
+            matches.sort((left, right) => left.sourceIndex - right.sourceIndex);
+            return matches.map((entry) => entry.id);
+        },
+    };
+}
+
+function buildCanvasSelectionTree(entries: IndexedSelectionCandidate[]): CanvasSelectionTree | null {
+    if (!entries.length) return null;
+    const bounds = selectionBounds(entries);
+    if (entries.length <= SELECTION_TREE_LEAF_SIZE) return { ...bounds, entries };
+    const splitOnX = bounds.right - bounds.left >= bounds.bottom - bounds.top;
+    const sorted = [...entries].sort((left, right) => {
+        const leftCenter = splitOnX ? left.left + left.right : left.top + left.bottom;
+        const rightCenter = splitOnX ? right.left + right.right : right.top + right.bottom;
+        return leftCenter - rightCenter || left.sourceIndex - right.sourceIndex;
+    });
+    const midpoint = Math.floor(sorted.length / 2);
+    const first = buildCanvasSelectionTree(sorted.slice(0, midpoint));
+    const second = buildCanvasSelectionTree(sorted.slice(midpoint));
+    if (!first || !second) throw new Error("画布框选空间索引构建失败");
+    return { ...bounds, first, second };
+}
+
+function selectionBounds(entries: readonly IndexedSelectionCandidate[]) {
+    let left = Number.POSITIVE_INFINITY;
+    let top = Number.POSITIVE_INFINITY;
+    let right = Number.NEGATIVE_INFINITY;
+    let bottom = Number.NEGATIVE_INFINITY;
+    for (const entry of entries) {
+        left = Math.min(left, entry.left);
+        top = Math.min(top, entry.top);
+        right = Math.max(right, entry.right);
+        bottom = Math.max(bottom, entry.bottom);
+    }
+    return { left, top, right, bottom };
+}
+
+function queryCanvasSelectionTree(tree: CanvasSelectionTree, bounds: Omit<CanvasSelectionCandidate, "id">, matches: IndexedSelectionCandidate[]) {
+    if (!selectionBoundsIntersect(tree, bounds)) return;
+    if (tree.entries) {
+        for (const entry of tree.entries) if (selectionBoundsIntersect(entry, bounds)) matches.push(entry);
+        return;
+    }
+    if (tree.first) queryCanvasSelectionTree(tree.first, bounds, matches);
+    if (tree.second) queryCanvasSelectionTree(tree.second, bounds, matches);
+}
+
+function selectionBoundsIntersect(left: Omit<CanvasSelectionCandidate, "id">, right: Omit<CanvasSelectionCandidate, "id">) {
+    return left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top;
+}
+
+export function applyCanvasLiveResize(target: HTMLElement, preview: CanvasResizePreview) {
+    if (![preview.x, preview.y, preview.width, preview.height].every(Number.isFinite) || preview.width <= 0 || preview.height <= 0) throw new Error("画布 resize 预览几何无效");
+    target.dataset.canvasNodeResizing = "true";
+    target.style.setProperty("--canvas-live-resize-x", `${preview.x}px`);
+    target.style.setProperty("--canvas-live-resize-y", `${preview.y}px`);
+    target.style.setProperty("--canvas-live-resize-width", `${preview.width}px`);
+    target.style.setProperty("--canvas-live-resize-height", `${preview.height}px`);
+}
+
+export function clearCanvasLiveResize(target: HTMLElement) {
+    delete target.dataset.canvasNodeResizing;
+    target.style.removeProperty("--canvas-live-resize-x");
+    target.style.removeProperty("--canvas-live-resize-y");
+    target.style.removeProperty("--canvas-live-resize-width");
+    target.style.removeProperty("--canvas-live-resize-height");
+}
+
+export function createFrameDropContext(nodes: CanvasNodeData[], draggedNodeIds: Set<string>): FrameDropContext | null {
+    const draggedNodes = nodes.filter((node) => draggedNodeIds.has(node.id) && canFrameContain(node)).map((node) => ({ centerX: node.position.x + node.width / 2, centerY: node.position.y + node.height / 2 }));
+    if (!draggedNodes.length) return null;
+    const frames = nodes
+        .filter((frame) => isFrameNode(frame) && !frame.metadata?.frame?.collapsed && !draggedNodeIds.has(frame.id))
+        .map((frame) => ({ id: frame.id, left: frame.position.x, top: frame.position.y + FRAME_HEADER_HEIGHT, right: frame.position.x + frame.width, bottom: frame.position.y + frame.height }))
+        .reverse();
+    return { draggedNodes, frames };
+}
+
+export function findFrameDropTargetFromContext(context: FrameDropContext | null, offset: Position) {
+    if (!context) return null;
+    return (
+        context.frames.find((frame) =>
+            context.draggedNodes.every(({ centerX, centerY }) => {
+                const x = centerX + offset.x;
+                const y = centerY + offset.y;
+                return x >= frame.left && x <= frame.right && y >= frame.top && y <= frame.bottom;
+            }),
+        )?.id || null
+    );
+}
+
+export function resolveCanvasLiveNodeDragTargets(surface: HTMLElement | null, draggedNodeIds: ReadonlySet<string>) {
+    if (!surface || draggedNodeIds.size === 0) return [];
+    return Array.from(surface.querySelectorAll<HTMLElement>("[data-node-id]")).filter((element) => draggedNodeIds.has(element.dataset.nodeId || ""));
+}
+
+export function applyCanvasLiveNodeDrag(targets: readonly HTMLElement[], offset: Position) {
+    for (const target of targets) {
+        target.dataset.canvasNodeDragging = "true";
+        target.style.setProperty("--canvas-live-drag-x", `${offset.x}px`);
+        target.style.setProperty("--canvas-live-drag-y", `${offset.y}px`);
+    }
+}
+
+export function clearCanvasLiveNodeDrag(targets: readonly HTMLElement[]) {
+    for (const target of targets) {
+        delete target.dataset.canvasNodeDragging;
+        target.style.removeProperty("--canvas-live-drag-x");
+        target.style.removeProperty("--canvas-live-drag-y");
+    }
+}
+
+export function createCanvasConnectionPathD(start: Position, end: Position) {
+    const curvature = Math.max(Math.abs(end.x - start.x) * 0.5, 50);
+    return `M ${start.x} ${start.y} C ${start.x + curvature} ${start.y}, ${end.x - curvature} ${end.y}, ${end.x} ${end.y}`;
+}
+
+export function resolveCanvasLiveConnectionDragTargets(surface: HTMLElement | null, draggedNodeIds: ReadonlySet<string>): CanvasLiveConnectionDragTarget[] {
+    if (!surface || draggedNodeIds.size === 0) return [];
+    return Array.from(surface.querySelectorAll<SVGGElement>("[data-canvas-connection-id]")).flatMap((group) => {
+        const fromNodeId = group.dataset.fromNodeId || "";
+        const toNodeId = group.dataset.toNodeId || "";
+        const movesStart = draggedNodeIds.has(fromNodeId);
+        const movesEnd = draggedNodeIds.has(toNodeId);
+        if (!movesStart && !movesEnd) return [];
+        const start = { x: Number(group.dataset.startX), y: Number(group.dataset.startY) };
+        const end = { x: Number(group.dataset.endX), y: Number(group.dataset.endY) };
+        if (![start.x, start.y, end.x, end.y].every(Number.isFinite)) return [];
+        const gradient = group.querySelector<SVGLinearGradientElement>("linearGradient");
+        return [
+            {
+                paths: Array.from(group.querySelectorAll<SVGPathElement>("path")).map((element) => ({ element, initialPath: element.getAttribute("d") || "" })),
+                gradient,
+                initialGradient: gradient ? { x1: gradient.getAttribute("x1"), y1: gradient.getAttribute("y1"), x2: gradient.getAttribute("x2"), y2: gradient.getAttribute("y2") } : null,
+                start,
+                end,
+                movesStart,
+                movesEnd,
+            },
+        ];
+    });
+}
+
+export function applyCanvasLiveConnectionDrag(targets: readonly CanvasLiveConnectionDragTarget[], offset: Position) {
+    for (const target of targets) {
+        const start = target.movesStart ? { x: target.start.x + offset.x, y: target.start.y + offset.y } : target.start;
+        const end = target.movesEnd ? { x: target.end.x + offset.x, y: target.end.y + offset.y } : target.end;
+        const path = createCanvasConnectionPathD(start, end);
+        target.paths.forEach(({ element }) => element.setAttribute("d", path));
+        if (target.gradient) {
+            target.gradient.setAttribute("x1", String(start.x));
+            target.gradient.setAttribute("y1", String(start.y));
+            target.gradient.setAttribute("x2", String(end.x));
+            target.gradient.setAttribute("y2", String(end.y));
+        }
+    }
+}
+
+export function clearCanvasLiveConnectionDrag(targets: readonly CanvasLiveConnectionDragTarget[]) {
+    for (const target of targets) {
+        target.paths.forEach(({ element, initialPath }) => element.setAttribute("d", initialPath));
+        if (target.gradient && target.initialGradient) {
+            restoreAttribute(target.gradient, "x1", target.initialGradient.x1);
+            restoreAttribute(target.gradient, "y1", target.initialGradient.y1);
+            restoreAttribute(target.gradient, "x2", target.initialGradient.x2);
+            restoreAttribute(target.gradient, "y2", target.initialGradient.y2);
+        }
+    }
+}
+
+function restoreAttribute(element: Element, name: string, value: string | null) {
+    if (value == null) element.removeAttribute(name);
+    else element.setAttribute(name, value);
+}

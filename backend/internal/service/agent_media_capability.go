@@ -42,6 +42,23 @@ func (executor agentMediaGenerateCapabilityExecutor) Execute(ctx context.Context
 		if decodeErr != nil {
 			return agentruntime.ToolExecutionResult{}, failAgentCapability("media_receipt_invalid", "media.generate stored receipt is invalid")
 		}
+		receipt, ok := result.(agentruntime.MediaGenerateResult)
+		if !ok {
+			return agentruntime.ToolExecutionResult{}, failAgentCapability("media_receipt_invalid", "media.generate stored receipt has an invalid type")
+		}
+		task, loadErr := executor.service.repo.TaskForUser(scope.ActorUserID, receipt.TaskID)
+		if loadErr != nil {
+			return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "media_receipt_invalid", Err: loadErr}
+		}
+		resources, resourceErr := executor.service.agentMediaCapabilityResources(scope, task, arguments.MediaKind)
+		if resourceErr != nil || !agentMediaReceiptResourcesMatch(receipt.Resources, resources) {
+			return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{
+				Code: "media_receipt_invalid", Err: errors.Join(errors.New("media.generate stored receipt conflicts with the successful task result"), resourceErr),
+			}
+		}
+		if err := executor.service.persistAgentMediaResultOnCanvas(scope, call, arguments, task, receipt); err != nil {
+			return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "media_canvas_result_binding_failed", Err: err}
+		}
 		return agentruntime.NewToolExecutionResult(agentruntime.ToolMediaGenerate, result)
 	}
 	if proposal.Quote == nil {
@@ -67,6 +84,10 @@ func (executor agentMediaGenerateCapabilityExecutor) Execute(ctx context.Context
 		}
 		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "media_task_failed", Err: err}
 	}
+	return executor.service.agentMediaTaskResult(scope, call, arguments, task, order)
+}
+
+func (s *Service) agentMediaTaskResult(scope agentruntime.Scope, call agentruntime.ToolCallDecision, arguments agentruntime.MediaGenerateArguments, task *model.Task, order *model.BillingOrder) (agentruntime.ToolExecutionResult, error) {
 	switch task.Status {
 	case model.TaskStatusQueued, model.TaskStatusRunning:
 		if order.Status == model.BillingStatusUncertain {
@@ -90,23 +111,36 @@ func (executor agentMediaGenerateCapabilityExecutor) Execute(ctx context.Context
 	default:
 		return agentruntime.ToolExecutionResult{}, failAgentCapability("media_task_invalid", "media.generate task status is invalid")
 	}
-	resources, err := executor.service.agentMediaCapabilityResources(scope, task, arguments.MediaKind)
+	resources, err := s.agentMediaCapabilityResources(scope, task, arguments.MediaKind)
 	if err != nil {
 		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "media_result_invalid", Err: err}
 	}
-	if err := executor.service.persistAgentMediaPromptOnCanvas(scope, call, arguments, current.Prompt); err != nil {
-		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "media_canvas_prompt_binding_failed", Err: err}
-	}
-	return agentruntime.NewToolExecutionResult(agentruntime.ToolMediaGenerate, agentruntime.MediaGenerateResult{
+	receipt := agentruntime.MediaGenerateResult{
 		TaskID: task.ID, BillingOrderID: order.ID, MediaKind: arguments.MediaKind,
 		ClientRequestID: arguments.ClientRequestID, Resources: resources,
-	})
+	}
+	if err := s.persistAgentMediaResultOnCanvas(scope, call, arguments, task, receipt); err != nil {
+		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "media_canvas_result_binding_failed", Err: err}
+	}
+	return agentruntime.NewToolExecutionResult(agentruntime.ToolMediaGenerate, receipt)
+}
+
+func agentMediaReceiptResourcesMatch(left []agentruntime.MediaGeneratedResourceResult, right []agentruntime.MediaGeneratedResourceResult) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func agentMediaCapabilityTerminalFailure(status model.BillingStatus, failureCode string, message string) (agentruntime.ToolExecutionResult, error) {
 	switch status {
 	case model.BillingStatusRefunded:
-		return agentruntime.ToolExecutionResult{}, failAgentCapability(failureCode, message)
+		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: failureCode, Err: errors.New(message), Settled: true}
 	case model.BillingStatusUncertain:
 		return agentruntime.ToolExecutionResult{}, failAgentCapability("media_settlement_uncertain", "media.generate billing requires reconciliation")
 	default:

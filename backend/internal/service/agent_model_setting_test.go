@@ -328,3 +328,67 @@ func TestAgentDefaultVisionModelSettingInvalidatesManagedCredentialThatBecameUnh
 		t.Fatalf("unhealthy managed vision model runtime error = %v", err)
 	}
 }
+
+func TestImagePromptModelSettingAcceptsOnlyVersionedManagedTextModelAndAudits(t *testing.T) {
+	fixture := newImagePromptModelFixture(t)
+	admin := providerAdmin()
+
+	if _, err := fixture.svc.UpdateImagePromptModelSetting(&model.User{ID: "user", Role: model.UserRoleUser}, UpdateImagePromptModelRequest{ChannelModelID: fixture.model.ID}); err == nil {
+		t.Fatal("non-admin updated image prompt model")
+	}
+	setting, err := fixture.svc.UpdateImagePromptModelSetting(admin, UpdateImagePromptModelRequest{ChannelModelID: fixture.model.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !setting.Configured || setting.ChannelModelID != fixture.model.ID || setting.ChannelID != fixture.channel.ID || setting.ModelKey != fixture.model.ModelKey {
+		t.Fatalf("saved image prompt model = %#v", setting)
+	}
+	loaded, err := fixture.svc.AdminImagePromptModelSetting(admin)
+	if err != nil || !loaded.Configured || loaded.ChannelModelID != fixture.model.ID {
+		t.Fatalf("loaded image prompt model = %#v, error = %v", loaded, err)
+	}
+	var audit model.AdminAuditEvent
+	if err := fixture.db.Where("action = ? AND target_id = ?", "image_prompt_specialist_model.update", imagePromptModelSettingKey).Take(&audit).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	directChannel := model.ModelChannel{
+		ID: "unversioned-prompt-channel", Scope: model.ChannelScopeSystem, Enabled: true,
+		Name: "Direct", BaseURL: "https://direct.example/v1", APIKey: "direct-key",
+		InterfaceType: model.ChannelInterfaceOpenAIResponse,
+		CreatedAt:     fixture.model.CreatedAt, UpdatedAt: fixture.model.UpdatedAt,
+	}
+	directModel := fixture.model
+	directModel.ID = "unversioned-prompt-model"
+	directModel.ChannelID = directChannel.ID
+	directModel.ProviderCredentialID = ""
+	if err := fixture.db.Create(&directChannel).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.db.Create(&directModel).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.svc.UpdateImagePromptModelSetting(admin, UpdateImagePromptModelRequest{ChannelModelID: directModel.ID}); err == nil {
+		t.Fatal("unversioned direct model was accepted for image prompt specialist")
+	}
+}
+
+func TestImagePromptModelSettingReportsInvalidSelectionAndStaleConfiguration(t *testing.T) {
+	fixture := newImagePromptModelFixture(t)
+	admin := providerAdmin()
+	if err := fixture.db.Model(&fixture.model).Update("enabled", false).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := fixture.svc.UpdateImagePromptModelSetting(admin, UpdateImagePromptModelRequest{ChannelModelID: fixture.model.ID})
+	var updateError *AuthError
+	if !errors.As(err, &updateError) || updateError.Status != 400 || !strings.Contains(updateError.Message, "版本化凭据") {
+		t.Fatalf("invalid selection error = %#v", err)
+	}
+
+	_, err = fixture.svc.AdminImagePromptModelSetting(admin)
+	var loadError *AuthError
+	if !errors.As(err, &loadError) || loadError.Status != 503 || !strings.Contains(loadError.Message, "不可执行") {
+		t.Fatalf("stale setting error = %#v", err)
+	}
+}

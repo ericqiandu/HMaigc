@@ -8,6 +8,9 @@ import {
   canvasReadToolInputSchema,
   canvasToolEnvelopeSchema,
   mediaGenerateToolInputSchema,
+  normalizeMcpExpectedDelivery,
+  projectReadToolInputSchema,
+  projectApplyOpsToolInputSchema,
   skillsLoadToolInputSchema,
 } from "./mcp-tool-schemas.js";
 
@@ -16,6 +19,8 @@ export const MCP_TOOL_NAME_MAP = {
   canvas_apply_ops: "canvas.apply_ops",
   assets_read: "assets.read",
   assets_publish: "assets.publish",
+  project_read: "project.read",
+  project_apply_ops: "project.apply_ops",
   media_generate: "media.generate",
   skills_load: "skills.load",
 } as const satisfies Record<string, CanonicalToolName>;
@@ -49,7 +54,7 @@ export function createCanvasMcpServer(
     "canvas_apply_ops",
     {
       description:
-        "基于刚读取的 baseRevision 原子提交闭合画布操作；每项 operationId 与 clientMutationId 必须唯一且稳定。媒体占位节点的 metadata.prompt 与 metadata.composerContent 必须逐字保存随后 media_generate 的 parameters.prompt；update_node.metadata 是字段级补丁，不得清空生成提示词。",
+        "基于刚读取的 baseRevision 原子提交闭合画布操作；每项 operationId 与 clientMutationId 必须唯一且稳定。node.title 只保存稳定的创作名称，运行状态只保存到 metadata.status、metadata.taskStatus 与 metadata.taskStage。媒体占位节点的 metadata.prompt 与 metadata.composerContent 必须逐字保存随后 media_generate 的 parameters.prompt；update_node.metadata 是字段级补丁，不得清空生成提示词。",
       inputSchema: canvasApplyOpsToolInputSchema,
     },
     async (input) => executeCanvasTool(options, "canvas.apply_ops", input),
@@ -71,6 +76,24 @@ export function createCanvasMcpServer(
       inputSchema: assetsPublishToolInputSchema,
     },
     async (input) => executeCanvasTool(options, "assets.publish", input),
+  );
+  server.registerTool(
+    "project_read",
+    {
+      description:
+        "读取当前画布关联章节的原文、结构化镜头，以及已确认角色的固定版本和真实表现资源；必须复用 canvas_get_state 返回的 domainProjectId 与当前 canvasId。",
+      inputSchema: projectReadToolInputSchema,
+    },
+    async (input) => executeCanvasTool(options, "project.read", input),
+  );
+  server.registerTool(
+    "project_apply_ops",
+    {
+      description:
+        "将章节角色候选或分镜草案原子写回当前领域项目；必须使用项目当前 revision，并在用户审批后执行。",
+      inputSchema: projectApplyOpsToolInputSchema,
+    },
+    async (input) => executeCanvasTool(options, "project.apply_ops", input),
   );
   server.registerTool(
     "media_generate",
@@ -105,7 +128,9 @@ async function executeCanvasTool(
     turnId: options.turnId,
     toolName: canonicalName,
     arguments: parsedInput.arguments,
-    expectedDelivery: parsedInput.expectedDelivery,
+    expectedDelivery: normalizeMcpExpectedDelivery(
+      parsedInput.expectedDelivery,
+    ),
   });
   const content = result.succeeded
     ? JSON.stringify(result.output)

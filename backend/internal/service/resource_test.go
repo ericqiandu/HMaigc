@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,6 +41,26 @@ func TestSignedOSSObjectURLUsesExpiringQuerySignature(t *testing.T) {
 	}
 	if strings.Contains(value, "secret-value") {
 		t.Fatalf("signed URL leaked access key secret: %q", value)
+	}
+}
+
+func TestOSSRequestFailureRedactsSignedURLAndPreservesTimeoutCause(t *testing.T) {
+	failure := newOSSRequestFailure("读取", &url.Error{
+		Op:  "Get",
+		URL: "https://private-bucket.example.com/object.png?OSSAccessKeyId=access-id&Signature=secret-signature",
+		Err: context.DeadlineExceeded,
+	})
+	if failure == nil {
+		t.Fatal("newOSSRequestFailure() = nil")
+	}
+	if failure.Error() != "OSS 读取请求超时" {
+		t.Fatalf("failure.Error() = %q", failure.Error())
+	}
+	if strings.Contains(failure.Error(), "access-id") || strings.Contains(failure.Error(), "secret-signature") {
+		t.Fatalf("failure leaked signed URL credentials: %q", failure.Error())
+	}
+	if !errors.Is(failure, context.DeadlineExceeded) {
+		t.Fatal("failure must preserve context deadline cause")
 	}
 }
 
@@ -299,6 +320,78 @@ func TestPersistGeneratedMediaPreservesProviderSuccessBeyondStoredFileQuota(t *t
 	image, _ := result["image"].(map[string]interface{})
 	if !strings.HasPrefix(fmt.Sprint(image["storageKey"]), "resource:") {
 		t.Fatalf("generated image was not persisted: %#v", image)
+	}
+}
+
+func TestPersistGeneratedMediaPreservesProviderVideoWhenDurationProbeFails(t *testing.T) {
+	svc := newResourceTestService(t)
+	svc.mediaDurationProbe = func(_ context.Context, _ io.Reader) (int64, error) {
+		return 0, errors.New("ffprobe executable is unavailable")
+	}
+
+	result, err := svc.persistGeneratedMediaResult("user-1", map[string]interface{}{
+		"video": map[string]interface{}{
+			"dataUrl":    "data:video/mp4;base64,cHJvdmlkZXItZ2VuZXJhdGVkLXZpZGVv",
+			"durationMs": int64(4_000),
+		},
+	})
+	if err != nil {
+		t.Fatalf("persistGeneratedMediaResult() error = %v", err)
+	}
+	video, ok := result["video"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("video result = %#v", result["video"])
+	}
+	if video["durationVerification"] != generatedMediaDurationProviderReported {
+		t.Fatalf("duration verification = %#v", video["durationVerification"])
+	}
+	if !strings.Contains(fmt.Sprint(video["durationProbeError"]), "ffprobe executable is unavailable") {
+		t.Fatalf("duration probe error = %#v", video["durationProbeError"])
+	}
+	resourceID := strings.TrimPrefix(fmt.Sprint(video["storageKey"]), "resource:")
+	resource, err := svc.repo.Resource(resourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resource.Status != model.ResourceStatusReady || resource.DurationMs != 4_000 {
+		t.Fatalf("stored resource = %#v", resource)
+	}
+}
+
+func TestPersistGeneratedMediaMarksDurationUnverifiedWhenProviderOmitsIt(t *testing.T) {
+	svc := newResourceTestService(t)
+	svc.mediaDurationProbe = func(_ context.Context, _ io.Reader) (int64, error) {
+		return 0, errors.New("probe unavailable")
+	}
+
+	result, err := svc.persistGeneratedMediaResult("user-1", map[string]interface{}{
+		"video": map[string]interface{}{
+			"dataUrl": "data:video/mp4;base64,cHJvdmlkZXItZ2VuZXJhdGVkLXZpZGVv",
+		},
+	})
+	if err != nil {
+		t.Fatalf("persistGeneratedMediaResult() error = %v", err)
+	}
+	video := result["video"].(map[string]interface{})
+	if video["durationVerification"] != generatedMediaDurationUnverified || firstInt64(video, "durationMs") != 0 {
+		t.Fatalf("unverified duration facts = %#v", video)
+	}
+	resourceID := strings.TrimPrefix(fmt.Sprint(video["storageKey"]), "resource:")
+	resource, err := svc.repo.Resource(resourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resource.Status != model.ResourceStatusReady || resource.DurationMs != 0 {
+		t.Fatalf("stored resource = %#v", resource)
+	}
+}
+
+func TestAuthoritativeMediaDurationStillRejectsProbeFailure(t *testing.T) {
+	svc := &Service{mediaDurationProbe: func(_ context.Context, _ io.Reader) (int64, error) {
+		return 0, errors.New("probe unavailable")
+	}}
+	if _, err := svc.authoritativeMediaDuration("video", bytes.NewReader([]byte("uploaded-video"))); err == nil {
+		t.Fatal("authoritativeMediaDuration() accepted an unverified upload")
 	}
 }
 

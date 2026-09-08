@@ -7,9 +7,10 @@ import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { FRAME_COLLAPSED_HEIGHT, FRAME_COLLAPSED_WIDTH, getFrameChildIds, isFrameNode } from "@/lib/canvas/canvas-frame";
 import { applyNodeConfigPatch } from "@/lib/canvas/canvas-project-domain";
 import { audioExtension, imageExtension, resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
+import { fitVideoNodeToIntrinsicSize } from "@/lib/canvas/canvas-video-geometry";
 import { CONTENT_MODERATION_ERROR_CODE, isContentModerationError } from "@/lib/generation-error";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
-import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
+import { CanvasNodeType, type CanvasMediaIntrinsicSize, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
 
 type UseCanvasNodeEditorOptions = {
     canvasId: string;
@@ -39,7 +40,7 @@ export function useCanvasNodeEditor({
     const [collapsingBatchIds, setCollapsingBatchIds] = useState<Set<string>>(new Set());
     const [openingBatchIds, setOpeningBatchIds] = useState<Set<string>>(new Set());
 
-    const handleNodeResize = useCallback((nodeId: string, width: number, height: number, position?: Position) => {
+    const handleNodeResizeCommit = useCallback((nodeId: string, width: number, height: number, position?: Position) => {
         setNodes((current) => {
             let changed = false;
             const next = current.map((node) => {
@@ -50,6 +51,20 @@ export function useCanvasNodeEditor({
                 const resized = { ...node, width, height, position: nextPosition };
                 if (!isFrameNode(node) || node.metadata?.frame?.collapsed) return resized;
                 return { ...resized, metadata: { ...node.metadata, frame: { collapsed: false, expandedWidth: width, expandedHeight: height } } };
+            });
+            return changed ? next : current;
+        });
+    }, [setNodes]);
+
+    const handleVideoIntrinsicSize = useCallback((nodeId: string, size: CanvasMediaIntrinsicSize) => {
+        setNodes((current) => {
+            let changed = false;
+            const next = current.map((node) => {
+                if (node.id !== nodeId) return node;
+                const fitted = fitVideoNodeToIntrinsicSize(node, size);
+                if (fitted === node) return node;
+                changed = true;
+                return fitted;
             });
             return changed ? next : current;
         });
@@ -180,7 +195,8 @@ export function useCanvasNodeEditor({
         handleFontSizeChange,
         handleNodeContentChange,
         handleNodePromptChange,
-        handleNodeResize,
+        handleNodeResizeCommit,
+        handleVideoIntrinsicSize,
         handleNodeTitleChange,
         openingBatchIds,
         saveNodeAsset,

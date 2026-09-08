@@ -53,24 +53,26 @@ func (status ThreadStatus) Valid() bool {
 type RunStatus string
 
 const (
-	ProductionRuntimeVersion         = 4
-	ProductionPolicyVersion          = 4
-	ProductionToolSchemaVersion      = 5
-	CurrentProductionSchemaVersion   = 2
-	ProductionAgentUIProtocolVersion = 4
-	CloudRuntimeVersion              = 5
-	CloudPolicyVersion               = 5
-	CloudToolSchemaVersion           = 8
-	CloudAgentUIProtocolVersion      = 5
-	RetiredCloudToolSchemaVersion    = 7
-	RetiredRuntimeVersion            = 3
-	RetiredPolicyVersion             = 3
-	RetiredToolSchemaVersion         = 4
-	RetiredProductionSchemaVersion   = 1
-	RetiredAgentUIProtocolVersion    = 3
-	LegacyRuntimeVersion             = 2
-	LegacyPolicyVersion              = 2
-	LegacyToolSchemaVersion          = 3
+	ProductionRuntimeVersion                = 4
+	ProductionPolicyVersion                 = 4
+	ProductionToolSchemaVersion             = 5
+	CurrentProductionSchemaVersion          = 2
+	ProductionAgentUIProtocolVersion        = 4
+	CloudRuntimeVersion                     = 5
+	CloudPolicyVersion                      = 5
+	CloudToolSchemaVersion                  = 10
+	CloudAgentUIProtocolVersion             = 5
+	RetiredProjectToolSchemaVersion         = 8
+	RetiredProjectMutationToolSchemaVersion = 9
+	RetiredCloudToolSchemaVersion           = 7
+	RetiredRuntimeVersion                   = 3
+	RetiredPolicyVersion                    = 3
+	RetiredToolSchemaVersion                = 4
+	RetiredProductionSchemaVersion          = 1
+	RetiredAgentUIProtocolVersion           = 3
+	LegacyRuntimeVersion                    = 2
+	LegacyPolicyVersion                     = 2
+	LegacyToolSchemaVersion                 = 3
 
 	// Current* is a hard cut to the cloud capability runtime. Production*
 	// remains an immutable historical fact for v5 audit records only.

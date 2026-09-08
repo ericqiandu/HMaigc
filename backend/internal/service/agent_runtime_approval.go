@@ -27,6 +27,27 @@ func (s *Service) prepareAgentRuntimeApproval(
 		transition.ApprovalCostQuote = quote
 		return transition, nil
 	}
+	if transition.State.PendingToolCall.ToolName == agentruntime.ToolProjectApplyOps {
+		decoded, err := agentruntime.DecodeCapabilityArguments(agentruntime.ToolProjectApplyOps, transition.State.PendingToolCall.Arguments)
+		if err != nil {
+			return agentruntime.RuntimeTransition{}, err
+		}
+		arguments, ok := decoded.(agentruntime.ProjectApplyOpsArguments)
+		if !ok {
+			return agentruntime.RuntimeTransition{}, errors.New("project.apply_ops approval arguments are invalid")
+		}
+		wouldChange, err := s.agentProjectApplyOpsWouldChange(scope, arguments)
+		if err != nil {
+			return agentruntime.RuntimeTransition{}, err
+		}
+		if !wouldChange {
+			return agentruntime.RejectModelDecision(current, agentruntime.ModelDecisionFeedback{
+				Code:   "model_decision_invalid",
+				Reason: "project.apply_ops exactly matches the current project state; continue from the existing project.read facts instead of requesting a no-op write",
+			})
+		}
+		return transition, nil
+	}
 	if transition.State.PendingToolCall.ToolName != agentruntime.ToolMediaGenerate {
 		return transition, nil
 	}

@@ -20,6 +20,8 @@ func TestAgentCapabilityRegistryDeclaresExactlyCurrentCapabilities(t *testing.T)
 		agentruntime.ToolCanvasApplyOps,
 		agentruntime.ToolAssetsRead,
 		agentruntime.ToolAssetsPublish,
+		agentruntime.ToolProjectRead,
+		agentruntime.ToolProjectApplyOps,
 		agentruntime.ToolMediaGenerate,
 		agentruntime.ToolVisionAnalyze,
 		agentruntime.ToolSkillsLoad,

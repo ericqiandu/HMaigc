@@ -64,3 +64,10 @@ func TestBuildAgentRuntimeDecisionDiagnosticRecordsStructureWithoutPrompt(t *tes
 		t.Fatalf("parameter keys = %#v", diagnostic.ParameterKeys)
 	}
 }
+
+func TestStrictAgentRuntimeDecisionDecodeProblemIdentifiesUnexpectedEOF(t *testing.T) {
+	payload := []byte(`{"kind":"tool_call","toolCall":{"toolCallId":"incomplete"`)
+	if got := strictAgentRuntimeDecisionDecodeProblem(payload); got != "unexpected_eof" {
+		t.Fatalf("strict decode problem = %q", got)
+	}
+}

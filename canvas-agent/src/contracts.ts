@@ -5,6 +5,8 @@ export const CANONICAL_TOOL_NAMES = [
   "canvas.apply_ops",
   "assets.read",
   "assets.publish",
+  "project.read",
+  "project.apply_ops",
   "media.generate",
   "skills.load",
 ] as const;
@@ -14,6 +16,8 @@ export const CANVAS_MCP_TOOL_NAMES = [
   "canvas_apply_ops",
   "assets_read",
   "assets_publish",
+  "project_read",
+  "project_apply_ops",
   "media_generate",
   "skills_load",
 ] as const;
@@ -33,6 +37,7 @@ const artifactSchema = z.enum([
 const completionCriterionSchema = z.discriminatedUnion("fact", [
   z.object({ fact: z.literal("final_message") }).strict(),
   z.object({ fact: z.literal("canvas_revision") }).strict(),
+  z.object({ fact: z.literal("project_revision") }).strict(),
   z.object({ fact: z.literal("artifact"), artifact: artifactSchema }).strict(),
   z
     .object({ fact: z.literal("artifact_revision"), artifact: artifactSchema })
@@ -51,9 +56,16 @@ const completionCriterionSchema = z.discriminatedUnion("fact", [
 
 export const expectedDeliverySchema = z
   .object({
-    kind: z.enum(["answer", "canvas_change", "generated_asset", "mixed"]),
+    kind: z.enum([
+      "answer",
+      "canvas_change",
+      "generated_asset",
+      "project_change",
+      "mixed",
+    ]),
     requiredArtifacts: z.array(artifactSchema).max(5).optional(),
     targetCanvasId: boundedIdentity("targetCanvasId").optional(),
+    targetProjectId: boundedIdentity("targetProjectId").optional(),
     completionCriteria: z.array(completionCriterionSchema).min(1).max(20),
   })
   .strict();
@@ -61,7 +73,7 @@ export const expectedDeliverySchema = z
 const finalCompletionCriterionSchema = z.union([
   z
     .object({
-      fact: z.enum(["final_message", "canvas_revision"]),
+      fact: z.enum(["final_message", "canvas_revision", "project_revision"]),
       artifact: z.null(),
     })
     .strict(),
@@ -87,9 +99,16 @@ const finalCodexDecisionSchema = z
       .max(64 * 1024),
     expectedDelivery: z
       .object({
-        kind: z.enum(["answer", "canvas_change", "generated_asset", "mixed"]),
+        kind: z.enum([
+          "answer",
+          "canvas_change",
+          "generated_asset",
+          "project_change",
+          "mixed",
+        ]),
         requiredArtifacts: z.array(artifactSchema).max(5).nullable(),
         targetCanvasId: boundedIdentity("targetCanvasId").nullable(),
+        targetProjectId: boundedIdentity("targetProjectId").nullable(),
         completionCriteria: z
           .array(finalCompletionCriterionSchema)
           .min(1)
@@ -110,7 +129,13 @@ export const LOCAL_AGENT_FINAL_DECISION_JSON_SCHEMA = {
       properties: {
         kind: {
           type: "string",
-          enum: ["answer", "canvas_change", "generated_asset", "mixed"],
+          enum: [
+            "answer",
+            "canvas_change",
+            "generated_asset",
+            "project_change",
+            "mixed",
+          ],
         },
         requiredArtifacts: {
           type: ["array", "null"],
@@ -121,6 +146,11 @@ export const LOCAL_AGENT_FINAL_DECISION_JSON_SCHEMA = {
           },
         },
         targetCanvasId: {
+          type: ["string", "null"],
+          minLength: 1,
+          maxLength: 120,
+        },
+        targetProjectId: {
           type: ["string", "null"],
           minLength: 1,
           maxLength: 120,
@@ -137,7 +167,11 @@ export const LOCAL_AGENT_FINAL_DECISION_JSON_SCHEMA = {
                 properties: {
                   fact: {
                     type: "string",
-                    enum: ["final_message", "canvas_revision"],
+                    enum: [
+                      "final_message",
+                      "canvas_revision",
+                      "project_revision",
+                    ],
                   },
                   artifact: { type: "null" },
                 },
@@ -178,6 +212,7 @@ export const LOCAL_AGENT_FINAL_DECISION_JSON_SCHEMA = {
         "kind",
         "requiredArtifacts",
         "targetCanvasId",
+        "targetProjectId",
         "completionCriteria",
       ],
     },
@@ -320,6 +355,9 @@ export function parseFinalCodexDecision(value: string): FinalCodexDecision {
       ...(decision.expectedDelivery.targetCanvasId === null
         ? {}
         : { targetCanvasId: decision.expectedDelivery.targetCanvasId }),
+      ...(decision.expectedDelivery.targetProjectId === null
+        ? {}
+        : { targetProjectId: decision.expectedDelivery.targetProjectId }),
     },
   };
 }

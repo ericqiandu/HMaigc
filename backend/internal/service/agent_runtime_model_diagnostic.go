@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"sort"
 	"strings"
 	"unicode"
@@ -167,6 +168,9 @@ func strictAgentRuntimeDecisionDecodeProblem(payload []byte) string {
 			}
 			return "type_error"
 		}
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			return "unexpected_eof"
+		}
 		return "strict_decode_error"
 	}
 	return ""
@@ -192,6 +196,17 @@ func (s *Service) persistAgentRuntimeDecisionDiagnostic(task model.Task, payload
 		return err
 	}
 	return s.log(task.UserID, task.ID, "error", "Agent 决策协议校验失败", string(encoded))
+}
+
+func agentRuntimeDecisionFeedback(payload []byte, validationErr error) agentruntime.ModelDecisionFeedback {
+	reason := strings.TrimSpace(validationErr.Error())
+	if structuralProblem := strictAgentRuntimeDecisionDecodeProblem(payload); structuralProblem != "" {
+		candidate := reason + "; strict decode problem: " + structuralProblem
+		if len(candidate) <= 240 {
+			reason = candidate
+		}
+	}
+	return agentruntime.ModelDecisionFeedback{Code: "model_decision_invalid", Reason: reason}
 }
 
 func rawJSONString(raw json.RawMessage) (string, bool) {

@@ -36,6 +36,7 @@ async function persistCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions): Pr
     let asset = findCanvasNodeAsset(store.assets, options.node, options.canvasId, options.taskId);
     const declaredCategory = options.category || declaredCanvasNodeAssetCategory(options.node);
     let created = false;
+    let categoryChanged = false;
     if (!asset) {
         const input = canvasNodeToAsset(options.node, { canvasId: options.canvasId, source: options.source, taskId: options.taskId });
         if (!input) throw new Error("当前节点没有可保存的素材内容");
@@ -47,9 +48,13 @@ async function persistCanvasNodeAsset(options: EnsureCanvasNodeAssetOptions): Pr
     if (declaredCategory && asset.category !== declaredCategory) {
         store.updateAsset(asset.id, { category: declaredCategory });
         asset = useAssetStore.getState().assets.find((item) => item.id === asset?.id) || asset;
+        categoryChanged = true;
     }
     if (!options.domainProjectId) return { assetId: asset.id, created, linkedToProject: false };
     const linkedProjectIds = Array.isArray(asset.metadata?.projectIds) ? asset.metadata.projectIds.filter((id): id is string => typeof id === "string") : [];
+    if (!categoryChanged && linkedProjectIds.includes(options.domainProjectId)) {
+        return { assetId: asset.id, created, linkedToProject: true };
+    }
 
     // 项目关联依赖后端 assets 记录，只提交当前素材，避免上传链路扫描全部画布和素材。
     asset = await saveRemoteAssetNow(asset.id);

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -162,8 +163,54 @@ func (s *Service) advanceAgentRunReferenceWithTaskFence(reference repository.Act
 		if expectedTaskID != taskID {
 			return nil
 		}
+		if wakeup == agentWakeGenerationTaskFinished && state.Status == agentruntime.RunCancelled {
+			return s.settleInterruptedAgentTool(scope, state)
+		}
 	}
 	_, err = s.advanceAgentRun(scope, wakeup)
+	return err
+}
+
+func (s *Service) settleInterruptedAgentTool(scope agentruntime.Scope, state agentruntime.RuntimeState) error {
+	call := state.PendingToolCall
+	if call == nil || !state.PendingToolStarted || state.Status != agentruntime.RunCancelled {
+		return errors.New("interrupted agent tool settlement facts are invalid")
+	}
+	// 中断后的回调只允许收取已存在任务的结果，不能经由执行器补建付费任务。
+	taskID, err := expectedAgentTaskID(state, scope, agentWakeGenerationTaskFinished)
+	if err != nil || taskID == "" {
+		return errors.Join(errors.New("interrupted agent task identity is missing"), err)
+	}
+	task, err := s.repo.TaskForUser(scope.ActorUserID, taskID)
+	if err != nil {
+		return fmt.Errorf("load interrupted agent task: %w", err)
+	}
+	execution, err := s.interruptedAgentTaskResult(scope, *call, task)
+	resolution := agentruntime.ToolResolution{
+		ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion, Succeeded: true, Output: execution.Output,
+	}
+	if err != nil {
+		var failure *agentCapabilityExecutionError
+		if !errors.As(err, &failure) || !failure.Settled {
+			return err
+		}
+		output, encodeErr := json.Marshal(map[string]string{"reason": failure.Error()})
+		if encodeErr != nil {
+			return errors.Join(err, encodeErr)
+		}
+		resolution.Succeeded = false
+		resolution.Output = output
+		resolution.ErrorCode = failure.Code
+		resolution.FailureClass = agentruntime.ToolFailureTerminal
+	}
+	if execution.Pending || len(resolution.Output) == 0 {
+		return errors.New("interrupted agent tool terminal result is unavailable")
+	}
+	transition, err := agentruntime.ResolveInterruptedTool(state, resolution)
+	if err != nil {
+		return err
+	}
+	_, err = s.commitAgentRuntimeState(scope, state, transition)
 	return err
 }
 

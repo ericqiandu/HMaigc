@@ -14,12 +14,24 @@ import (
 )
 
 type responsesStreamEvent struct {
-	Type     string `json:"type"`
-	Delta    string `json:"delta"`
-	Response struct {
+	Type         string `json:"type"`
+	Delta        string `json:"delta"`
+	Text         string `json:"text"`
+	OutputIndex  int    `json:"output_index"`
+	ContentIndex int    `json:"content_index"`
+	ItemID       string `json:"item_id"`
+	Response     struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
-		Usage  struct {
+		Output []struct {
+			ID      string `json:"id"`
+			Type    string `json:"type"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"output"`
+		Usage struct {
 			InputTokens       int64 `json:"input_tokens"`
 			OutputTokens      int64 `json:"output_tokens"`
 			InputTokenDetails struct {
@@ -111,6 +123,7 @@ func parseResponsesSSE(ctx context.Context, reader io.Reader, emit func(string) 
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 32*1024), 2*1024*1024)
 	var result providerTextStreamResult
+	var parts responseTextParts
 	eventName := ""
 	dataLines := make([]string, 0, 1)
 	completed := false
@@ -136,26 +149,48 @@ func parseResponsesSSE(ctx context.Context, reader io.Reader, emit func(string) 
 			eventType = strings.TrimSpace(eventName)
 		}
 		eventName = ""
+		result.Diagnostics.EventCount++
 		if responseID := strings.TrimSpace(event.Response.ID); responseID != "" {
 			result.ProviderRequestID = responseID
 		}
 		switch eventType {
 		case "response.created", "response.in_progress", "response.output_item.added", "response.content_part.added",
-			"response.reasoning_text.delta", "response.reasoning_text.done",
-			"response.output_text.done", "response.content_part.done", "response.output_item.done":
+			"response.reasoning_text.done", "response.content_part.done", "response.output_item.done":
 			return nil
-		case "response.output_text.delta":
-			if event.Delta == "" {
-				return nil
-			}
-			if err := emit(event.Delta); err != nil {
+		case "response.reasoning_text.delta":
+			result.Diagnostics.ReasoningTextDeltaCount++
+			return nil
+		case "response.output_text.done":
+			result.Diagnostics.OutputTextDoneCount++
+			if err := parts.accept(event, true); err != nil {
 				return err
 			}
-			result.Text += event.Delta
-			return nil
+			return parts.emitFirst(&result, emit)
+		case "response.output_text.delta":
+			result.Diagnostics.OutputTextDeltaCount++
+			if err := parts.accept(event, false); err != nil {
+				return err
+			}
+			return parts.emitFirst(&result, emit)
 		case "response.completed":
 			if event.Response.Status != "" && event.Response.Status != "completed" {
 				return fmt.Errorf("%w: response status %s", errAgentProviderStreamProtocolInvalid, event.Response.Status)
+			}
+			for _, item := range event.Response.Output {
+				if itemType := strings.TrimSpace(item.Type); itemType != "" {
+					result.Diagnostics.CompletedOutputItemTypes = append(result.Diagnostics.CompletedOutputItemTypes, itemType)
+				}
+				for _, part := range item.Content {
+					if partType := strings.TrimSpace(part.Type); partType != "" {
+						result.Diagnostics.CompletedContentPartTypes = append(result.Diagnostics.CompletedContentPartTypes, partType)
+					}
+					if part.Type == "output_text" && strings.TrimSpace(part.Text) != "" {
+						result.Diagnostics.CompletedOutputTextPartCount++
+					}
+				}
+			}
+			if err := parts.finish(event, &result, emit); err != nil {
+				return err
 			}
 			result.FinishReason = "completed"
 			result.Usage = TokenUsageFact{
@@ -221,4 +256,21 @@ func parseResponsesSSE(ctx context.Context, reader io.Reader, emit func(string) 
 		return result, errProviderTextMissing
 	}
 	return result, nil
+}
+
+func reconcileResponsesFinalText(result *providerTextStreamResult, finalText string, emit func(string) error) error {
+	if finalText == "" || result.Text == finalText {
+		return nil
+	}
+	if !strings.HasPrefix(finalText, result.Text) {
+		return fmt.Errorf("%w: final output text conflicts with streamed deltas", errAgentProviderStreamProtocolInvalid)
+	}
+	suffix := finalText[len(result.Text):]
+	if suffix != "" {
+		if err := emit(suffix); err != nil {
+			return err
+		}
+	}
+	result.Text = finalText
+	return nil
 }

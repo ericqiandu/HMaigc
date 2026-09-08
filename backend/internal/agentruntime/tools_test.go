@@ -7,7 +7,7 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 )
 
-func TestCurrentToolSchemaV8ExposesOnlyAtomicCapabilities(t *testing.T) {
+func TestCurrentToolSchemaV10ExposesOnlyAtomicCapabilities(t *testing.T) {
 	t.Parallel()
 
 	policies, ok := agentruntime.ToolPoliciesForSchema(agentruntime.CurrentToolSchemaVersion)
@@ -24,6 +24,8 @@ func TestCurrentToolSchemaV8ExposesOnlyAtomicCapabilities(t *testing.T) {
 		"canvas.apply_ops",
 		"assets.read",
 		"assets.publish",
+		"project.read",
+		"project.apply_ops",
 		"media.generate",
 		"vision.analyze",
 		"skills.load",
@@ -138,6 +140,37 @@ func TestToolPoliciesForSchemaExposeExactFrozenVocabulary(t *testing.T) {
 	}
 	if _, exposed := agentruntime.ToolPolicyForSchema(agentruntime.ToolVisionAnalyze, agentruntime.RetiredCloudToolSchemaVersion); exposed {
 		t.Fatal("retired cloud v7 schema exposed vision.analyze")
+	}
+
+	projectlessCloud, ok := agentruntime.ToolPoliciesForSchema(agentruntime.RetiredProjectToolSchemaVersion)
+	if !ok {
+		t.Fatal("retired cloud v8 tool schema is unavailable for audit")
+	}
+	projectlessCloudNames := make([]agentruntime.ToolName, 0, len(projectlessCloud))
+	for _, policy := range projectlessCloud {
+		projectlessCloudNames = append(projectlessCloudNames, policy.Name)
+	}
+	wantProjectlessCloud := []agentruntime.ToolName{
+		agentruntime.ToolCanvasRead,
+		agentruntime.ToolCanvasApplyOps,
+		agentruntime.ToolAssetsRead,
+		agentruntime.ToolAssetsPublish,
+		agentruntime.ToolMediaGenerate,
+		agentruntime.ToolVisionAnalyze,
+		agentruntime.ToolSkillsLoad,
+	}
+	if !reflect.DeepEqual(projectlessCloudNames, wantProjectlessCloud) {
+		t.Fatalf("retired cloud v8 tools = %#v, want %#v", projectlessCloudNames, wantProjectlessCloud)
+	}
+	if _, exposed := agentruntime.ToolPolicyForSchema(agentruntime.ToolProjectApplyOps, agentruntime.RetiredProjectToolSchemaVersion); exposed {
+		t.Fatal("retired cloud v8 schema exposed project.apply_ops")
+	}
+	projectMutation, ok := agentruntime.ToolPoliciesForSchema(agentruntime.RetiredProjectMutationToolSchemaVersion)
+	if !ok || len(projectMutation) != 8 {
+		t.Fatalf("retired cloud v9 tools = %#v", projectMutation)
+	}
+	if _, exposed := agentruntime.ToolPolicyForSchema(agentruntime.ToolProjectRead, agentruntime.RetiredProjectMutationToolSchemaVersion); exposed {
+		t.Fatal("retired cloud v9 schema exposed project.read")
 	}
 
 	production, ok := agentruntime.ToolPoliciesForSchema(agentruntime.ProductionToolSchemaVersion)

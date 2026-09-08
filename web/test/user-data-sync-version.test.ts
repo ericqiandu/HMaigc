@@ -141,10 +141,10 @@ test("画布上传只定向写入当前素材后再建立项目关联", async ()
         }],
     });
 
-    const result = await ensureCanvasNodeAsset({
+    const options = {
         canvasId: "canvas-1",
         domainProjectId: "project-1",
-        source: "canvas-upload",
+        source: "canvas-upload" as const,
         node: {
             id: "uploaded-node",
             type: CanvasNodeType.Image,
@@ -157,11 +157,18 @@ test("画布上传只定向写入当前素材后再建立项目关联", async ()
                 storageKey: "resource:uploaded-resource",
             },
         },
-    });
+    };
+    const result = await ensureCanvasNodeAsset(options);
 
     expect(upsertedAssetIds).not.toContain("unrelated-dirty-asset");
     expect(projectAssetEvents[0]).toBe(`upsert:${result.assetId}`);
     expect(projectAssetEvents).toContain(`link:project-1:${result.assetId}`);
+
+    const firstSyncEvents = [...projectAssetEvents];
+    const replayed = await ensureCanvasNodeAsset(options);
+
+    expect(replayed).toEqual({ assetId: result.assetId, created: false, linkedToProject: true });
+    expect(projectAssetEvents).toEqual(firstSyncEvents);
 });
 
 test("上传完成不等待项目查询失效请求", async () => {
@@ -402,6 +409,45 @@ test("首页 Agent 创建立即返回本地画布，并只等待该画布的定�
     releaseRemoteCreate?.();
     await Promise.all([creation.remoteReady, readiness]);
 
+    expect(createdCanvasIds).toEqual([creation.id]);
+});
+
+test("项目章节 Agent 创建绑定项目并持久化专用 Skill 启动事实", async () => {
+    const [{ createProjectAgentCanvasShellWithRemoteSync, queueProjectAgentCanvasLaunch, syncRemoteUserData }, { useAssetStore }, { useCanvasStore }] = await Promise.all([
+        import("../src/services/user-data-sync"),
+        import("../src/stores/use-asset-store"),
+        import("../src/stores/canvas/use-canvas-store"),
+    ]);
+    listRemoteAssetsImpl = async () => ({ assets: [] });
+    useCanvasStore.setState({ projects: [], pendingDeletionIds: [] });
+    useAssetStore.setState({ assets: [] });
+    await syncRemoteUserData("user-1");
+
+    const creation = createProjectAgentCanvasShellWithRemoteSync({
+        title: "第一章 · 提取角色候选",
+        projectId: "domain-project-1",
+    });
+    await creation.remoteReady;
+
+    expect(useCanvasStore.getState().openProject(creation.id)?.pendingAgentLaunch).toBeUndefined();
+    queueProjectAgentCanvasLaunch({
+        canvasId: creation.id,
+        draft: {
+            prompt: "根据第一章正文提取角色候选并写回项目",
+            attachments: [],
+            generationModels: { image: "", video: "" },
+            skillSelections: [{ dir: "project-chapter-structure", name: "项目章节结构化", description: "写回项目结构" }],
+            executionMode: "guided",
+        },
+    });
+    const project = useCanvasStore.getState().openProject(creation.id);
+    expect(project?.projectId).toBe("domain-project-1");
+    expect(project?.pendingAgentLaunch).toMatchObject({
+        source: "project_chapter",
+        prompt: "根据第一章正文提取角色候选并写回项目",
+        skillDirs: ["project-chapter-structure"],
+        executionMode: "guided",
+    });
     expect(createdCanvasIds).toEqual([creation.id]);
 });
 

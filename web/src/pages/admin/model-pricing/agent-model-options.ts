@@ -40,6 +40,11 @@ export function agentDefaultModelOptions(models: AgentModelCandidate[]) {
         .map((model) => ({ label: `${model.displayName || model.modelKey} · ${model.channelName}`, value: model.id }));
 }
 
+export function imagePromptModelOptions(models: AgentModelCandidate[]) {
+    const managedModelIds = new Set(models.filter((model) => Boolean(model.providerCredentialId?.trim())).map((model) => model.id));
+    return agentDefaultModelOptions(models).filter((option) => managedModelIds.has(option.value));
+}
+
 export function agentVisionModelOptions(models: AgentModelCandidate[]) {
     return models
         .filter(

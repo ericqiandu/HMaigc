@@ -1,24 +1,33 @@
 import { useEffect, useState } from "react";
 import { Music2, RefreshCw, Video } from "lucide-react";
 
-import { canvasMediaPlaybackUrl } from "@/lib/canvas-media-playback";
+import { canvasMediaPlaybackUrl, canvasResourceCaptureUrl } from "@/lib/canvas-media-playback";
 import type { CanvasTheme } from "@/lib/canvas-theme";
+import type { CanvasMediaVisibilityTier } from "@/lib/canvas/canvas-render-index";
 import { CanvasNodeAction, CanvasNodeEmptyState, CanvasNodeStatusLayout } from "./canvas-node-ui";
-import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+import { CanvasVideoPlayer, type CanvasVideoPlaybackError } from "./canvas-video-player";
+import { CanvasNodeType, type CanvasMediaIntrinsicSize, type CanvasNodeData } from "@/types/canvas";
 
 type CanvasMediaNodeContentProps = {
     node: CanvasNodeData;
     theme: CanvasTheme;
     reduceMediaEffects: boolean;
+    mediaVisibilityTier: CanvasMediaVisibilityTier;
+    onVideoIntrinsicSize?: (nodeId: string, size: CanvasMediaIntrinsicSize) => void;
 };
 
-export function CanvasMediaNodeContent({ node, theme, reduceMediaEffects }: CanvasMediaNodeContentProps) {
+type CanvasMediaPlaybackFailure = CanvasVideoPlaybackError & {
+    nodeId: string;
+    resourceUrl: string;
+};
+
+export function CanvasMediaNodeContent({ node, theme, reduceMediaEffects, mediaVisibilityTier, onVideoIntrinsicSize }: CanvasMediaNodeContentProps) {
     const [playbackAttempt, setPlaybackAttempt] = useState(0);
-    const [playbackFailed, setPlaybackFailed] = useState(false);
+    const [playbackFailure, setPlaybackFailure] = useState<CanvasMediaPlaybackFailure | null>(null);
     const playbackUrl = canvasMediaPlaybackUrl(node);
 
     useEffect(() => {
-        setPlaybackFailed(false);
+        setPlaybackFailure(null);
         setPlaybackAttempt(0);
     }, [playbackUrl]);
 
@@ -34,25 +43,41 @@ export function CanvasMediaNodeContent({ node, theme, reduceMediaEffects }: Canv
         return <CanvasNodeStatusLayout icon={<Video className="size-5" />} title="媒体地址无效" detail="资源缺少可播放地址" tone="danger" theme={theme} />;
     }
 
-    if (playbackFailed) {
+    if (node.type === CanvasNodeType.Video && mediaVisibilityTier === "near") {
         return (
-            <CanvasNodeStatusLayout
-                icon={node.type === CanvasNodeType.Audio ? <Music2 className="size-5" /> : <Video className="size-5" />}
-                title="媒体加载失败"
-                detail="请检查资源存储或网络后重试"
-                tone="danger"
-                theme={theme}
-                actions={
-                    <CanvasNodeAction
-                        icon={<RefreshCw />}
-                        label="重新加载"
-                        onClick={() => {
-                            setPlaybackFailed(false);
-                            setPlaybackAttempt((attempt) => attempt + 1);
-                        }}
-                    />
-                }
-            />
+            <div className="canvas-deferred-media grid size-full place-items-center" data-canvas-deferred-media="video" role="status" aria-label={`${node.title || "视频"}位于预加载区域`}>
+                <Video className="canvas-deferred-media-icon size-5 opacity-45" />
+            </div>
+        );
+    }
+
+    if (playbackFailure) {
+        return (
+            <div
+                className="canvas-media-playback-failure size-full"
+                data-canvas-media-error-kind={playbackFailure.kind}
+                data-canvas-media-error-node={playbackFailure.nodeId}
+                data-canvas-media-error-resource={playbackFailure.resourceUrl}
+                data-canvas-media-error-message={playbackFailure.message}
+            >
+                <CanvasNodeStatusLayout
+                    icon={node.type === CanvasNodeType.Audio ? <Music2 className="size-5" /> : <Video className="size-5" />}
+                    title="媒体加载失败"
+                    detail={playbackFailure.message}
+                    tone="danger"
+                    theme={theme}
+                    actions={
+                        <CanvasNodeAction
+                            icon={<RefreshCw />}
+                            label="重新加载"
+                            onClick={() => {
+                                setPlaybackFailure(null);
+                                setPlaybackAttempt((attempt) => attempt + 1);
+                            }}
+                        />
+                    }
+                />
+            </div>
         );
     }
 
@@ -65,12 +90,46 @@ export function CanvasMediaNodeContent({ node, theme, reduceMediaEffects }: Canv
                     </span>
                     <span className="canvas-audio-node-player-title">{audioNodeTitle(node)}</span>
                 </div>
-                <audio key={playbackAttempt} src={playbackUrl} controls preload="metadata" className="canvas-audio-node-player-control" data-canvas-no-zoom onError={() => setPlaybackFailed(true)} />
+                <audio
+                    key={playbackAttempt}
+                    src={playbackUrl}
+                    controls
+                    preload="metadata"
+                    className="canvas-audio-node-player-control"
+                    data-canvas-no-zoom
+                    onError={() => setPlaybackFailure(createPlaybackFailure(node.id, playbackUrl, { kind: "media", message: "音频加载失败" }))}
+                />
             </div>
         );
     }
 
-    return <video key={playbackAttempt} src={playbackUrl} controls playsInline preload={reduceMediaEffects ? "none" : "metadata"} className="h-full w-full bg-black object-contain" data-canvas-no-zoom onError={() => setPlaybackFailed(true)} />;
+    return (
+        <CanvasVideoPlayer
+            key={playbackAttempt}
+            nodeId={node.id}
+            src={playbackUrl}
+            captureSource={canvasResourceCaptureUrl(node.metadata?.storageKey, playbackUrl)}
+            title={node.title || "视频"}
+            preload={onVideoIntrinsicSize || !reduceMediaEffects ? "metadata" : "none"}
+            onIntrinsicSize={(size) => onVideoIntrinsicSize?.(node.id, size)}
+            onPlaybackError={(error) => {
+                if (error.kind === "media") setPlaybackFailure(createPlaybackFailure(node.id, playbackUrl, error));
+            }}
+        />
+    );
+}
+
+function createPlaybackFailure(nodeId: string, resourceUrl: string, error: CanvasVideoPlaybackError): CanvasMediaPlaybackFailure {
+    return { nodeId, resourceUrl: credentialFreeUrlSummary(resourceUrl), ...error };
+}
+
+function credentialFreeUrlSummary(resourceUrl: string) {
+    try {
+        const parsed = new URL(resourceUrl, "https://canvas.invalid");
+        return parsed.origin === "https://canvas.invalid" ? parsed.pathname : `${parsed.origin}${parsed.pathname}`;
+    } catch {
+        return "invalid-media-url";
+    }
 }
 
 function audioNodeTitle(node: CanvasNodeData) {

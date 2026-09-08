@@ -298,25 +298,53 @@ export class LocalAgentBridge {
 
     async #handleFinalDecision(active: ActiveBridgeRun, event: LocalAgentFinalDecisionEvent): Promise<void> {
         if (active.pendingTool) throw new Error("工具结果交付前不能提交最终决策");
-        const view = await this.#options.runtimeClient.submitDecision(active.runId, {
-            clientRequestId: await stableDecisionRequestId("final", event.turnId),
-            expectedStateVersion: active.view.state.stateVersion,
-            decision: { kind: "final", final: { message: event.message, expectedDelivery: event.expectedDelivery } },
-        });
+        // canvas-agent only emits final_decision after the underlying Codex SDK
+        // has already emitted turn.completed. Treat it as the durable terminal
+        // acknowledgement instead of depending on a second adjacent SSE frame.
+        active.localTerminal = true;
+        let view: AgentRuntimeView;
+        try {
+            view = await this.#options.runtimeClient.submitDecision(active.runId, {
+                clientRequestId: await stableDecisionRequestId("final", event.turnId),
+                expectedStateVersion: active.view.state.stateVersion,
+                decision: { kind: "final", final: { message: event.message, expectedDelivery: event.expectedDelivery } },
+            });
+        } catch (cause) {
+            const primaryMessage = errorMessage(cause, "后端拒绝了本机 Agent 最终决策");
+            try {
+                await this.#interruptAuditRun(active);
+            } catch (cleanupCause) {
+                const failure = new AggregateError(
+                    [cause, cleanupCause],
+                    `${primaryMessage}；后端审计 Run 终止失败：${errorMessage(cleanupCause, "未知终止错误")}`,
+                );
+                this.#fail(errorCode(cause), failure.message);
+                throw failure;
+            }
+            this.#closedTurn = { threadId: active.threadId, turnId: active.turnId };
+            this.#active = undefined;
+            this.#fail(errorCode(cause), primaryMessage);
+            throw cause;
+        }
         active.finalSubmitted = true;
         active.view = view;
         this.#adoptView(view);
         if (view.state.status === "succeeded") {
-            this.#setState({ kind: "reasoning", threadId: active.threadId, turnId: active.turnId, runId: active.runId });
+            this.#closedTurn = { threadId: active.threadId, turnId: active.turnId };
+            this.#active = undefined;
+            this.#setState({ kind: "idle" });
             return;
         }
         const repairInstruction = buildDeliveryRepairInstruction(view);
         if (repairInstruction) {
             active.repairInstruction = repairInstruction;
-            this.#setState({ kind: "reasoning", threadId: active.threadId, turnId: active.turnId, runId: active.runId });
+            await this.#continueRepair(active);
             return;
         }
         const reason = view.state.decisionFeedback?.reason ?? view.state.failureCode ?? `最终决策返回非成功状态 ${view.state.status}`;
+        if (!isTerminalStatus(view.state.status)) await this.#interruptAuditRun(active);
+        this.#closedTurn = { threadId: active.threadId, turnId: active.turnId };
+        this.#active = undefined;
         this.#fail("agent_delivery_requires_repair", reason);
     }
 

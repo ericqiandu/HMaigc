@@ -60,13 +60,13 @@ func TestLocalBackendBuildCanUseExplicitPackageMirrors(t *testing.T) {
 	}
 }
 
-func TestLocalBackendUsesExplicitDevelopmentOnlyKuaiziProxy(t *testing.T) {
+func TestLocalBackendUsesExplicitDevelopmentOnlyOutboundProxy(t *testing.T) {
 	repositoryRoot := filepath.Clean(filepath.Join("..", "..", ".."))
 	contents, err := os.ReadFile(filepath.Join(repositoryRoot, "docker-compose.yml"))
 	if err != nil {
 		t.Fatalf("read docker-compose.yml: %v", err)
 	}
-	expected := "CANVAS_KUAIZI_PROXY_URL: ${CANVAS_KUAIZI_PROXY_URL:-http://host.docker.internal:7897}"
+	expected := "CANVAS_DEVELOPMENT_PROXY_URL: ${CANVAS_DEVELOPMENT_PROXY_URL:-http://host.docker.internal:7897}"
 	if !strings.Contains(string(contents), expected) {
 		t.Fatalf("local backend config does not contain %q", expected)
 	}

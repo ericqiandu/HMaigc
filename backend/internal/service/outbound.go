@@ -74,8 +74,17 @@ func ValidateCustomRelayURL(rawURL string) (*url.URL, error) {
 }
 
 func OutboundHTTPClient(timeout time.Duration) *http.Client {
+	transport := http.RoundTripper(outboundTransport)
+	if rawProxyURL := strings.TrimSpace(os.Getenv("CANVAS_DEVELOPMENT_PROXY_URL")); rawProxyURL != "" {
+		configured, err := newOutboundHTTPTransport(strings.TrimSpace(os.Getenv("CANVAS_ENVIRONMENT")), defaultOutboundHostResolver, rawProxyURL)
+		if err != nil {
+			transport = rejectingRoundTripper{err: err}
+		} else {
+			transport = configured
+		}
+	}
 	return &http.Client{
-		Transport: outboundTransport,
+		Transport: transport,
 		Timeout:   timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= maxOutboundRedirects {
@@ -142,7 +151,7 @@ func validateKuaiziBaseURLWithResolver(ctx context.Context, rawURL string, envir
 }
 
 func KuaiziHTTPClient(environment string, timeout time.Duration) *http.Client {
-	transport, err := newKuaiziHTTPTransport(environment, defaultOutboundHostResolver, os.Getenv("CANVAS_KUAIZI_PROXY_URL"))
+	transport, err := newKuaiziHTTPTransport(environment, defaultOutboundHostResolver, os.Getenv("CANVAS_DEVELOPMENT_PROXY_URL"))
 	if err != nil {
 		transport = rejectingRoundTripper{err: err}
 	}
@@ -169,6 +178,36 @@ type validatingKuaiziProxyTransport struct {
 	resolver    outboundHostResolver
 }
 
+type validatingOutboundProxyTransport struct {
+	transport *http.Transport
+	resolver  outboundHostResolver
+}
+
+func (transport *validatingOutboundProxyTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request == nil || request.URL == nil {
+		return nil, BadAuthRequest("外部服务请求地址无效")
+	}
+	if err := validateOutboundRequestURLWithResolver(request.Context(), request.URL, transport.resolver); err != nil {
+		return nil, err
+	}
+	return transport.transport.RoundTrip(request)
+}
+
+func (transport *validatingOutboundProxyTransport) CloseIdleConnections() {
+	transport.transport.CloseIdleConnections()
+}
+
+func newOutboundHTTPTransport(environment string, resolver outboundHostResolver, rawProxyURL string) (http.RoundTripper, error) {
+	proxyURL, err := validateDevelopmentProxyURL(rawProxyURL, environment)
+	if err != nil {
+		return nil, err
+	}
+	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	base := newBaseHTTPTransport(dialer.DialContext)
+	base.Proxy = http.ProxyURL(proxyURL)
+	return &validatingOutboundProxyTransport{transport: base, resolver: resolver}, nil
+}
+
 func (transport *validatingKuaiziProxyTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	if request == nil || request.URL == nil {
 		return nil, BadAuthRequest("筷子服务请求地址无效")
@@ -188,7 +227,7 @@ func newKuaiziHTTPTransport(environment string, resolver outboundHostResolver, r
 	if strings.TrimSpace(rawProxyURL) == "" {
 		return newKuaiziTransport(environment, resolver), nil
 	}
-	proxyURL, err := validateKuaiziProxyURL(rawProxyURL, environment)
+	proxyURL, err := validateDevelopmentProxyURL(rawProxyURL, environment)
 	if err != nil {
 		return nil, err
 	}
@@ -198,21 +237,21 @@ func newKuaiziHTTPTransport(environment string, resolver outboundHostResolver, r
 	return &validatingKuaiziProxyTransport{transport: base, environment: environment, resolver: resolver}, nil
 }
 
-func validateKuaiziProxyURL(rawProxyURL string, environment string) (*url.URL, error) {
+func validateDevelopmentProxyURL(rawProxyURL string, environment string) (*url.URL, error) {
 	if strings.TrimSpace(environment) != "development" {
-		return nil, BadAuthRequest("筷子出站代理仅允许开发环境使用")
+		return nil, BadAuthRequest("开发出站代理仅允许 development 环境使用")
 	}
 	parsed, err := url.Parse(strings.TrimSpace(rawProxyURL))
 	if err != nil || !parsed.IsAbs() || parsed.Scheme != "http" || parsed.Hostname() == "" || parsed.Port() == "" {
-		return nil, BadAuthRequest("筷子出站代理地址无效")
+		return nil, BadAuthRequest("开发出站代理地址无效")
 	}
 	if parsed.User != nil || parsed.Path != "" || parsed.RawPath != "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
-		return nil, BadAuthRequest("筷子出站代理必须是不含凭据、路径、查询或片段的 HTTP origin")
+		return nil, BadAuthRequest("开发出站代理必须是不含凭据、路径、查询或片段的 HTTP origin")
 	}
 	host := normalizeOutboundHost(parsed.Hostname())
 	address := net.ParseIP(host)
 	if host != "host.docker.internal" && host != "localhost" && (address == nil || !address.IsLoopback()) {
-		return nil, BadAuthRequest("筷子出站代理必须指向本机开发代理")
+		return nil, BadAuthRequest("开发出站代理必须指向本机代理")
 	}
 	return parsed, nil
 }
@@ -347,13 +386,17 @@ func resolveCustomRelayHost(ctx context.Context, host string) ([]net.IP, error) 
 }
 
 func resolveOutboundHostWithPolicy(ctx context.Context, host string, allowPrivateHost bool) ([]net.IP, error) {
+	return resolveOutboundHostWithResolver(ctx, host, allowPrivateHost, defaultOutboundHostResolver)
+}
+
+func resolveOutboundHostWithResolver(ctx context.Context, host string, allowPrivateHost bool, resolver outboundHostResolver) ([]net.IP, error) {
 	if host == "" {
 		return nil, BadAuthRequest("外部服务域名无效")
 	}
 	if !allowPrivateHost && (host == "localhost" || strings.HasSuffix(host, ".localhost")) {
 		return nil, BadAuthRequest("不允许访问本机或内网地址")
 	}
-	addresses, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	addresses, err := resolver(ctx, host)
 	if err != nil {
 		return nil, BadAuthRequest("外部服务域名解析失败")
 	}
@@ -368,6 +411,18 @@ func resolveOutboundHostWithPolicy(ctx context.Context, host string, allowPrivat
 		}
 	}
 	return addresses, nil
+}
+
+func validateOutboundRequestURLWithResolver(ctx context.Context, parsed *url.URL, resolver outboundHostResolver) error {
+	if parsed == nil || parsed.Hostname() == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return BadAuthRequest("外部服务地址无效")
+	}
+	if parsed.User != nil {
+		return BadAuthRequest("外部服务地址不允许包含认证信息")
+	}
+	host := normalizeOutboundHost(parsed.Hostname())
+	_, err := resolveOutboundHostWithResolver(ctx, host, allowPrivateUpstreams() || allowedPrivateUpstreamHost(host), resolver)
+	return err
 }
 
 func blockedOutboundIP(ip net.IP) bool {

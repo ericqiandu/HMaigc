@@ -100,6 +100,7 @@ test("工具提案与最终回答必须携带同一类结构化交付契约", ()
           kind: expectedDelivery.kind,
           requiredArtifacts: expectedDelivery.requiredArtifacts,
           targetCanvasId: expectedDelivery.targetCanvasId,
+          targetProjectId: null,
           completionCriteria: [{ fact: "canvas_revision", artifact: null }],
         },
       }),

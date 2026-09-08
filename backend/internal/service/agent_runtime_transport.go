@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -25,9 +26,10 @@ type StartScopedAgentRunInput struct {
 }
 
 type AgentRuntimeView struct {
-	Run             model.AgentRun            `json:"run"`
-	State           agentruntime.RuntimeState `json:"state"`
-	PendingApproval *AgentPendingApprovalView `json:"pendingApproval,omitempty"`
+	Run                      model.AgentRun            `json:"run"`
+	State                    agentruntime.RuntimeState `json:"state"`
+	PendingApproval          *AgentPendingApprovalView `json:"pendingApproval,omitempty"`
+	CanvasProjectionRevision *int64                    `json:"canvasProjectionRevision,omitempty"`
 }
 
 type AgentPendingApprovalView struct {
@@ -377,7 +379,7 @@ func (s *Service) readAgentRuntimeView(scope agentruntime.Scope) (*AgentRuntimeV
 	if err != nil {
 		return nil, err
 	}
-	return s.enrichAgentRuntimeView(scope, view)
+	return s.agentRuntimeViewWithCanvasProjection(scope, view)
 }
 
 func (s *Service) readAgentRuntimeStateView(scope agentruntime.Scope) (*AgentRuntimeView, error) {
@@ -443,6 +445,38 @@ func (s *Service) SubmitScopedAgentApproval(actor *model.User, runID string, inp
 		return nil, s.mapAgentItemStateConflict(scope, err)
 	}
 	return s.agentRuntimeViewForProgress(scope, progress)
+}
+
+func (s *Service) RefreshScopedExpiredAgentApproval(actor *model.User, runID string, input AgentToolApprovalRefreshSubmission) (*AgentRuntimeView, error) {
+	scope, err := s.scopeForAgentRun(actor, runID)
+	if err != nil {
+		return nil, err
+	}
+	progress, err := s.RefreshExpiredAgentToolApproval(scope, input)
+	if err != nil {
+		return nil, s.mapAgentApprovalRefreshError(scope, err)
+	}
+	return s.agentRuntimeViewForProgress(scope, progress)
+}
+
+func (s *Service) mapAgentApprovalRefreshError(scope agentruntime.Scope, err error) error {
+	if !errors.Is(err, errAgentApprovalRefreshFactsConflict) &&
+		!errors.Is(err, errAgentApprovalProposalNotExpired) &&
+		!errors.Is(err, agentruntime.ErrApprovalProposalMismatch) {
+		return s.mapAgentItemStateConflict(scope, err)
+	}
+	latest, loadErr := s.repo.LoadAgentCheckpoint(scope)
+	if loadErr != nil {
+		return errors.Join(err, loadErr)
+	}
+	message := "审批状态已经变化，请重新读取当前提案"
+	if errors.Is(err, errAgentApprovalProposalNotExpired) {
+		message = "当前审批仍在有效期内，请直接批准或拒绝"
+	}
+	return &AgentControlError{
+		Status: http.StatusConflict, ErrorCode: "agent_approval_refresh_conflict", Message: message,
+		LatestStateVersion: latest.StateVersion, Cause: err,
+	}
 }
 
 func (s *Service) SubmitScopedAgentClarificationResponse(actor *model.User, runID string, requestID string, submission agentruntime.ClarificationResponseSubmission) (*AgentRuntimeView, error) {
@@ -524,7 +558,7 @@ func (s *Service) agentRuntimeViewForState(scope agentruntime.Scope, state agent
 	if err != nil {
 		return nil, err
 	}
-	return s.enrichAgentRuntimeView(scope, view)
+	return s.agentRuntimeViewWithCanvasProjection(scope, view)
 }
 
 func (s *Service) mapAgentControlError(scope agentruntime.Scope, err error, errorCode string, message string) error {
@@ -681,7 +715,21 @@ func agentRuntimeView(progress *AgentRuntimeProgress) *AgentRuntimeView {
 }
 
 func (s *Service) agentRuntimeViewForProgress(scope agentruntime.Scope, progress *AgentRuntimeProgress) (*AgentRuntimeView, error) {
-	return s.enrichAgentRuntimeView(scope, agentRuntimeView(progress))
+	return s.agentRuntimeViewWithCanvasProjection(scope, agentRuntimeView(progress))
+}
+
+func (s *Service) agentRuntimeViewWithCanvasProjection(scope agentruntime.Scope, view *AgentRuntimeView) (*AgentRuntimeView, error) {
+	if view == nil {
+		return nil, errors.New("Agent 运行视图为空")
+	}
+	projection, err := s.projectTerminalAgentRunCanvas(scope, view.State)
+	if err != nil {
+		return nil, fmt.Errorf("投影 Agent 终态到画布: %w", err)
+	}
+	if projection.changed {
+		view.CanvasProjectionRevision = &projection.revision
+	}
+	return s.enrichAgentRuntimeView(scope, view)
 }
 
 func (s *Service) enrichAgentRuntimeView(scope agentruntime.Scope, view *AgentRuntimeView) (*AgentRuntimeView, error) {

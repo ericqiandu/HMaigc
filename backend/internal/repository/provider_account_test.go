@@ -31,6 +31,41 @@ func TestProviderCredentialSecretDoesNotMarshalKeyCipher(t *testing.T) {
 	}
 }
 
+func TestFrozenProviderRuntimeByVersionIDsRequiresSameProviderAccount(t *testing.T) {
+	db := openProviderRepositorySQLite(t)
+	repo := New(db)
+	now := time.Now().UTC()
+	for _, account := range []model.ProviderAccount{
+		{ID: "relay-account-a", ProviderKind: "kuaizi", Name: "A", Enabled: true, CreatedAt: now, UpdatedAt: now},
+		{ID: "relay-account-b", ProviderKind: "kuaizi", Name: "B", Enabled: true, CreatedAt: now, UpdatedAt: now},
+	} {
+		if err := db.Create(&account).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	endpoint := model.ProviderEndpointVersion{ID: "relay-endpoint-a", ProviderAccountID: "relay-account-a", BaseURL: "https://provider.example", Status: "retired", Version: 1, CreatedAt: now}
+	credentialA := model.ProviderCredential{ID: "relay-credential-a", ProviderAccountID: "relay-account-a", Family: "gpt", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	credentialB := model.ProviderCredential{ID: "relay-credential-b", ProviderAccountID: "relay-account-b", Family: "gpt", Enabled: true, CreatedAt: now, UpdatedAt: now}
+	versionA := model.ProviderCredentialVersion{ID: "relay-key-a", ProviderCredentialID: credentialA.ID, KeyCipher: "cipher-a", Status: "retired", Version: 1, CreatedAt: now}
+	versionB := model.ProviderCredentialVersion{ID: "relay-key-b", ProviderCredentialID: credentialB.ID, KeyCipher: "cipher-b", Status: "retired", Version: 1, CreatedAt: now}
+	for _, row := range []interface{}{&endpoint, &credentialA, &credentialB, &versionA, &versionB} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	runtime, err := repo.FrozenProviderRuntimeByVersionIDs(endpoint.ID, versionA.ID)
+	if err != nil {
+		t.Fatalf("resolve matching frozen runtime: %v", err)
+	}
+	if runtime.ProviderAccountID != "relay-account-a" || runtime.ProviderCredentialID != credentialA.ID || runtime.BaseURL != endpoint.BaseURL || runtime.KeyCipher != versionA.KeyCipher {
+		t.Fatalf("frozen runtime = %#v", runtime)
+	}
+	if _, err := repo.FrozenProviderRuntimeByVersionIDs(endpoint.ID, versionB.ID); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("cross-account runtime error = %v", err)
+	}
+}
+
 func TestProviderAccountEndpointActivationRequiresCurrentVersion(t *testing.T) {
 	db := openProviderRepositorySQLite(t)
 	repo := New(db)

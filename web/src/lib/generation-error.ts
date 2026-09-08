@@ -1,4 +1,5 @@
 export const CONTENT_MODERATION_ERROR_CODE = "sensitive_words_detected";
+export const AGENT_MEDIA_SETTLEMENT_PENDING_ERROR_CODE = "agent_media_settlement_pending";
 
 export const CONTENT_MODERATION_MESSAGE = "内容审核未通过，本次平台积分未扣除或已退还。请修改提示词后重新生成。";
 

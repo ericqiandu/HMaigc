@@ -118,6 +118,77 @@ export type CanvasSkillSnapshot = {
     tags: string[];
 };
 
+export type CanvasMediaIntrinsicSize = {
+    width: number;
+    height: number;
+};
+
+export type CanvasImageCommand = "maskEdit" | "emotion" | "portraitTexture" | "angle" | "crop" | "resize" | "split" | "annotation" | "upscale" | "superResolve";
+
+export type CanvasImagePromptCommandV1 = {
+    schemaVersion: "canvas-image-command/v1";
+    command: "portraitTexture";
+    objective: string;
+    parameters: Record<string, string | number | boolean | null>;
+    sourceNodeId: string;
+    nodeRevision: number;
+};
+
+export type CanvasImagePromptTraceV1 = {
+    requestId: string;
+    correlationId: string;
+    specialist: "image_prompt_specialist";
+    evidenceDigest: string;
+    model: {
+        catalogRecordId: string;
+        modelKey: string;
+        configurationRevision: string;
+        providerEndpointVersionId: string;
+        providerCredentialVersionId: string;
+        effectiveModel: string;
+    };
+    usage: {
+        inputTokens: number;
+        outputTokens: number;
+        totalTokens: number;
+    };
+    startedAt: string;
+    completedAt: string;
+};
+
+export type CanvasImagePromptTaskEvidenceV1 = {
+    schemaVersion: "image-prompt/v1";
+    command: CanvasImagePromptCommandV1;
+    response: {
+        schemaVersion: "image-prompt/v1";
+        imagePrompt: string;
+        trace: CanvasImagePromptTraceV1;
+    };
+    responseDigest: string;
+};
+
+export type CanvasImageCommandEvidence = {
+    version: 1;
+    sourceNodeId: string;
+    command: CanvasImageCommand;
+    parameters: Record<string, unknown>;
+    prompt: string;
+    taskId?: string;
+    billingOrderId?: string;
+    specialist?: {
+        responseDigest: string;
+        requestId: string;
+        correlationId: string;
+        evidenceDigest: string;
+        model: CanvasImagePromptTraceV1["model"];
+        usage: CanvasImagePromptTraceV1["usage"];
+    };
+    resourceId: string;
+    width: number;
+    height: number;
+    createdAt: string;
+};
+
 export type CanvasNodeMetadata = {
     content?: string;
     richText?: Record<string, unknown>;
@@ -128,6 +199,7 @@ export type CanvasNodeMetadata = {
     errorDetails?: string;
     generationErrorCode?: string;
     failedPromptFingerprint?: string;
+    imageCommandEvidence?: CanvasImageCommandEvidence;
     fontSize?: number;
     generationMode?: CanvasGenerationMode;
     generationType?: CanvasImageGenerationType;
@@ -220,6 +292,22 @@ export type CanvasNodeMetadata = {
     actionBoardRows?: number;
     actionBoardColumns?: number;
     agentRunId?: string;
+    generationEvidence?: {
+        runId: string;
+        toolCallId: string;
+        actionVersion: number;
+        taskId: string;
+        billingOrderId: string;
+        resourceId: string;
+        clientRequestId: string;
+        modelRecordId: string;
+        modelKey: string;
+        requestedAspectRatio?: string;
+        requestedResolution?: string;
+        actualWidth?: number;
+        actualHeight?: number;
+        actualDurationMs?: number;
+    };
     taskId?: string;
     taskStatus?: "queued" | "running" | "succeeded" | "failed" | "cancelled" | string;
     taskProgress?: number;
@@ -345,7 +433,7 @@ export type CanvasAgentSkillSelection = {
 
 export type CanvasAgentLaunchRequest = {
     id: string;
-    source: "home";
+    source: "home" | "project_chapter";
     prompt: string;
     attachments: Array<{ resourceId: string; name: string }>;
     generationModels: CanvasAgentGenerationModels;

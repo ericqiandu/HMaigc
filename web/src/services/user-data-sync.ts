@@ -147,6 +147,25 @@ export function createAgentCanvasProjectWithRemoteSync(input: { draft: CanvasAge
     return { id, remoteReady: ensureRemoteCanvasProjectReady(id) };
 }
 
+export function createProjectAgentCanvasShellWithRemoteSync(input: { title: string; projectId: string }): AgentCanvasProjectCreation {
+    const store = useCanvasStore.getState();
+    const id = store.createProject(input.title, input.projectId);
+    return { id, remoteReady: ensureRemoteCanvasProjectReady(id) };
+}
+
+export function queueProjectAgentCanvasLaunch(input: { canvasId: string; draft: CanvasAgentDraft }) {
+    const store = useCanvasStore.getState();
+    if (!store.openProject(input.canvasId)) throw new Error("章节 Agent 画布不存在");
+    store.updateProject(input.canvasId, {
+        pendingAgentLaunch: createCanvasAgentLaunchRequest({
+            draft: input.draft,
+            id: nanoid(),
+            createdAt: new Date().toISOString(),
+            source: "project_chapter",
+        }),
+    });
+}
+
 export function ensureRemoteCanvasProjectReady(projectId: string): Promise<void> {
     const session = currentRemoteSession();
     if (!session) return Promise.reject(new Error("尚未建立云端同步会话"));

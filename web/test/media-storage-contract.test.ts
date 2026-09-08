@@ -2,7 +2,7 @@ import "./setup-happy-dom";
 
 import { describe, expect, test } from "bun:test";
 
-import { canvasResourceDisplayUrl } from "../src/lib/canvas-media-playback";
+import { canvasResourceCaptureUrl, canvasResourceDisplayUrl } from "../src/lib/canvas-media-playback";
 import { resolveMediaUrl } from "../src/services/file-storage";
 import { resolveImageUrl } from "../src/services/image-storage";
 import { persistMediaByUserScope } from "../src/services/media-upload-policy";
@@ -14,6 +14,10 @@ describe("media storage contract", () => {
         expect(await resolveResourceUrl("resource:cover-1", "https://expired.example/cover.png")).toBe("/api/resources/cover-1/file?direct=1");
         expect(await resolveImageUrl("resource:cover-1", "https://expired.example/cover.png")).toBe("/api/resources/cover-1/file?direct=1");
         expect(await resolveMediaUrl("resource:video-1", "https://expired.example/video.mp4")).toBe("/api/resources/video-1/file?direct=1");
+    });
+
+    test("capture reads a managed resource through the same-origin proxy without changing playback", () => {
+        expect(canvasResourceCaptureUrl("resource:video-1", "https://expired.example/video.mp4")).toBe("/api/resources/video-1/file");
     });
 
     test("authenticated uploads surface remote persistence failures without writing a local shadow copy", async () => {

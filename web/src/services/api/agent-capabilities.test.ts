@@ -4,12 +4,46 @@ import { describe, test } from "node:test";
 import { parseAgentCapabilityArguments, parseAgentCapabilityResult, parseAgentRuntimeEvent } from "./agent-runtime";
 
 describe("agent capability wire contracts", () => {
-    test("parses the seven current capability argument contracts", () => {
+    test("parses the nine current capability argument contracts", () => {
         assert.deepEqual(parseAgentCapabilityArguments("canvas.read", { canvasId: "canvas-1", selectedNodeIds: [], includeViewport: true }), {
             canvasId: "canvas-1",
             selectedNodeIds: [],
             includeViewport: true,
         });
+        assert.deepEqual(
+            parseAgentCapabilityArguments("project.read", {
+                domainProjectId: "project-1",
+                canvasId: "canvas-1",
+            }),
+            {
+                domainProjectId: "project-1",
+                canvasId: "canvas-1",
+            },
+        );
+        assert.deepEqual(
+            parseAgentCapabilityArguments("project.apply_ops", {
+                domainProjectId: "project-1",
+                baseRevision: 4,
+                clientMutationId: "project-mutation-1",
+                operations: [{
+                    operationId: "shots-1",
+                    type: "replace_unit_shots",
+                    unitId: "unit-1",
+                    shots: [{ title: "雨夜重逢", description: "中景，人物在雨中相遇。", durationMs: 5_000 }],
+                }],
+            }),
+            {
+                domainProjectId: "project-1",
+                baseRevision: 4,
+                clientMutationId: "project-mutation-1",
+                operations: [{
+                    operationId: "shots-1",
+                    type: "replace_unit_shots",
+                    unitId: "unit-1",
+                    shots: [{ title: "雨夜重逢", description: "中景，人物在雨中相遇。", durationMs: 5_000 }],
+                }],
+            },
+        );
         assert.deepEqual(
             parseAgentCapabilityArguments("media.generate", {
                 mediaKind: "video",
@@ -69,6 +103,22 @@ describe("agent capability wire contracts", () => {
         assert.throws(() => parseAgentCapabilityResult("vision.analyze", { ...result, sourceResourceIds: ["resource-1", "resource-1"] }), /重复/);
     });
 
+    test("strictly decodes a generated media receipt", () => {
+        const result = {
+            taskId: "task-1",
+            billingOrderId: "billing-1",
+            mediaKind: "video",
+            clientRequestId: "request-1",
+            resources: [{ resourceId: "resource-1", kind: "video", url: "/api/resources/resource-1/file" }],
+        } as const;
+
+        assert.deepEqual(parseAgentCapabilityResult("media.generate", result), result);
+        assert.throws(() => parseAgentCapabilityResult("media.generate", { ...result, providerRequestId: "provider-secret" }), /未知字段/);
+        assert.throws(() => parseAgentCapabilityResult("media.generate", { ...result, resources: [] }), /数量/);
+        assert.throws(() => parseAgentCapabilityResult("media.generate", { ...result, resources: [{ ...result.resources[0], kind: "image" }] }), /kind/);
+        assert.throws(() => parseAgentCapabilityResult("media.generate", { ...result, resources: [{ ...result.resources[0], url: "https://example.com/private.mp4" }] }), /url/);
+    });
+
     test("rejects retired tools, unknown fields, and malformed operations", () => {
         assert.throws(() => parseAgentCapabilityArguments("canvas.project", {}), /不受支持/);
         assert.throws(() => parseAgentCapabilityArguments("canvas.read", { canvasId: "canvas-1", selectedNodeIds: [], includeViewport: true, fallback: true }), /未知字段/);
@@ -87,6 +137,14 @@ describe("agent capability wire contracts", () => {
                 baseRevision: 0,
                 clientMutationId: "mutation-1",
                 operations: [{ operationId: "op-1", type: "connect_nodes", connection: { id: "edge-1", fromNodeId: "node-1" } }],
+            }),
+        );
+        assert.throws(() =>
+            parseAgentCapabilityArguments("project.apply_ops", {
+                domainProjectId: "project-1",
+                baseRevision: 1,
+                clientMutationId: "mutation-1",
+                operations: [{ operationId: "shots-1", type: "replace_unit_shots", unitId: "unit-1", shots: [{ title: "越界", description: "时长越界", durationMs: 999 }] }],
             }),
         );
         assert.throws(() =>

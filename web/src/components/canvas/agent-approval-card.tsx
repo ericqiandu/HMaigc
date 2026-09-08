@@ -2,8 +2,8 @@ import { useState } from "react";
 import { Button } from "antd";
 import { CircleAlert, ShieldCheck } from "lucide-react";
 
-import type { AgentCanvasOperation } from "@/services/api/agent-capabilities";
-import type { AgentApprovalSubmission, AgentPendingApproval, AgentToolCall } from "@/services/api/agent-runtime";
+import type { AgentCanvasOperation, AgentProjectOperation } from "@/services/api/agent-capabilities";
+import type { AgentApprovalRefreshSubmission, AgentApprovalSubmission, AgentPendingApproval, AgentToolCall } from "@/services/api/agent-runtime";
 
 import { AgentApprovalSummary } from "./agent-approval-summary";
 
@@ -16,18 +16,20 @@ type AgentApprovalCardProps = {
     muted: string;
     now?: Date;
     onDecision: (decision: AgentApprovalDecision) => Promise<void>;
+    onRefresh: (submission: AgentApprovalRefreshSubmission) => Promise<void>;
 };
 
-type ApprovalValidation = { valid: true } | { valid: false; reason: string };
+type ApprovalValidation = { valid: true } | { valid: false; reason: string; code: "expired" | "invalid" };
 
 const approvalEffectByTool = {
     "canvas.apply_ops": "canvas_mutation",
+    "project.apply_ops": "project_mutation",
     "assets.publish": "asset_publish",
     "media.generate": "media_generation",
     "vision.analyze": "vision_analysis",
 } as const;
 
-export function AgentApprovalCard({ call, approval, busy, muted, now = new Date(), onDecision }: AgentApprovalCardProps) {
+export function AgentApprovalCard({ call, approval, busy, muted, now = new Date(), onDecision, onRefresh }: AgentApprovalCardProps) {
     const [submittingProposalHash, setSubmittingProposalHash] = useState("");
     const validation = validateApproval(call, approval, now);
     const submitting = submittingProposalHash === approval.proposalHash;
@@ -42,6 +44,15 @@ export function AgentApprovalCard({ call, approval, busy, muted, now = new Date(
                 proposalHash: approval.proposalHash,
                 decision,
             });
+        } finally {
+            setSubmittingProposalHash((current) => (current === approval.proposalHash ? "" : current));
+        }
+    };
+    const refreshExpired = async () => {
+        if (validation.valid || validation.code !== "expired" || busy || submitting) return;
+        setSubmittingProposalHash(approval.proposalHash);
+        try {
+            await onRefresh({ toolCallId: approval.toolCallId, actionVersion: approval.actionVersion, proposalHash: approval.proposalHash });
         } finally {
             setSubmittingProposalHash((current) => (current === approval.proposalHash ? "" : current));
         }
@@ -79,15 +90,24 @@ export function AgentApprovalCard({ call, approval, busy, muted, now = new Date(
                     </div>
                 </>
             ) : (
-                <div className="canvas-agent-runtime-approval-invalid" role="alert">
-                    <CircleAlert className="canvas-agent-runtime-approval-invalid-icon" aria-hidden="true" />
-                    <div className="canvas-agent-runtime-approval-invalid-copy">
-                        <strong className="canvas-agent-runtime-approval-invalid-title">{validation.reason}</strong>
-                        <span className="canvas-agent-runtime-approval-invalid-guidance" style={{ color: muted }}>
-                            当前提案不可执行，需由 Agent 创建新提案。
-                        </span>
+                <>
+                    <div className="canvas-agent-runtime-approval-invalid" role="alert">
+                        <CircleAlert className="canvas-agent-runtime-approval-invalid-icon" aria-hidden="true" />
+                        <div className="canvas-agent-runtime-approval-invalid-copy">
+                            <strong className="canvas-agent-runtime-approval-invalid-title">{validation.reason}</strong>
+                            <span className="canvas-agent-runtime-approval-invalid-guidance" style={{ color: muted }}>
+                                {validation.code === "expired" ? "旧提案不会执行，可请求 Agent 重新生成。" : "当前提案不可执行，需由 Agent 创建新提案。"}
+                            </span>
+                        </div>
                     </div>
-                </div>
+                    {validation.code === "expired" ? (
+                        <div className="canvas-agent-runtime-approval-actions">
+                            <Button className="canvas-agent-runtime-refresh-approval" type="primary" disabled={busy || submitting} onClick={() => void refreshExpired()}>
+                                重新生成提案
+                            </Button>
+                        </div>
+                    ) : null}
+                </>
             )}
         </section>
     );
@@ -95,7 +115,7 @@ export function AgentApprovalCard({ call, approval, busy, muted, now = new Date(
 
 function AgentApprovalFacts({ call, approval, muted }: { call: AgentToolCall; approval: AgentPendingApproval; muted: string }) {
     const argumentsValue = call.arguments;
-    if (call.toolName === "canvas.apply_ops" && "operations" in argumentsValue) {
+    if (call.toolName === "canvas.apply_ops" && "canvasId" in argumentsValue && "operations" in argumentsValue) {
         return (
             <section className="canvas-agent-runtime-approval-details" aria-label="冻结画布操作">
                 <span className="canvas-agent-runtime-approval-detail-meta" style={{ color: muted }}>
@@ -105,6 +125,23 @@ function AgentApprovalFacts({ call, approval, muted }: { call: AgentToolCall; ap
                     {argumentsValue.operations.map((operation) => (
                         <li key={operation.operationId} className="canvas-agent-runtime-approval-operation">
                             {canvasOperationLabel(operation)}
+                        </li>
+                    ))}
+                </ol>
+                <ApprovalExpiry expiresAt={approval.expiresAt} muted={muted} />
+            </section>
+        );
+    }
+    if (call.toolName === "project.apply_ops" && "domainProjectId" in argumentsValue && "baseRevision" in argumentsValue && "operations" in argumentsValue) {
+        return (
+            <section className="canvas-agent-runtime-approval-details" aria-label="冻结项目操作">
+                <span className="canvas-agent-runtime-approval-detail-meta" style={{ color: muted }}>
+                    项目版本 {argumentsValue.baseRevision} · 变更标识 {argumentsValue.clientMutationId}
+                </span>
+                <ol className="canvas-agent-runtime-approval-operation-list">
+                    {argumentsValue.operations.map((operation) => (
+                        <li key={operation.operationId} className="canvas-agent-runtime-approval-operation">
+                            {projectOperationLabel(operation)}
                         </li>
                     ))}
                 </ol>
@@ -187,28 +224,28 @@ function ApprovalExpiry({ expiresAt, muted }: { expiresAt: string; muted: string
 
 function validateApproval(call: AgentToolCall, approval: AgentPendingApproval, now: Date): ApprovalValidation {
     if (call.toolCallId !== approval.toolCallId || call.toolName !== approval.toolName || call.actionVersion !== approval.actionVersion) {
-        return { valid: false, reason: "审批事实与当前工具调用不一致" };
+        return { valid: false, reason: "审批事实与当前工具调用不一致", code: "invalid" };
     }
-    if (!validProposalHash(approval.proposalHash)) return { valid: false, reason: "审批提案身份无效" };
+    if (!validProposalHash(approval.proposalHash)) return { valid: false, reason: "审批提案身份无效", code: "invalid" };
     const expiresAt = Date.parse(approval.expiresAt);
-    if (!Number.isFinite(expiresAt)) return { valid: false, reason: "审批有效期无效" };
-    if (expiresAt <= now.getTime()) return { valid: false, reason: "审批已过期" };
-    if (!(call.toolName in approvalEffectByTool)) return { valid: false, reason: "当前工具不允许人工审批" };
+    if (!Number.isFinite(expiresAt)) return { valid: false, reason: "审批有效期无效", code: "invalid" };
+    if (expiresAt <= now.getTime()) return { valid: false, reason: "审批已过期", code: "expired" };
+    if (!(call.toolName in approvalEffectByTool)) return { valid: false, reason: "当前工具不允许人工审批", code: "invalid" };
     const expectedEffect = approvalEffectByTool[call.toolName as keyof typeof approvalEffectByTool];
-    if (approval.effect.kind !== expectedEffect) return { valid: false, reason: "审批影响与工具能力不一致" };
-    if (approval.effect.targetIds.length === 0) return { valid: false, reason: "审批影响目标缺失" };
+    if (approval.effect.kind !== expectedEffect) return { valid: false, reason: "审批影响与工具能力不一致", code: "invalid" };
+    if (approval.effect.targetIds.length === 0) return { valid: false, reason: "审批影响目标缺失", code: "invalid" };
     if (call.toolName === "media.generate") {
-        if (!("mediaKind" in call.arguments) || !approval.quote) return { valid: false, reason: "媒体生成费用未冻结" };
+        if (!("mediaKind" in call.arguments) || !approval.quote) return { valid: false, reason: "媒体生成费用未冻结", code: "invalid" };
         if (approval.quote.modelRecordId !== call.arguments.modelRecordId || approval.quote.modelKey !== call.arguments.modelKey) {
-            return { valid: false, reason: "冻结费用与生成模型不一致" };
+            return { valid: false, reason: "冻结费用与生成模型不一致", code: "invalid" };
         }
     } else if (call.toolName === "vision.analyze") {
-        if (!("detail" in call.arguments) || !approval.quote) return { valid: false, reason: "视觉理解费用未冻结" };
+        if (!("detail" in call.arguments) || !approval.quote) return { valid: false, reason: "视觉理解费用未冻结", code: "invalid" };
         if (approval.quote.modelRecordId !== call.arguments.modelRecordId || approval.quote.modelKey !== call.arguments.modelKey) {
-            return { valid: false, reason: "冻结费用与视觉模型不一致" };
+            return { valid: false, reason: "冻结费用与视觉模型不一致", code: "invalid" };
         }
     } else if (approval.quote) {
-        return { valid: false, reason: "非付费操作不应包含费用" };
+        return { valid: false, reason: "非付费操作不应包含费用", code: "invalid" };
     }
     return { valid: true };
 }
@@ -234,6 +271,11 @@ function canvasOperationLabel(operation: AgentCanvasOperation): string {
         case "select_nodes":
             return `选择节点 · ${operation.nodeIds.join("、")}`;
     }
+}
+
+function projectOperationLabel(operation: AgentProjectOperation): string {
+    if (operation.type === "create_character_candidates") return `为章节 ${operation.unitId} 新增 ${operation.candidates.length} 个待确认角色`;
+    return `为章节 ${operation.unitId} 替换为 ${operation.shots.length} 个分镜`;
 }
 
 function mediaParameterLabel(key: string): string {

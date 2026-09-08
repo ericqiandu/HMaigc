@@ -3,12 +3,11 @@ import { App, Button, Input, Modal, Segmented, Tag } from "antd";
 import { Download, Ellipsis, FolderPlus, GalleryHorizontalEnd, Image as ImageIcon, Info, LoaderCircle, Lock, Maximize2, MessageSquare, Minus, Music2, Plus, RefreshCw, Settings2, Trash2, Unlock, Upload, UserRound, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { supportsVideoAssetUpload } from "@/lib/canvas/canvas-video-composition";
 import { canvasDockStyle } from "@/lib/canvas/canvas-aceternity-style";
 import { subscribeCanvasViewportPreview } from "@/lib/canvas/canvas-live-viewport";
 import { canvasNodeAssetCategory } from "@/lib/canvas/canvas-node-asset";
+import { resolveCanvasTools, type CanvasToolId } from "@/lib/canvas/canvas-tool-registry";
 import { formatBytes, getDataUrlByteSize } from "@/lib/image-utils";
-import { CONTENT_MODERATION_ERROR_CODE, isContentModerationError } from "@/lib/generation-error";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { FloatingDock, type FloatingDockEntry } from "@/components/ui/aceternity/floating-dock";
@@ -34,6 +33,7 @@ type CanvasNodeHoverToolbarProps = {
     onSaveAsset: (node: CanvasNodeData) => void;
     onMaskEdit: (node: CanvasNodeData) => void;
     onEmotion: (node: CanvasNodeData) => void;
+    onPortraitTexture: (node: CanvasNodeData) => void;
     onCrop: (node: CanvasNodeData) => void;
     onSplit: (node: CanvasNodeData) => void;
     onUpscale: (node: CanvasNodeData) => void;
@@ -48,6 +48,7 @@ type CanvasNodeHoverToolbarProps = {
     onToggleLocked: (node: CanvasNodeData) => void;
     onDelete: (node: CanvasNodeData) => void;
     workspaceMode?: CanvasWorkspaceMode;
+    portraitTextureEnabled?: boolean;
 };
 
 type CanvasAssetCategory = NonNullable<NonNullable<CanvasNodeData["metadata"]>["assetCategory"]>;
@@ -73,7 +74,7 @@ type ToolbarTool = {
     disabled?: boolean;
 };
 
-const MAX_IMAGE_QUICK_TOOLS = 7;
+const MAX_IMAGE_QUICK_TOOLS = 8;
 const NODE_DOCK_LABELS_STORAGE_KEY = "canvas-node-dock-show-labels-v1";
 
 export function CanvasNodeHoverToolbar({
@@ -94,6 +95,7 @@ export function CanvasNodeHoverToolbar({
     onSaveAsset,
     onMaskEdit,
     onEmotion,
+    onPortraitTexture,
     onCrop,
     onSplit,
     onUpscale,
@@ -108,6 +110,7 @@ export function CanvasNodeHoverToolbar({
     onToggleLocked,
     onDelete,
     workspaceMode = "professional",
+    portraitTextureEnabled = false,
 }: CanvasNodeHoverToolbarProps) {
     const [quickImageToolIds, setQuickImageToolIds] = useState<ImageQuickToolId[]>(defaultImageQuickToolIds);
     const [draftImageToolIds, setDraftImageToolIds] = useState<ImageQuickToolId[]>(defaultImageQuickToolIds);
@@ -197,10 +200,6 @@ export function CanvasNodeHoverToolbar({
     const isText = node.type === CanvasNodeType.Text;
     const isCharacterReference = isText && node.metadata?.workflowKind === "character" && Boolean(node.metadata.characterAssetId);
     const isEditableText = isText && !isCharacterReference;
-    const isConfig = node.type === CanvasNodeType.Config;
-    const canOpenDialog = isEditableText || isImage || isVideo;
-    const requiresPromptChange = node.metadata?.generationErrorCode === CONTENT_MODERATION_ERROR_CODE || isContentModerationError(node.metadata?.errorDetails);
-    const canRetry = node.metadata?.status === "error" && !requiresPromptChange;
     const quickImageToolIdSet = new Set(quickImageToolIds);
     const copyImagePrompt = (target: CanvasNodeData) => {
         const prompt = target.metadata?.prompt?.trim();
@@ -210,7 +209,7 @@ export function CanvasNodeHoverToolbar({
         }
         copyText(prompt, "提示词已复制");
     };
-    const imageTools = buildImageToolbarTools(node, { onUpload, onToggleFreeResize, onAnnotate, onMaskEdit, onEmotion, onCrop, onSplit, onUpscale, onSuperResolve, onAngle, onViewImage, onCopyPrompt: copyImagePrompt, onReversePrompt });
+    const imageTools = buildImageToolbarTools(node, { onUpload, onToggleFreeResize, onAnnotate, onMaskEdit, onEmotion, onPortraitTexture, onCrop, onSplit, onUpscale, onSuperResolve, onAngle, onViewImage, onCopyPrompt: copyImagePrompt, onReversePrompt });
 
     function openImageToolSettings() {
         onKeep(activeNode.id);
@@ -219,28 +218,34 @@ export function CanvasNodeHoverToolbar({
         setImageToolSettingsOpen(true);
     }
 
-    const baseToolbarTools: ToolbarTool[] = [
+    const allToolbarTools: ToolbarTool[] = [
         { id: "info", title: isCharacterReference ? "查看角色详情" : "查看节点信息", label: isCharacterReference ? "角色详情" : "信息", icon: isCharacterReference ? <UserRound className="size-3.5" /> : <Info className="size-3.5" />, onClick: () => onInfo(node) },
         { id: "delete", title: "移除节点", label: "删除", icon: <Trash2 className="size-3.5" />, onClick: () => onDelete(node), danger: true },
+        { id: "retry", title: "重新生成", label: "重试", icon: <RefreshCw className="size-3.5" />, onClick: () => onRetry(node) },
+        { id: "extractLastFrame", title: extractingVideoFrame ? "正在截取尾帧" : "截取尾帧", label: extractingVideoFrame ? "截取中" : "尾帧", icon: extractingVideoFrame ? <LoaderCircle className="size-3.5 animate-spin" /> : <GalleryHorizontalEnd className="size-3.5" />, onClick: () => onExtractVideoLastFrame(node) },
+        { id: "saveAsset", title: "加入我的素材", label: "存素材", icon: <FolderPlus className="size-3.5" />, onClick: () => onSaveAsset(node) },
+        { id: "download", title: hasAudio ? "下载音频" : hasVideo ? "下载视频" : "下载图片", label: "下载", icon: <Download className="size-3.5" />, onClick: () => onDownload(node) },
+        { id: "edit", title: isEditableText ? "生成提示与参数" : "编辑", label: isEditableText ? "生成设置" : "编辑", icon: <MessageSquare className="size-3.5" />, onClick: () => onToggleDialog(node) },
+        { id: "editText", title: "放大编辑文本", label: "放大编辑", icon: <Maximize2 className="size-3.5" />, onClick: () => onEditText(node) },
+        { id: "generateImage", title: "用文本生图", label: "生图", icon: <ImageIcon className="size-3.5" />, onClick: () => onGenerateImage(node) },
+        { id: "config", title: "生成配置", label: "生成配置", icon: <Settings2 className="size-3.5" />, onClick: () => onToggleDialog(node) },
+        { id: "decreaseFont", title: "减小字号", label: "缩小", icon: <Minus className="size-3.5" />, onClick: () => onDecreaseFont(node) },
+        { id: "increaseFont", title: "增大字号", label: "放大", icon: <Plus className="size-3.5" />, onClick: () => onIncreaseFont(node) },
+        { id: "uploadImage", title: "上传图片", label: "上传图片", icon: <Upload className="size-3.5" />, onClick: () => onUpload(node) },
+        { id: "uploadVideo", title: hasVideo ? "替换视频" : "上传视频", label: hasVideo ? "替换视频" : "上传视频", icon: <Video className="size-3.5" />, onClick: () => onUpload(node) },
+        { id: "uploadAudio", title: hasAudio ? "替换音频" : "上传音频", label: hasAudio ? "替换音频" : "上传音频", icon: <Music2 className="size-3.5" />, onClick: () => onUpload(node) },
+        ...imageTools.map((tool) => ({ id: tool.id, title: tool.title, label: tool.label, icon: tool.icon, active: tool.active, onClick: tool.onClick })),
     ];
-    const nodeToolbarTools: ToolbarTool[] = [
-        ...(canRetry ? [{ id: "retry", title: "重新生成", label: "重试", icon: <RefreshCw className="size-3.5" />, onClick: () => onRetry(node) }] : []),
-        ...(hasVideo && !simpleMode ? [{ id: "extractLastFrame", title: extractingVideoFrame ? "正在截取尾帧" : "截取尾帧", label: extractingVideoFrame ? "截取中" : "尾帧", icon: extractingVideoFrame ? <LoaderCircle className="size-3.5 animate-spin" /> : <GalleryHorizontalEnd className="size-3.5" />, onClick: () => onExtractVideoLastFrame(node), disabled: extractingVideoFrame }] : []),
-        ...(hasImage || hasVideo || isEditableText ? [{ id: "saveAsset", title: "加入我的素材", label: "存素材", icon: <FolderPlus className="size-3.5" />, onClick: () => onSaveAsset(node) }] : []),
-        ...(hasImage || hasVideo || hasAudio ? [{ id: "download", title: hasAudio ? "下载音频" : hasVideo ? "下载视频" : "下载图片", label: "下载", icon: <Download className="size-3.5" />, onClick: () => onDownload(node) }] : []),
-        ...(canOpenDialog ? [{ id: "edit", title: isEditableText ? "生成提示与参数" : "编辑", label: isEditableText ? "生成设置" : "编辑", icon: <MessageSquare className="size-3.5" />, onClick: () => onToggleDialog(node) }] : []),
-        ...(isEditableText ? [{ id: "editText", title: "放大编辑文本", label: "放大编辑", icon: <Maximize2 className="size-3.5" />, onClick: () => onEditText(node) }] : []),
-        ...(isEditableText ? [{ id: "generateImage", title: "用文本生图", label: "生图", icon: <ImageIcon className="size-3.5" />, onClick: () => onGenerateImage(node) }] : []),
-        ...(isConfig && !simpleMode ? [{ id: "config", title: "生成配置", label: "生成配置", icon: <Settings2 className="size-3.5" />, onClick: () => onToggleDialog(node) }] : []),
-        ...(isEditableText && !simpleMode ? [{ id: "decreaseFont", title: "减小字号", label: "缩小", icon: <Minus className="size-3.5" />, onClick: () => onDecreaseFont(node) }] : []),
-        ...(isEditableText && !simpleMode ? [{ id: "increaseFont", title: "增大字号", label: "放大", icon: <Plus className="size-3.5" />, onClick: () => onIncreaseFont(node) }] : []),
-        ...(isImage && !hasImage ? [{ id: "uploadImage", title: "上传图片", label: "上传图片", icon: <Upload className="size-3.5" />, onClick: () => onUpload(node) }] : []),
-        ...(supportsVideoAssetUpload(node) ? [{ id: "uploadVideo", title: hasVideo ? "替换视频" : "上传视频", label: hasVideo ? "替换视频" : "上传视频", icon: <Video className="size-3.5" />, onClick: () => onUpload(node) }] : []),
-        ...(isAudio ? [{ id: "uploadAudio", title: hasAudio ? "替换音频" : "上传音频", label: hasAudio ? "替换音频" : "上传音频", icon: <Music2 className="size-3.5" />, onClick: () => onUpload(node) }] : []),
-        ...(hasImage && !simpleMode ? imageTools.map((tool) => ({ id: tool.id, title: tool.title, label: tool.label, icon: tool.icon, active: tool.active, onClick: tool.onClick })) : []),
-    ];
-    const toolbarTools = hasImage ? [...baseToolbarTools, ...nodeToolbarTools].filter((tool) => quickImageToolIdSet.has(tool.id as ImageQuickToolId)) : [...baseToolbarTools, ...nodeToolbarTools];
-    const selectableImageToolbarTools = [...baseToolbarTools, ...nodeToolbarTools].filter((tool): tool is ToolbarTool & { id: ImageQuickToolId } => isImageQuickToolId(tool.id));
+    const toolbarToolById = new Map<CanvasToolId, ToolbarTool>(allToolbarTools.map((tool): [CanvasToolId, ToolbarTool] => [tool.id as CanvasToolId, tool]));
+    const resolvedToolbarTools = resolveCanvasTools({ node, workspaceMode, extractingVideoFrame, portraitTextureEnabled })
+        .filter((descriptor) => descriptor.visible)
+        .map<ToolbarTool | null>((descriptor) => {
+            const tool = toolbarToolById.get(descriptor.id);
+            return tool ? { ...tool, disabled: descriptor.disabled } satisfies ToolbarTool : null;
+        })
+        .filter((tool): tool is ToolbarTool => tool !== null);
+    const toolbarTools = hasImage ? resolvedToolbarTools.filter((tool) => quickImageToolIdSet.has(tool.id as ImageQuickToolId)) : resolvedToolbarTools;
+    const selectableImageToolbarTools = resolvedToolbarTools.filter((tool): tool is ToolbarTool & { id: ImageQuickToolId } => isImageQuickToolId(tool.id));
     const dockItems: FloatingDockEntry[] = [
         ...toolbarTools.map((tool) => ({ id: tool.id, label: tool.title, displayLabel: tool.label, icon: tool.icon, active: tool.active, danger: tool.danger, disabled: tool.disabled, onClick: () => tool.onClick() })),
         { kind: "separator", id: "node-state-separator" },

@@ -62,6 +62,12 @@ type submitAgentApprovalRequest struct {
 	ProposalHash  string                            `json:"proposalHash"`
 }
 
+type refreshAgentApprovalRequest struct {
+	ToolCallID    string `json:"toolCallId"`
+	ActionVersion int    `json:"actionVersion"`
+	ProposalHash  string `json:"proposalHash"`
+}
+
 type submitAgentClarificationResponseRequest struct {
 	ExpectedStateVersion int                                   `json:"expectedStateVersion"`
 	QuestionID           string                                `json:"questionId"`
@@ -80,7 +86,7 @@ type interruptAgentRunRequest struct {
 }
 
 type agentRuntimeRequest interface {
-	createAgentThreadRequest | startAgentRunRequest | submitAgentApprovalRequest | submitAgentClarificationResponseRequest |
+	createAgentThreadRequest | startAgentRunRequest | submitAgentApprovalRequest | refreshAgentApprovalRequest | submitAgentClarificationResponseRequest |
 		steerAgentRunRequest | interruptAgentRunRequest | startLocalAgentRunRequest | submitLocalAgentDecisionRequest
 }
 
@@ -286,6 +292,33 @@ func RegisterAgentRuntimeRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, view)
 	})
+	agent.POST("/runs/:runId/approvals/refresh", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		var request refreshAgentApprovalRequest
+		if err := decodeStrictAgentRequest(c, &request); err != nil {
+			failAgentApprovalInvalid(c, err)
+			return
+		}
+		if err := validateAgentApprovalIdentity(request.ToolCallID, request.ActionVersion, request.ProposalHash); err != nil {
+			failAgentApprovalInvalid(c, err)
+			return
+		}
+		view, err := svc.RefreshScopedExpiredAgentApproval(user, c.Param("runId"), service.AgentToolApprovalRefreshSubmission{
+			ToolCallID: request.ToolCallID, ActionVersion: request.ActionVersion, ProposalHash: request.ProposalHash,
+		})
+		if err != nil {
+			if failAgentControl(c, err) {
+				return
+			}
+			failService(c, err)
+			return
+		}
+		ok(c, view)
+	})
 	agent.POST("/runs/:runId/clarifications/:requestId/responses", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
@@ -331,8 +364,15 @@ func agentRuntimeConfigurationInput(request agentRuntimeConfigurationRequest) se
 }
 
 func validateAgentApprovalRequest(request submitAgentApprovalRequest) error {
-	if strings.TrimSpace(request.ToolCallID) == "" || request.ActionVersion < 1 || !validLowerHexSHA256(request.ProposalHash) ||
+	if validateAgentApprovalIdentity(request.ToolCallID, request.ActionVersion, request.ProposalHash) != nil ||
 		(request.Decision != agentruntime.ToolApprovalApproved && request.Decision != agentruntime.ToolApprovalRejected) {
+		return errors.New("Agent 审批请求无效")
+	}
+	return nil
+}
+
+func validateAgentApprovalIdentity(toolCallID string, actionVersion int, proposalHash string) error {
+	if strings.TrimSpace(toolCallID) == "" || actionVersion < 1 || !validLowerHexSHA256(proposalHash) {
 		return errors.New("Agent 审批请求无效")
 	}
 	return nil
@@ -418,10 +458,12 @@ func decodeStrictAgentRequest[T agentRuntimeRequest](c *gin.Context, target *T) 
 	decoder := json.NewDecoder(c.Request.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
+		log.Printf("event=agent_runtime_request_decode_failed method=%q path=%q content_length=%d error_type=%q error=%q", c.Request.Method, c.FullPath(), c.Request.ContentLength, fmt.Sprintf("%T", err), err.Error())
 		return errors.New("Agent 请求格式无效")
 	}
 	var trailing json.RawMessage
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		log.Printf("event=agent_runtime_request_trailing_json method=%q path=%q content_length=%d error_type=%q error=%v", c.Request.Method, c.FullPath(), c.Request.ContentLength, fmt.Sprintf("%T", err), err)
 		return errors.New("Agent 请求只能包含一个 JSON 对象")
 	}
 	return nil

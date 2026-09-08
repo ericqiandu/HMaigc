@@ -49,27 +49,30 @@ import { useNavigate, useParams } from "react-router";
 
 import { WorkspaceErrorState, WorkspaceState } from "@/components/layout/workspace-state";
 import { canvasStylePresets } from "@/components/canvas/canvas-style-picker-modal";
-import { normalizeCharacterName } from "@/lib/canvas/canvas-character-reference";
+import type { CanvasAgentDraft } from "@/lib/canvas/canvas-agent-draft";
 import { decodeNovelText, splitTextIntoChapters } from "@/lib/canvas/canvas-document";
-import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import {
-    createProjectAssetCandidates,
     createProjectUnit,
     deleteProjectUnit,
+    getProject,
     getProjectUnit,
     importProjectUnits,
+    linkCanvasUnit,
     reorderProjectUnits,
-    replaceProjectUnitShots,
     updateProjectUnit,
     type ProjectUnit,
 } from "@/services/api/projects";
-import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { createProjectAgentCanvasShellWithRemoteSync, queueProjectAgentCanvasLaunch } from "@/services/user-data-sync";
 
 import { formatCount, formatTime, statusLabel, type ProjectDetailViewProps } from "./shared";
-import { extractChapterCharacters, generateChapterStoryboard } from "./project-chapter-ai";
 
 const CHAPTER_ROW_HEIGHT = 52;
 const MAX_NOVEL_IMPORT_CHAPTERS = 2500;
+const PROJECT_CHAPTER_SKILL = {
+    dir: "project-chapter-structure",
+    name: "项目章节结构化",
+    description: "把章节正文提取为待确认角色候选或可编辑分镜，并原子写回项目。",
+} as const;
 
 export default function ProjectChaptersView({ detail, refreshProject }: ProjectDetailViewProps) {
     const { message, modal } = App.useApp();
@@ -89,8 +92,6 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
     const [draftHtml, setDraftHtml] = useState("");
     const [dirty, setDirty] = useState(false);
     const [analysisKind, setAnalysisKind] = useState<"characters" | "storyboard" | "">("");
-    const effectiveConfig = useEffectiveConfig();
-    const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const listRef = useRef<HTMLDivElement>(null);
     const deferredSearchQuery = useDeferredValue(searchQuery.trim().toLocaleLowerCase("zh-CN"));
     const orderedUnits = useMemo(() => {
@@ -228,11 +229,6 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
         if (dirty) throw new Error("请先保存当前章节，再运行 AI 分析");
         const sourceText = editor?.getText().trim() || stripHtml(unit.sourceText);
         if (!sourceText) throw new Error("当前章节没有可分析的正文");
-        const textModel = effectiveConfig.textModel || effectiveConfig.model;
-        if (!isAiConfigReady(effectiveConfig, textModel)) {
-            handleMissingSystemModel();
-            return null;
-        }
         return {
             projectId: detail.project.id,
             projectName: detail.project.name,
@@ -240,44 +236,54 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
             chapterTitle: unit.title,
             sourceText,
             projectStyle: canvasStylePresets.find((preset) => preset.id === detail.project.stylePresetId)?.prompt || "",
-            config: effectiveConfig,
         };
     };
-    const extractCharacters = async () => {
+    const launchChapterAgent = async (action: "characters" | "storyboard") => {
         try {
             const input = chapterAnalysisInput();
-            if (!input) return;
-            setAnalysisKind("characters");
-            const characters = await extractChapterCharacters(input);
-            // 已确认角色允许再次提取并作为候选归并，只有尚待处理的同名候选需要去重。
-            const knownNames = new Set(detail.assetCandidates
-                .filter((candidate) => candidate.category === "character" && candidate.status === "pending_confirmation")
-                .map((candidate) => normalizeCharacterName(candidate.name)));
-            const fresh = characters.filter((character) => ![character.name, ...character.aliases].map(normalizeCharacterName).some((name) => knownNames.has(name)));
-            if (!fresh.length) {
-                message.info("本章角色已存在于待确认列表中");
-                return;
+            setAnalysisKind(action);
+            const actionLabel = action === "characters" ? "提取角色候选" : "生成章节分镜";
+            const creation = createProjectAgentCanvasShellWithRemoteSync({
+                title: `${input.chapterTitle} · ${actionLabel}`,
+                projectId: input.projectId,
+            });
+            await creation.remoteReady;
+            const linkResult = await linkCanvasUnit(input.projectId, { canvasId: creation.id, unitId: input.chapterId, role: "storyboard" });
+            const [currentDetail, currentUnitResult] = await Promise.all([getProject(input.projectId), getProjectUnit(input.projectId, input.chapterId)]);
+            if (!Number.isSafeInteger(linkResult.projectRevision) || linkResult.projectRevision < 1 || currentDetail.project.revision < linkResult.projectRevision) {
+                throw new Error("项目画布关联版本无效，无法启动章节 Agent");
             }
-            await createProjectAssetCandidates(detail.project.id, fresh.map((character) => ({ unitId: input.chapterId, name: character.name, category: "character", details: { ...character } })));
-            refreshProject();
-            message.success(`已提取 ${fresh.length} 个角色，请到项目资产确认`);
+            const currentSourceText = stripHtml(currentUnitResult.unit.sourceText);
+            if (!currentSourceText) throw new Error("当前章节没有可分析的正文");
+            const facts = {
+                action,
+                domainProjectId: input.projectId,
+                baseRevision: currentDetail.project.revision,
+                projectName: currentDetail.project.name,
+                projectStyle: canvasStylePresets.find((preset) => preset.id === currentDetail.project.stylePresetId)?.prompt || "",
+                unitId: input.chapterId,
+                unitTitle: currentUnitResult.unit.title,
+                sourceText: currentSourceText,
+                existingCharacterAssets: currentDetail.assets.filter((asset) => asset.category === "character").map((asset) => ({ id: asset.id, name: asset.title, status: asset.status })),
+                existingPendingCharacterCandidates: currentDetail.assetCandidates.filter((candidate) => candidate.unitId === input.chapterId && candidate.category === "character" && candidate.status === "pending_confirmation").map((candidate) => ({ id: candidate.id, name: candidate.name })),
+                existingShots: currentDetail.shots.filter((shot) => shot.unitId === input.chapterId).map((shot) => ({ id: shot.id, title: shot.title, description: shot.description, durationMs: shot.durationMs })),
+            };
+            const prompt = `这是用户在项目章节工作台明确发起的“${actionLabel}”操作。请读取已选择的项目章节结构化 Skill，根据以下权威事实完成操作，并把结果写回目标项目；不能只返回分析说明。\n\n${JSON.stringify(facts, null, 2)}`;
+            if (prompt.length > 64 * 1024) throw new Error("章节与项目上下文超过 Agent 单次输入上限，请拆分章节后重试");
+            const draft: CanvasAgentDraft = {
+                prompt,
+                attachments: [],
+                generationModels: { image: "", video: "" },
+                skillSelections: [PROJECT_CHAPTER_SKILL],
+                executionMode: "guided",
+            };
+            queueProjectAgentCanvasLaunch({
+                canvasId: creation.id,
+                draft,
+            });
+            navigate(`/canvas/${creation.id}`);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "角色提取失败");
-        } finally {
-            setAnalysisKind("");
-        }
-    };
-    const replaceStoryboard = async () => {
-        try {
-            const input = chapterAnalysisInput();
-            if (!input) return;
-            setAnalysisKind("storyboard");
-            const shots = await generateChapterStoryboard(input);
-            await replaceProjectUnitShots(detail.project.id, input.chapterId, shots);
-            refreshProject();
-            message.success(`已生成 ${shots.length} 个章节分镜`);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "分镜生成失败");
+            message.error(error instanceof Error ? error.message : "章节 Agent 启动失败");
         } finally {
             setAnalysisKind("");
         }
@@ -285,15 +291,15 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
     const generateStoryboard = () => {
         const existingCount = selectedUnit ? chapterShotCount(selectedUnit.id) : 0;
         if (!existingCount) {
-            void replaceStoryboard();
+            void launchChapterAgent("storyboard");
             return;
         }
         modal.confirm({
             title: "重新生成本章分镜？",
-            content: `当前 ${existingCount} 个镜头会被新分镜整体替换，已关联的镜头素材不会删除，但会解除镜头引用。`,
-            okText: "重新生成",
+            content: `Agent 会先生成替换提案。你在画布确认提案后，当前 ${existingCount} 个镜头会被整体替换；已关联素材不会删除，但会解除旧镜头引用。`,
+            okText: "进入 Agent",
             cancelText: "取消",
-            onOk: replaceStoryboard,
+            onOk: () => launchChapterAgent("storyboard"),
         });
     };
     const selectChapter = (unitId: string) => {
@@ -403,7 +409,7 @@ export default function ProjectChaptersView({ detail, refreshProject }: ProjectD
                                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-foreground/38"><span>{dirty ? "有未保存修改" : `保存于 ${formatTime(selectedUnit.updatedAt)}`}</span><span>·</span><span>{formatCount(wordCount)} 字</span><span>·</span><span>{chapterCanvasCount(selectedUnit.id)} 个画布</span></div>
                             </div>
                             <div className="flex shrink-0 items-center gap-1.5">
-                                <Button size="small" icon={<UsersRound className="size-3.5" />} disabled={!selectedUnitQuery.data?.unit || dirty || Boolean(analysisKind)} loading={analysisKind === "characters"} onClick={() => void extractCharacters()}>提取角色</Button>
+                                <Button size="small" icon={<UsersRound className="size-3.5" />} disabled={!selectedUnitQuery.data?.unit || dirty || Boolean(analysisKind)} loading={analysisKind === "characters"} onClick={() => void launchChapterAgent("characters")}>提取角色</Button>
                                 <Button size="small" icon={<Clapperboard className="size-3.5" />} disabled={!selectedUnitQuery.data?.unit || dirty || Boolean(analysisKind)} loading={analysisKind === "storyboard"} onClick={generateStoryboard}>{chapterShotCount(selectedUnit.id) ? "重新生成分镜" : "生成分镜"}</Button>
                                 <Button size="small" type={dirty ? "primary" : "default"} icon={dirty ? <Save className="size-3.5" /> : <Check className="size-3.5" />} disabled={!selectedUnitQuery.data?.unit || !dirty || !draftTitle.trim() || saveMutation.isPending} loading={saveMutation.isPending} onClick={() => saveMutation.mutate()}>{dirty ? "保存" : "已保存"}</Button>
                             </div>

@@ -35,6 +35,30 @@ const playbackResourceURLTTL = 4 * time.Hour
 
 var errInvalidGeneratedDataURL = errors.New("生成内容 data URL 无效")
 
+type ossRequestFailure struct {
+	operation string
+	err       error
+}
+
+func newOSSRequestFailure(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &ossRequestFailure{operation: operation, err: err}
+}
+
+func (failure *ossRequestFailure) Error() string {
+	if errors.Is(failure.err, context.DeadlineExceeded) {
+		return "OSS " + failure.operation + "请求超时"
+	}
+	if errors.Is(failure.err, context.Canceled) {
+		return "OSS " + failure.operation + "请求已取消"
+	}
+	return "OSS " + failure.operation + "请求失败"
+}
+
+func (failure *ossRequestFailure) Unwrap() error { return failure.err }
+
 type ResourceStream struct {
 	Resource      *model.Resource
 	Body          io.ReadCloser
@@ -219,12 +243,16 @@ func (s *Service) storeScopedResourceWithIdentity(resourceID string, userID stri
 }
 
 func (s *Service) storeScopedResourceWithIdentityAndAudit(resourceID string, userID string, teamID string, kind string, fileName string, mimeType string, size int64, width int, height int, body io.ReadSeeker, successAudit *model.TeamAuditEvent) (*model.Resource, error) {
-	now := time.Now()
 	kind = normalizeResourceKind(kind, mimeType)
 	durationMs, err := s.authoritativeMediaDuration(kind, body)
 	if err != nil {
 		return nil, err
 	}
+	return s.storeScopedResourceWithResolvedDuration(resourceID, userID, teamID, kind, fileName, mimeType, size, width, height, durationMs, body, successAudit)
+}
+
+func (s *Service) storeScopedResourceWithResolvedDuration(resourceID string, userID string, teamID string, kind string, fileName string, mimeType string, size int64, width int, height int, durationMs int64, body io.ReadSeeker, successAudit *model.TeamAuditEvent) (*model.Resource, error) {
+	now := time.Now()
 	setting, storageSettingID, useOSS, err := s.activeResourceOSSSetting()
 	if err != nil {
 		return nil, err
@@ -380,7 +408,12 @@ func (s *Service) persistGeneratedMediaValueMode(userID string, value interface{
 				if kind == "image" && (width <= 0 || height <= 0) {
 					width, height = imageDimensions(data)
 				}
-				resource, err := s.storeResource(userID, kind, "generated."+extensionFromMimeType(mimeType), mimeType, int64(len(data)), width, height, bytes.NewReader(data))
+				body := bytes.NewReader(data)
+				duration := s.resolveGeneratedMediaDuration(kind, firstInt64(item, "durationMs"), body)
+				resource, err := s.storeScopedResourceWithResolvedDuration(
+					"", userID, "", kind, "generated."+extensionFromMimeType(mimeType), mimeType,
+					int64(len(data)), width, height, duration.DurationMS, body, nil,
+				)
 				if err != nil {
 					return nil, fmt.Errorf("生成内容写入资源存储失败：%w", err)
 				}
@@ -400,6 +433,13 @@ func (s *Service) persistGeneratedMediaValueMode(userID string, value interface{
 				item["mimeType"] = resource.MimeType
 				item["width"] = resource.Width
 				item["height"] = resource.Height
+				if duration.Verification != "" {
+					item["durationMs"] = resource.DurationMs
+					item["durationVerification"] = duration.Verification
+					if duration.ProbeError != "" {
+						item["durationProbeError"] = duration.ProbeError
+					}
+				}
 			}
 		}
 		for key, child := range item {
@@ -726,7 +766,7 @@ func getOSSObjectRange(setting ossSettingValue, objectKey string, rangeHeader st
 	}
 	resp, err := OutboundHTTPClient(2 * time.Minute).Do(req)
 	if err != nil {
-		return nil, err
+		return nil, newOSSRequestFailure("读取", err)
 	}
 	if (resp.StatusCode < 200 || resp.StatusCode >= 300) && resp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
 		defer resp.Body.Close()

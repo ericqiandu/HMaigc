@@ -245,7 +245,10 @@ function clamp(value: number, min: number, max: number) {
 
 export type NodeAlignmentContext = {
     movingBounds: { left: number; top: number; right: number; bottom: number };
-    targets: Array<{ x: number[]; y: number[] }>;
+    targets: {
+        x: [number[], number[], number[]];
+        y: [number[], number[], number[]];
+    };
 };
 
 export function createNodeAlignmentContext(nodes: CanvasNodeData[], initialPositions: Array<{ id: string; x: number; y: number }>): NodeAlignmentContext | null {
@@ -258,17 +261,21 @@ export function createNodeAlignmentContext(nodes: CanvasNodeData[], initialPosit
     const top = Math.min(...movingNodes.map((node) => initialById.get(node.id)?.y ?? node.position.y));
     const right = Math.max(...movingNodes.map((node) => (initialById.get(node.id)?.x ?? node.position.x) + node.width));
     const bottom = Math.max(...movingNodes.map((node) => (initialById.get(node.id)?.y ?? node.position.y) + node.height));
-    const targets = nodes.flatMap((node) => {
-        if (movingIds.has(node.id)) return [];
+    const targets: NodeAlignmentContext["targets"] = { x: [[], [], []], y: [[], [], []] };
+    for (const node of nodes) {
+        if (movingIds.has(node.id)) continue;
         const batchRoot = node.metadata?.batchRootId ? nodeById.get(node.metadata.batchRootId) : null;
-        if (batchRoot && !batchRoot.metadata?.batchExpanded) return [];
+        if (batchRoot && !batchRoot.metadata?.batchExpanded) continue;
         const parent = node.parentId ? nodeById.get(node.parentId) : null;
-        if (parent && isFrameNode(parent) && parent.metadata?.frame?.collapsed) return [];
-        return [{
-            x: [node.position.x, node.position.x + node.width / 2, node.position.x + node.width],
-            y: [node.position.y, node.position.y + node.height / 2, node.position.y + node.height],
-        }];
-    });
+        if (parent && isFrameNode(parent) && parent.metadata?.frame?.collapsed) continue;
+        targets.x[0].push(node.position.x);
+        targets.x[1].push(node.position.x + node.width / 2);
+        targets.x[2].push(node.position.x + node.width);
+        targets.y[0].push(node.position.y);
+        targets.y[1].push(node.position.y + node.height / 2);
+        targets.y[2].push(node.position.y + node.height);
+    }
+    for (const axisTargets of [...targets.x, ...targets.y]) axisTargets.sort((leftValue, rightValue) => leftValue - rightValue);
     return { movingBounds: { left, top, right, bottom }, targets };
 }
 
@@ -281,28 +288,40 @@ export function calculateNodeAlignment(context: NodeAlignmentContext | null, raw
     let bestXGuide: number | undefined;
     let bestYDelta: number | undefined;
     let bestYGuide: number | undefined;
-    context.targets.forEach(({ x: targetsX, y: targetsY }) => {
-        movingX.forEach((value, anchorIndex) => {
-            const target = targetsX[anchorIndex];
-            const delta = target - value;
-            if (Math.abs(delta) <= threshold && (bestXDelta === undefined || Math.abs(delta) < Math.abs(bestXDelta))) {
-                bestXDelta = delta;
-                bestXGuide = target;
-            }
-        });
-        movingY.forEach((value, anchorIndex) => {
-            const target = targetsY[anchorIndex];
-            const delta = target - value;
-            if (Math.abs(delta) <= threshold && (bestYDelta === undefined || Math.abs(delta) < Math.abs(bestYDelta))) {
-                bestYDelta = delta;
-                bestYGuide = target;
-            }
-        });
-    });
+    for (let anchorIndex = 0; anchorIndex < 3; anchorIndex += 1) {
+        const targetX = nearestSortedValue(context.targets.x[anchorIndex], movingX[anchorIndex]);
+        const deltaX = targetX === undefined ? undefined : targetX - movingX[anchorIndex];
+        if (deltaX !== undefined && Math.abs(deltaX) <= threshold && (bestXDelta === undefined || Math.abs(deltaX) < Math.abs(bestXDelta))) {
+            bestXDelta = deltaX;
+            bestXGuide = targetX;
+        }
+        const targetY = nearestSortedValue(context.targets.y[anchorIndex], movingY[anchorIndex]);
+        const deltaY = targetY === undefined ? undefined : targetY - movingY[anchorIndex];
+        if (deltaY !== undefined && Math.abs(deltaY) <= threshold && (bestYDelta === undefined || Math.abs(deltaY) < Math.abs(bestYDelta))) {
+            bestYDelta = deltaY;
+            bestYGuide = targetY;
+        }
+    }
     return {
         offset: { x: rawOffset.x + (bestXDelta || 0), y: rawOffset.y + (bestYDelta || 0) },
         guides: { vertical: bestXGuide, horizontal: bestYGuide },
     };
+}
+
+function nearestSortedValue(values: readonly number[], target: number) {
+    if (!values.length) return undefined;
+    let lower = 0;
+    let upper = values.length;
+    while (lower < upper) {
+        const midpoint = Math.floor((lower + upper) / 2);
+        if (values[midpoint] < target) lower = midpoint + 1;
+        else upper = midpoint;
+    }
+    const next = values[lower];
+    const previous = values[lower - 1];
+    if (previous === undefined) return next;
+    if (next === undefined) return previous;
+    return target - previous <= next - target ? previous : next;
 }
 
 

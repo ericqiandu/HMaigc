@@ -4,6 +4,7 @@ import { buildNodeGenerationInputs, type NodeGenerationInput } from "@/component
 import { isFrameNode } from "@/lib/canvas/canvas-frame";
 import { sameNodeSemanticData } from "@/lib/canvas/canvas-project-domain";
 import { shouldReduceCanvasMediaEffects } from "@/lib/canvas/canvas-performance-mode";
+import { createCanvasRenderIndex, resolveCanvasDisplayConnection } from "@/lib/canvas/canvas-render-index";
 import { buildCanvasResourceReferencesFromGraph, buildNodeMentionReferencesByNodeId, createCanvasResourceGraph } from "@/lib/canvas/canvas-resource-references";
 import { buildSkillMentionReferences } from "@/lib/canvas/canvas-skill-mentions";
 import type { PlatformSkill } from "@/services/api/skills";
@@ -41,6 +42,13 @@ type UseCanvasRenderModelOptions = {
     dialogNodeId: string | null;
 };
 
+type CanvasRenderIndexCache = {
+    nodes: readonly CanvasNodeData[];
+    connections: readonly CanvasConnection[];
+    hiddenNodeIds: ReadonlySet<string>;
+    index: ReturnType<typeof createCanvasRenderIndex>;
+};
+
 export function useCanvasRenderModel({
     nodes,
     connections,
@@ -72,6 +80,7 @@ export function useCanvasRenderModel({
 }: UseCanvasRenderModelOptions) {
     const reduceMediaEffects = useMemo(() => shouldReduceCanvasMediaEffects(mediaPerformanceMode, nodes), [mediaPerformanceMode, nodes]);
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+    const connectionById = useMemo(() => new Map(connections.map((connection) => [connection.id, connection])), [connections]);
     const collapsedBatchChildIds = useMemo(() => {
         const hidden = new Set<string>();
         nodes.forEach((node) => {
@@ -107,20 +116,28 @@ export function useCanvasRenderModel({
         });
         return { left, top, width: Math.max(2, right - left), height: Math.max(2, bottom - top) };
     }, [nodes]);
-    const visibleNodes = useMemo(() => {
-        const padding = (reduceMediaEffects ? Math.max(240, Math.max(viewportSize.width, viewportSize.height) * 0.4) : Math.max(800, Math.max(viewportSize.width, viewportSize.height) * 1.5)) / viewport.k;
-        const viewLeft = -viewport.x / viewport.k - padding;
-        const viewTop = -viewport.y / viewport.k - padding;
-        const viewRight = viewLeft + viewportSize.width / viewport.k + padding * 2;
-        const viewBottom = viewTop + viewportSize.height / viewport.k + padding * 2;
-        const frames: CanvasNodeData[] = [];
-        const regular: CanvasNodeData[] = [];
-        nodes.forEach((node) => {
-            if (renderHiddenNodeIds.has(node.id) || node.position.x + node.width <= viewLeft || node.position.x >= viewRight || node.position.y + node.height <= viewTop || node.position.y >= viewBottom) return;
-            (isFrameNode(node) ? frames : regular).push(node);
-        });
-        return [...frames, ...regular];
-    }, [nodes, reduceMediaEffects, renderHiddenNodeIds, viewport.k, viewport.x, viewport.y, viewportSize.height, viewportSize.width]);
+    const renderIndexCacheRef = useRef<CanvasRenderIndexCache | null>(null);
+    const renderIndex = useMemo(() => {
+        const previous = renderIndexCacheRef.current;
+        if (previous && sameRenderGeometry(previous.nodes, nodes) && sameConnectionStructure(previous.connections, connections) && sameStringSet(previous.hiddenNodeIds, renderHiddenNodeIds)) return previous.index;
+        const index = createCanvasRenderIndex(nodes, connections, renderHiddenNodeIds);
+        renderIndexCacheRef.current = { nodes, connections, hiddenNodeIds: renderHiddenNodeIds, index };
+        return index;
+    }, [connections, nodes, renderHiddenNodeIds]);
+    const renderQuery = useMemo(() => {
+        const visible = {
+            left: -viewport.x / viewport.k,
+            top: -viewport.y / viewport.k,
+            right: (-viewport.x + viewportSize.width) / viewport.k,
+            bottom: (-viewport.y + viewportSize.height) / viewport.k,
+        };
+        const nearPadding = (reduceMediaEffects ? Math.max(240, Math.max(viewportSize.width, viewportSize.height) * 0.4) : Math.max(800, Math.max(viewportSize.width, viewportSize.height) * 1.5)) / viewport.k;
+        return renderIndex.query({ visible, nearPadding });
+    }, [reduceMediaEffects, renderIndex, viewport.k, viewport.x, viewport.y, viewportSize.height, viewportSize.width]);
+    const visibleNodes = useMemo(() => renderQuery.nodeIds.flatMap((nodeId) => {
+        const node = nodeById.get(nodeId);
+        return node ? [node] : [];
+    }), [nodeById, renderQuery.nodeIds]);
 
     const imageAssets = useMemo(() => assets.filter((asset): asset is ImageAsset => asset.kind === "image"), [assets]);
     const canvasImageNodes = useMemo(
@@ -218,22 +235,12 @@ export function useCanvasRenderModel({
         });
         return { nodeIds, connectionIds };
     }, [activeNodeId, connections]);
-    const displayConnections = useMemo(
-        () =>
-            connections.flatMap((connection) => {
-                if (collapsedBatchChildIds.has(connection.fromNodeId) || collapsedBatchChildIds.has(connection.toNodeId)) return [];
-                const fromNode = nodeById.get(connection.fromNodeId);
-                const toNode = nodeById.get(connection.toNodeId);
-                if (!fromNode || !toNode) return [];
-                const fromParent = fromNode.parentId ? nodeById.get(fromNode.parentId) : null;
-                const toParent = toNode.parentId ? nodeById.get(toNode.parentId) : null;
-                const displayFrom = fromParent && isFrameNode(fromParent) && fromParent.metadata?.frame?.collapsed ? fromParent : fromNode;
-                const displayTo = toParent && isFrameNode(toParent) && toParent.metadata?.frame?.collapsed ? toParent : toNode;
-                if (displayFrom.id === displayTo.id) return [];
-                return [{ connection, from: displayFrom, to: displayTo }];
-            }),
-        [collapsedBatchChildIds, connections, nodeById],
-    );
+    const displayConnections = useMemo(() => renderQuery.connectionIds.flatMap((connectionId) => {
+        const connection = connectionById.get(connectionId);
+        if (!connection) return [];
+        const displayConnection = resolveCanvasDisplayConnection(connection, nodeById, renderHiddenNodeIds);
+        return displayConnection ? [displayConnection] : [];
+    }), [connectionById, nodeById, renderHiddenNodeIds, renderQuery.connectionIds]);
 
     const configInputsById = useMemo(() => {
         const map = new Map<string, NodeGenerationInput[]>();
@@ -278,6 +285,7 @@ export function useCanvasRenderModel({
         imageAssets,
         infoNode,
         maskEditNode,
+        mediaTierByNodeId: renderQuery.mediaTierByNodeId,
         mentionReferencesByNodeId,
         nodeById,
         previewNode,
@@ -295,4 +303,22 @@ export function useCanvasRenderModel({
         versionCompareNodes,
         visibleNodes,
     };
+}
+
+function sameRenderGeometry(previous: readonly CanvasNodeData[], current: readonly CanvasNodeData[]) {
+    return previous.length === current.length && current.every((node, index) => {
+        const candidate = previous[index];
+        return candidate.id === node.id && candidate.type === node.type && candidate.parentId === node.parentId && candidate.position.x === node.position.x && candidate.position.y === node.position.y && candidate.width === node.width && candidate.height === node.height;
+    });
+}
+
+function sameConnectionStructure(previous: readonly CanvasConnection[], current: readonly CanvasConnection[]) {
+    return previous.length === current.length && current.every((connection, index) => {
+        const candidate = previous[index];
+        return candidate.id === connection.id && candidate.fromNodeId === connection.fromNodeId && candidate.toNodeId === connection.toNodeId && candidate.fromHandleId === connection.fromHandleId && candidate.toHandleId === connection.toHandleId;
+    });
+}
+
+function sameStringSet(previous: ReadonlySet<string>, current: ReadonlySet<string>) {
+    return previous.size === current.size && [...current].every((value) => previous.has(value));
 }

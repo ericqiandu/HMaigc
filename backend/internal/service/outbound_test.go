@@ -255,6 +255,85 @@ func TestKuaiziDevelopmentProxyConnectsOnlyAfterPublicTargetValidation(t *testin
 	}
 }
 
+func TestOutboundDevelopmentProxyConnectsOnlyAfterPublicTargetValidation(t *testing.T) {
+	connectTargets := make(chan string, 1)
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodConnect {
+			t.Errorf("proxy method = %s, want CONNECT", request.Method)
+		}
+		connectTargets <- request.Host
+		http.Error(w, "test proxy stops before TLS", http.StatusBadGateway)
+	}))
+	defer proxy.Close()
+
+	transport, err := newOutboundHTTPTransport(
+		"development",
+		func(_ context.Context, _ string) ([]net.IP, error) {
+			return []net.IP{net.ParseIP("93.184.216.34")}, nil
+		},
+		proxy.URL,
+	)
+	if err != nil {
+		t.Fatalf("newOutboundHTTPTransport() error = %v", err)
+	}
+	client := &http.Client{Transport: transport, Timeout: time.Second}
+	request, err := http.NewRequest(http.MethodGet, "https://api.example.com/v1/images/generations", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Do(request); err == nil {
+		t.Fatal("proxy test request unexpectedly succeeded")
+	}
+	select {
+	case target := <-connectTargets:
+		if target != "api.example.com:443" {
+			t.Fatalf("proxy CONNECT target = %q", target)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("configured proxy did not receive CONNECT")
+	}
+}
+
+func TestOutboundDevelopmentProxyRejectsSpecialUseTargetBeforeProxyConnect(t *testing.T) {
+	proxyReached := make(chan struct{}, 1)
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		proxyReached <- struct{}{}
+		http.Error(w, "unexpected", http.StatusBadGateway)
+	}))
+	defer proxy.Close()
+
+	transport, err := newOutboundHTTPTransport(
+		"development",
+		func(_ context.Context, _ string) ([]net.IP, error) { return []net.IP{net.ParseIP("127.0.0.1")}, nil },
+		proxy.URL,
+	)
+	if err != nil {
+		t.Fatalf("newOutboundHTTPTransport() error = %v", err)
+	}
+	client := &http.Client{Transport: transport, Timeout: time.Second}
+	request, err := http.NewRequest(http.MethodGet, "https://api.example.com/v1/images/generations", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Do(request); err == nil || !strings.Contains(err.Error(), "不允许") {
+		t.Fatalf("special-use proxy target error = %v", err)
+	}
+	select {
+	case <-proxyReached:
+		t.Fatal("proxy was reached before target validation")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestOutboundHTTPClientUsesConfiguredDevelopmentProxy(t *testing.T) {
+	t.Setenv("CANVAS_ENVIRONMENT", "development")
+	t.Setenv("CANVAS_DEVELOPMENT_PROXY_URL", "http://127.0.0.1:7897")
+	client := OutboundHTTPClient(time.Second)
+	if _, ok := client.Transport.(*validatingOutboundProxyTransport); !ok {
+		t.Fatalf("transport = %T, want *validatingOutboundProxyTransport", client.Transport)
+	}
+}
+
 func TestKuaiziDevelopmentProxyRejectsSpecialUseTargetBeforeProxyConnect(t *testing.T) {
 	proxyReached := make(chan struct{}, 1)
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -286,7 +365,7 @@ func TestKuaiziDevelopmentProxyRejectsSpecialUseTargetBeforeProxyConnect(t *test
 	}
 }
 
-func TestKuaiziProxyConfigurationIsDevelopmentOnlyAndCredentialFree(t *testing.T) {
+func TestDevelopmentProxyConfigurationIsDevelopmentOnlyAndCredentialFree(t *testing.T) {
 	resolver := func(_ context.Context, _ string) ([]net.IP, error) {
 		return []net.IP{net.ParseIP("93.184.216.34")}, nil
 	}
@@ -302,7 +381,10 @@ func TestKuaiziProxyConfigurationIsDevelopmentOnlyAndCredentialFree(t *testing.T
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := newKuaiziHTTPTransport(test.environment, resolver, test.proxyURL); err == nil {
-				t.Fatal("unsafe proxy configuration was accepted")
+				t.Fatal("unsafe Kuaizi proxy configuration was accepted")
+			}
+			if _, err := newOutboundHTTPTransport(test.environment, resolver, test.proxyURL); err == nil {
+				t.Fatal("unsafe outbound proxy configuration was accepted")
 			}
 		})
 	}

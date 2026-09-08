@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { initialAgentConversationState, reduceAgentConversation } from "../src/components/canvas/agent-conversation-reducer";
 import type { AgentRuntimeEvent, AgentTimelineItemKind } from "../src/services/api/agent-runtime";
 
-const event = (sequence: number, kind: "item.started" | "item.delta" | "item.completed", payload: Record<string, unknown>, itemKind: AgentTimelineItemKind = "agent_message"): AgentRuntimeEvent => ({
+const event = (sequence: number, kind: "item.started" | "item.delta" | "item.completed" | "item.failed", payload: Record<string, unknown>, itemKind: AgentTimelineItemKind = "agent_message"): AgentRuntimeEvent => ({
     protocolVersion: 5,
     threadId: "thread",
     runId: "run",
@@ -34,6 +34,13 @@ describe("Agent conversation reducer", () => {
         let state = reduceAgentConversation(initialAgentConversationState(), event(1, "item.started", { itemId: "message", delta: "旧的半截", userVisible: true, started: true }));
         state = reduceAgentConversation(state, event(2, "item.started", { itemId: "message", delta: "重新开始", userVisible: true, started: true }));
         expect(state.items).toEqual([{ id: "message", text: "重新开始", status: "in_progress" }]);
+        expect(state.lastSequence).toBe(2);
+    });
+
+    test("marks a rejected visible response as failed without discarding its evidence", () => {
+        let state = reduceAgentConversation(initialAgentConversationState(), event(1, "item.started", { delta: "尚未通过交付校验", userVisible: true, started: true }));
+        state = reduceAgentConversation(state, event(2, "item.failed", { message: "尚未通过交付校验", failureCode: "delivery_contract_changed" }));
+        expect(state.items).toEqual([{ id: "message", text: "尚未通过交付校验", status: "failed" }]);
         expect(state.lastSequence).toBe(2);
     });
 

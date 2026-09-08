@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
@@ -57,6 +58,10 @@ func (executor agentVisionAnalyzeCapabilityExecutor) Execute(
 	if err != nil {
 		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: "vision_task_failed", Err: err}
 	}
+	return agentVisionTaskResult(arguments, task, order)
+}
+
+func agentVisionTaskResult(arguments agentruntime.VisionAnalyzeArguments, task *model.Task, order *model.BillingOrder) (agentruntime.ToolExecutionResult, error) {
 	switch task.Status {
 	case model.TaskStatusQueued, model.TaskStatusRunning:
 		if order.Status == model.BillingStatusUncertain {
@@ -101,7 +106,7 @@ func agentVisionCapabilityTerminalFailure(
 ) (agentruntime.ToolExecutionResult, error) {
 	switch status {
 	case model.BillingStatusRefunded:
-		return agentruntime.ToolExecutionResult{}, failAgentCapability(failureCode, message)
+		return agentruntime.ToolExecutionResult{}, &agentCapabilityExecutionError{Code: failureCode, Err: errors.New(message), Settled: true}
 	case model.BillingStatusUncertain:
 		return agentruntime.ToolExecutionResult{}, failAgentCapability("vision_settlement_uncertain", "vision.analyze billing requires reconciliation")
 	default:

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
 
-import { calculateNodeAlignment, createNodeAlignmentContext, isHiddenBatchChild, sameStringSet, type NodeAlignmentContext } from "@/lib/canvas/canvas-project-domain";
-import { applyCanvasLiveConnectionDrag, applyCanvasLiveNodeDrag, clearCanvasLiveConnectionDrag, clearCanvasLiveNodeDrag, createFrameDropContext, findFrameDropTargetFromContext, resolveCanvasLiveConnectionDragTargets, resolveCanvasLiveNodeDragTargets, type CanvasLiveConnectionDragTarget, type FrameDropContext } from "@/lib/canvas/canvas-drag-performance";
-import { applyFrameDrop, findFrameDropTarget, getFrameChildIds, isFrameNode, isNodeHiddenByCollapsedFrame } from "@/lib/canvas/canvas-frame";
+import { calculateNodeAlignment, createNodeAlignmentContext, sameStringSet, type NodeAlignmentContext } from "@/lib/canvas/canvas-project-domain";
+import { applyCanvasLiveConnectionDrag, applyCanvasLiveNodeDrag, clearCanvasLiveConnectionDrag, clearCanvasLiveNodeDrag, createCanvasSelectionIndex, createFrameDropContext, findFrameDropTargetFromContext, resolveCanvasLiveConnectionDragTargets, resolveCanvasLiveNodeDragTargets, type CanvasLiveConnectionDragTarget, type CanvasSelectionIndex, type FrameDropContext } from "@/lib/canvas/canvas-interaction-runtime";
+import { applyFrameDrop, findFrameDropTarget, getFrameChildIds, isFrameNode } from "@/lib/canvas/canvas-frame";
 import type { CanvasNodeData, Position, SelectionBox, ViewportTransform } from "@/types/canvas";
 
 type UseCanvasSelectionControllerOptions = {
@@ -70,7 +70,7 @@ export function useCanvasSelectionController({
     const selectionFrameRef = useRef<number | null>(null);
     const selectionBoxElementRef = useRef<HTMLDivElement>(null);
     const selectionBoundsElementRef = useRef<HTMLDivElement>(null);
-    const selectionCandidatesRef = useRef<Array<{ id: string; left: number; top: number; right: number; bottom: number }>>([]);
+    const selectionIndexRef = useRef<CanvasSelectionIndex | null>(null);
     const pendingSelectionPointRef = useRef<Position | null>(null);
     const selectionActivatedRef = useRef(false);
     const selectionBoxRef = useRef<SelectionBox | null>(null);
@@ -84,7 +84,7 @@ export function useCanvasSelectionController({
 
     const cancelSelectionBox = useCallback(() => {
         selectionBoxRef.current = null;
-        selectionCandidatesRef.current = [];
+        selectionIndexRef.current = null;
         pendingSelectionPointRef.current = null;
         selectionActivatedRef.current = false;
         if (selectionFrameRef.current) cancelAnimationFrame(selectionFrameRef.current);
@@ -120,9 +120,16 @@ export function useCanvasSelectionController({
         };
         selectionBoxRef.current = nextSelectionBox;
         selectionActivatedRef.current = false;
-        selectionCandidatesRef.current = nodesRef.current
-            .filter((node) => !isHiddenBatchChild(node, nodesRef.current) && !isNodeHiddenByCollapsedFrame(node, nodesRef.current))
+        const nodeById = new Map(nodesRef.current.map((node) => [node.id, node]));
+        const selectionCandidates = nodesRef.current
+            .filter((node) => {
+                const batchRoot = node.metadata?.batchRootId ? nodeById.get(node.metadata.batchRootId) : null;
+                if (batchRoot && !batchRoot.metadata?.batchExpanded) return false;
+                const parent = node.parentId ? nodeById.get(node.parentId) : null;
+                return !(parent && isFrameNode(parent) && parent.metadata?.frame?.collapsed);
+            })
             .map((node) => ({ id: node.id, left: node.position.x, top: node.position.y, right: node.position.x + node.width, bottom: node.position.y + node.height }));
+        selectionIndexRef.current = createCanvasSelectionIndex(selectionCandidates);
         setSelectedConnectionId(null);
     }, [cancelPendingConnectionCreate, nodesRef, onCanvasSelectionStart, screenToCanvas, selectedNodeIdsRef, setSelectedConnectionId]);
 
@@ -300,11 +307,11 @@ export function useCanvasSelectionController({
                 element.style.setProperty("--selection-height", `${rectH}px`);
             }
             const nextSelected = new Set<string>(selection.additive || selection.subtractive ? selection.initialSelectedNodeIds : []);
-            selectionCandidatesRef.current.forEach((node) => {
-                if (rectX >= node.right || rectX + rectW <= node.left || rectY >= node.bottom || rectY + rectH <= node.top) return;
-                if (selection.subtractive) nextSelected.delete(node.id);
-                else nextSelected.add(node.id);
-            });
+            const selectedCandidateIds = selectionIndexRef.current?.query({ left: rectX, top: rectY, right: rectX + rectW, bottom: rectY + rectH }) || [];
+            for (const nodeId of selectedCandidateIds) {
+                if (selection.subtractive) nextSelected.delete(nodeId);
+                else nextSelected.add(nodeId);
+            }
             if (sameStringSet(nextSelected, selectedNodeIdsRef.current)) return;
             selectedNodeIdsRef.current = nextSelected;
             setSelectedNodeIds(nextSelected);

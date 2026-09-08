@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"sort"
 	"strings"
 
@@ -57,6 +58,14 @@ func (s *Service) agentRuntimeModelPrompt(scope agentruntime.Scope, state agentr
 	if err := validateAgentRuntimeExecutionContract(*run); err != nil {
 		return "", err
 	}
+	toolCalls, err := s.repo.AgentToolCallsForScope(scope)
+	if err != nil {
+		return "", err
+	}
+	observedToolFacts, err := agentRuntimeObservedReadFacts(toolCalls, state.LastToolResult)
+	if err != nil {
+		return "", err
+	}
 	var deliveryEvidence *agentruntime.DeliveryEvidence
 	var deliveryVerification *agentruntime.DeliveryVerification
 	if state.ExpectedDelivery != nil {
@@ -68,13 +77,14 @@ func (s *Service) agentRuntimeModelPrompt(scope agentruntime.Scope, state agentr
 		deliveryEvidence = &evidence
 		deliveryVerification = &verification
 	}
-	return encodeAgentRuntimeModelPrompt(
+	return encodeAgentRuntimeModelPromptWithObservedFacts(
 		scope,
 		state,
 		canvas.Revision,
 		models,
 		deliveryEvidence,
 		deliveryVerification,
+		observedToolFacts,
 	)
 }
 
@@ -137,6 +147,12 @@ func (s *Service) agentRuntimeCallableModels(actorUserID string) ([]agentRuntime
 		return result[left].ChannelID < result[right].ChannelID
 	})
 	if err := validateAgentRuntimeCallableModels(result); err != nil {
+		facts, encodeErr := json.Marshal(result)
+		if encodeErr != nil {
+			log.Printf("agent runtime callable model validation failed actor_user_id=%s model_count=%d validation_error=%q facts_encode_error=%q", actorUserID, len(result), err.Error(), encodeErr.Error())
+		} else {
+			log.Printf("agent runtime callable model validation failed actor_user_id=%s model_count=%d validation_error=%q facts=%s", actorUserID, len(result), err.Error(), facts)
+		}
 		return nil, err
 	}
 	return result, nil
@@ -150,8 +166,25 @@ func encodeAgentRuntimeModelPrompt(
 	deliveryEvidence *agentruntime.DeliveryEvidence,
 	deliveryVerification *agentruntime.DeliveryVerification,
 ) (string, error) {
+	return encodeAgentRuntimeModelPromptWithObservedFacts(
+		scope, state, canvasRevision, models, deliveryEvidence, deliveryVerification, nil,
+	)
+}
+
+func encodeAgentRuntimeModelPromptWithObservedFacts(
+	scope agentruntime.Scope,
+	state agentruntime.RuntimeState,
+	canvasRevision int64,
+	models []agentRuntimeCallableModelFact,
+	deliveryEvidence *agentruntime.DeliveryEvidence,
+	deliveryVerification *agentruntime.DeliveryVerification,
+	observedToolFacts []agentRuntimeObservedToolFact,
+) (string, error) {
 	callableTools, err := agentRuntimeCallableTools(state.Configuration.ExecutionMode)
 	if err != nil {
+		return "", err
+	}
+	if err := validateAgentRuntimeObservedReadFacts(observedToolFacts); err != nil {
 		return "", err
 	}
 	context := agentRuntimeModelContext{
@@ -159,8 +192,8 @@ func encodeAgentRuntimeModelPrompt(
 			TenantKind: scope.TenantKind, TenantID: scope.TenantID, ActorUserID: scope.ActorUserID,
 			DomainProjectID: scope.DomainProjectID, CanvasID: scope.CanvasID, ThreadID: scope.ThreadID,
 		}, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion, CanvasRevision: canvasRevision, StepNumber: state.StepNumber, MaxSteps: state.MaxSteps,
-		UserMessage: state.UserMessage, ExpectedDelivery: state.ExpectedDelivery, DeliveryEvidence: deliveryEvidence,
-		Verification: deliveryVerification, LastToolResult: state.LastToolResult, DecisionFeedback: state.DecisionFeedback, PreviousMessage: state.FinalMessage,
+		UserMessage: state.UserMessage, FrozenExpectedDelivery: state.ExpectedDelivery, DeliveryEvidence: deliveryEvidence,
+		Verification: deliveryVerification, LastToolResult: state.LastToolResult, ObservedToolFacts: append([]agentRuntimeObservedToolFact(nil), observedToolFacts...), DecisionFeedback: state.DecisionFeedback, PreviousMessage: state.FinalMessage,
 		Configuration: promptAgentRuntimeConfiguration(state), LoadedSkillDirs: append([]string(nil), state.LoadedSkillDirs...), CallableTools: callableTools, CallableModels: models,
 		ClarificationHistory: append([]agentruntime.CompletedClarification(nil), state.ClarificationHistory...), Limits: state.Limits,
 	}
@@ -244,13 +277,14 @@ func frozenAgentRuntimeModelContext(scope agentruntime.Scope, state agentruntime
 	if frozen.ToolSchemaVersion != agentruntime.CurrentToolSchemaVersion {
 		return agentRuntimeModelContext{}, errors.New(agentruntime.FailureRuntimeSchemaRetired)
 	}
-	expected, err := encodeAgentRuntimeModelPrompt(
+	expected, err := encodeAgentRuntimeModelPromptWithObservedFacts(
 		scope,
 		state,
 		frozen.CanvasRevision,
 		frozen.CallableModels,
 		frozen.DeliveryEvidence,
 		frozen.Verification,
+		frozen.ObservedToolFacts,
 	)
 	if err != nil {
 		return agentRuntimeModelContext{}, err

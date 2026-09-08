@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -297,6 +298,93 @@ func TestAgentThreadHistoryReturnsAllTurnsAndItemsInStableOrder(t *testing.T) {
 		if len(turn.Items) != 1 || turn.Items[0].Kind != model.AgentTimelineItemUserMessage || turn.Items[0].Ordinal != 1 {
 			t.Fatalf("turn items = %#v", turn.Items)
 		}
+	}
+}
+
+func TestAgentThreadHistoryProjectsInterruptedToolIdentityFromAuditFacts(t *testing.T) {
+	repo, db := openAgentRuntimeRepositorySQLite(t)
+	scope := repositoryAgentScope()
+	scope.ThreadID = "history-interrupted-tool-thread"
+	scope.RunID = "history-interrupted-tool-run"
+	createAgentRunForTest(t, repo, scope)
+	now := time.Now().UTC()
+	if _, err := repo.InitializeAgentRun(InitializeAgentRunInput{
+		Scope: scope, ModelRecordID: "model-record", ModelKey: "model-key", MaxSteps: 4,
+		ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion,
+		RuntimeVersion:    agentruntime.CurrentRuntimeVersion, PolicyVersion: agentruntime.CurrentPolicyVersion,
+		UserMessage: "选择画布节点", Configuration: agentruntime.RunConfiguration{ExecutionMode: agentruntime.ExecutionGuided}, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := repo.LoadAgentCheckpoint(scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision := agentruntime.ModelDecision{Kind: agentruntime.DecisionToolCall, ToolCall: &agentruntime.ToolCallDecision{
+		ToolCallID: "history-interrupted-call", ToolName: agentruntime.ToolCanvasApplyOps, ActionVersion: 1,
+		Arguments:        []byte(`{"canvasId":"agent-canvas-1","baseRevision":7,"clientMutationId":"history-interrupted-call","operations":[{"operationId":"select-node","type":"select_nodes","nodeIds":["artifact-1"]}]}`),
+		ExpectedDelivery: repositoryTestCanvasDelivery(),
+	}}
+	requested, err := agentruntime.Advance(current, agentruntime.RuntimeInput{Decision: decision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitAgentRuntimeTransition(scope, current, requested, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CancelAgentRunTree(scope, requested.State.StateVersion, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.AgentTimelineItem{}).
+		Where("run_id = ? AND kind = ?", scope.RunID, model.AgentTimelineItemToolCall).
+		Update("content_json", `{"toolCallId":"history-interrupted-call","actionVersion":1,"started":true}`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := repo.AgentThreadHistory(scope, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || len(records[0].Turns) != 1 {
+		t.Fatalf("thread history = %#v", records)
+	}
+	var interrupted struct {
+		ToolCallID    string                `json:"toolCallId"`
+		ToolName      agentruntime.ToolName `json:"toolName"`
+		ActionVersion int                   `json:"actionVersion"`
+		Started       bool                  `json:"started"`
+	}
+	found := false
+	for _, item := range records[0].Turns[0].Items {
+		if item.Kind != model.AgentTimelineItemToolCall || item.Status != model.AgentTimelineItemInterrupted {
+			continue
+		}
+		if err := json.Unmarshal([]byte(item.ContentJSON), &interrupted); err != nil {
+			t.Fatal(err)
+		}
+		found = true
+	}
+	if !found || interrupted.ToolCallID != decision.ToolCall.ToolCallID ||
+		interrupted.ToolName != decision.ToolCall.ToolName || interrupted.ActionVersion != 1 || !interrupted.Started {
+		t.Fatalf("interrupted tool history = %#v found=%v", interrupted, found)
+	}
+}
+
+func TestProjectAgentInterruptedToolIdentityRejectsMissingOrConflictingAuditFacts(t *testing.T) {
+	item := model.AgentTimelineItem{
+		RunID: "history-run", Kind: model.AgentTimelineItemToolCall, Status: model.AgentTimelineItemInterrupted,
+		ContentJSON: `{"toolCallId":"history-call","actionVersion":1,"started":true}`,
+	}
+	if _, err := projectAgentInterruptedToolIdentity(item, nil); err == nil {
+		t.Fatal("interrupted tool history accepted a missing audit fact")
+	}
+	identity := agentHistoryToolCallIdentity{RunID: item.RunID, ToolCallID: "history-call", ActionVersion: 1}
+	auditFacts := map[agentHistoryToolCallIdentity]model.AgentToolCall{
+		identity: {RunID: item.RunID, ToolCallID: identity.ToolCallID, ActionVersion: identity.ActionVersion, ToolName: string(agentruntime.ToolCanvasApplyOps)},
+	}
+	item.ContentJSON = `{"toolCallId":"history-call","toolName":"canvas.read","actionVersion":1,"started":true}`
+	if _, err := projectAgentInterruptedToolIdentity(item, auditFacts); err == nil {
+		t.Fatal("interrupted tool history accepted a tool identity conflict")
 	}
 }
 

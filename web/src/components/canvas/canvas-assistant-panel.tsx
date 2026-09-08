@@ -5,7 +5,7 @@ import { motion } from "motion/react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { CANVAS_AGENT_DOCK_MAX_WIDTH, CANVAS_AGENT_DOCK_MIN_WIDTH } from "@/lib/canvas/canvas-agent-dock";
-import type { AgentRuntimeClient, AgentRuntimeEvent, AgentRuntimeHandleStorage } from "@/services/api/agent-runtime";
+import type { AgentRuntimeClient, AgentRuntimeEvent, AgentRuntimeHandleStorage, AgentRuntimeView } from "@/services/api/agent-runtime";
 import type { PlatformSkill } from "@/services/api/skills";
 import type { LocalAgentAuthoritativeToolResult } from "@/services/local-agent/local-agent-bridge";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -36,6 +36,8 @@ type CanvasAssistantPanelProps = {
     agentLaunchRequest?: CanvasAgentLaunchRequest;
     onAgentLaunchHandled?: (launchRequestId: string) => void;
     onBeforeRun?: () => Promise<void>;
+    onRuntimeView?: (view: AgentRuntimeView) => void;
+    onCanvasProjection?: (revision: number) => void;
     onRuntimeEvent?: (event: AgentRuntimeEvent) => void;
     onLocalToolResult?: (result: LocalAgentAuthoritativeToolResult) => void;
     runtimeClient?: AgentRuntimeClient;
@@ -101,6 +103,8 @@ export function CanvasAssistantPanel(props: CanvasAssistantPanelProps) {
                             agentLaunchRequest={host === "managed" ? props.agentLaunchRequest : undefined}
                             onAgentLaunchHandled={props.onAgentLaunchHandled}
                             onBeforeRun={props.onBeforeRun}
+                            onRuntimeView={props.onRuntimeView}
+                            onCanvasProjection={props.onCanvasProjection}
                             onRuntimeEvent={props.onRuntimeEvent}
                             runtimeClient={props.runtimeClient}
                             runtimeStorage={props.runtimeStorage}
@@ -122,6 +126,7 @@ export function CanvasAssistantPanel(props: CanvasAssistantPanelProps) {
                                     getSelectedNodes={props.getSelectedNodes}
                                     activatedSkills={props.activatedSkills}
                                     onBeforeRun={props.onBeforeRun}
+                                    onRuntimeView={props.onRuntimeView}
                                     onToolResult={props.onLocalToolResult}
                                     runtimeClient={props.runtimeClient}
                                 />

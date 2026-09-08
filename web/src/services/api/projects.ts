@@ -257,7 +257,7 @@ export function deleteProjectUnit(projectId: string, unitId: string) {
 }
 
 export function linkCanvasUnit(projectId: string, input: { canvasId: string; unitId: string; role?: string }) {
-    return request<{ link: { id: string; projectId: string; canvasId: string; unitId: string; role: string } }>(api.post(`/projects/${encodeURIComponent(projectId)}/canvas-links`, input));
+    return request<{ link: { id: string; projectId: string; canvasId: string; unitId: string; role: string }; projectRevision: number }>(api.post(`/projects/${encodeURIComponent(projectId)}/canvas-links`, input));
 }
 
 export function unlinkCanvasUnit(projectId: string, canvasId: string, unitId: string) {

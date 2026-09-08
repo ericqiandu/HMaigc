@@ -53,8 +53,8 @@ type agentToolTreeCancelUpdates struct {
 	UpdatedAt  time.Time                   `gorm:"column:updated_at"`
 }
 
-func (r *Repository) cancelAgentRunTreeTx(tx *gorm.DB, scope agentruntime.Scope, now time.Time) error {
-	if err := cancelAgentToolCallsTx(tx, scope, now); err != nil {
+func (r *Repository) cancelAgentRunTreeTx(tx *gorm.DB, scope agentruntime.Scope, state agentruntime.RuntimeState, now time.Time) error {
+	if err := cancelAgentToolCallsTx(tx, scope, state, now); err != nil {
 		return err
 	}
 	if err := cancelAgentSpecialistLifecyclesTx(tx, scope, now); err != nil {
@@ -64,18 +64,22 @@ func (r *Repository) cancelAgentRunTreeTx(tx *gorm.DB, scope agentruntime.Scope,
 	if err != nil {
 		return err
 	}
-	_, _, err = disposeAdminAgentRunControlTargets(tx, targets, "父 Agent 运行已终止", now, true)
+	_, _, err = disposeAdminAgentRunControlTargets(tx, scope.RunID, targets, "父 Agent 运行已终止", now, true)
 	return err
 }
 
-func cancelAgentToolCallsTx(tx *gorm.DB, scope agentruntime.Scope, now time.Time) error {
-	return tx.Model(&model.AgentToolCall{}).
+func cancelAgentToolCallsTx(tx *gorm.DB, scope agentruntime.Scope, state agentruntime.RuntimeState, now time.Time) error {
+	query := tx.Model(&model.AgentToolCall{}).
 		Where("run_id = ? AND status IN ?", scope.RunID, []agentruntime.ToolCallStatus{
 			agentruntime.ToolCallPending,
 			agentruntime.ToolCallWaitingApproval,
 			agentruntime.ToolCallRunning,
-		}).
-		Select("status", "output_json", "error_code", "updated_at").
+		})
+	// 检查点保留的已启动工具仍负责结算，取消推理不能提前伪造其失败结果。
+	if state.PendingToolStarted && state.PendingToolCall != nil {
+		query = query.Where("NOT (tool_call_id = ? AND action_version = ?)", state.PendingToolCall.ToolCallID, state.PendingToolCall.ActionVersion)
+	}
+	return query.Select("status", "output_json", "error_code", "updated_at").
 		Updates(agentToolTreeCancelUpdates{
 			Status: agentruntime.ToolCallFailed, OutputJSON: `{}`,
 			ErrorCode: agentRunTreeCancelledCode, UpdatedAt: now,
@@ -207,7 +211,7 @@ func (r *Repository) AgentRunTreeTaskIDs(scope agentruntime.Scope) ([]string, er
 	taskIDs := make(map[string]struct{})
 	var directTaskIDs []string
 	if err := r.db.Model(&model.Task{}).
-		Where("operation = ? AND user_id = ?", "agent_model:"+scope.RunID, scope.ActorUserID).
+		Where("operation IN ? AND user_id = ?", []string{"agent_model:" + scope.RunID, "media_generation:" + scope.RunID}, scope.ActorUserID).
 		Pluck("id", &directTaskIDs).Error; err != nil {
 		return nil, err
 	}

@@ -171,6 +171,7 @@ func (r *Repository) AgentThreadHistory(scope agentruntime.Scope, limit int) ([]
 		var checkpoints []model.AgentCheckpoint
 		var items []model.AgentTimelineItem
 		var events []model.AgentRunEvent
+		var toolCalls []model.AgentToolCall
 		if len(runIDs) > 0 {
 			if err := tx.Where("run_id IN ?", runIDs).Order("run_id ASC, sequence ASC").Find(&checkpoints).Error; err != nil {
 				return err
@@ -179,6 +180,10 @@ func (r *Repository) AgentThreadHistory(scope agentruntime.Scope, limit int) ([]
 				return err
 			}
 			if err := tx.Where("run_id IN ?", runIDs).Order("run_id ASC, sequence ASC").Find(&events).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("run_id IN ?", runIDs).
+				Order("run_id ASC, created_at ASC, id ASC").Find(&toolCalls).Error; err != nil {
 				return err
 			}
 		}
@@ -196,7 +201,7 @@ func (r *Repository) AgentThreadHistory(scope agentruntime.Scope, limit int) ([]
 			rows = append(rows, agentThreadHistoryRow{AgentThread: thread, ActivityAt: activityByThreadID[thread.ID]})
 		}
 		var err error
-		records, err = agentThreadHistoryFacts(scope, rows, runs, checkpoints, items, events)
+		records, err = agentThreadHistoryFacts(scope, rows, runs, checkpoints, items, events, toolCalls)
 		return err
 	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	return records, err
@@ -209,6 +214,7 @@ func agentThreadHistoryFacts(
 	checkpoints []model.AgentCheckpoint,
 	items []model.AgentTimelineItem,
 	events []model.AgentRunEvent,
+	toolCalls []model.AgentToolCall,
 ) ([]AgentThreadHistoryRecord, error) {
 	threadByID := make(map[string]model.AgentThread, len(rows))
 	recordIndexByThreadID := make(map[string]int, len(rows))
@@ -239,6 +245,19 @@ func agentThreadHistoryFacts(
 			return nil, errors.New("agent thread history run scope is inconsistent")
 		}
 		runByID[run.ID] = run
+	}
+	toolCallByIdentity := make(map[agentHistoryToolCallIdentity]model.AgentToolCall, len(toolCalls))
+	for _, call := range toolCalls {
+		run, ok := runByID[call.RunID]
+		toolName := agentruntime.ToolName(call.ToolName)
+		identity := agentHistoryToolCallIdentity{RunID: call.RunID, ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion}
+		if !ok || call.ToolCallID == "" || call.ActionVersion < 1 || !toolName.ValidForToolSchema(run.ToolSchemaVersion) {
+			return nil, errors.New("agent thread history tool call facts are inconsistent")
+		}
+		if _, exists := toolCallByIdentity[identity]; exists {
+			return nil, errors.New("agent thread history tool call identity is duplicated")
+		}
+		toolCallByIdentity[identity] = call
 	}
 	checkpointByRunID := make(map[string]model.AgentCheckpoint, len(runs))
 	for _, checkpoint := range checkpoints {
@@ -290,6 +309,13 @@ func agentThreadHistoryFacts(
 				return nil, rebuildErr
 			}
 		}
+		for index := range runItems {
+			projected, projectErr := projectAgentInterruptedToolIdentity(runItems[index], toolCallByIdentity)
+			if projectErr != nil {
+				return nil, projectErr
+			}
+			runItems[index] = projected
+		}
 		for index, item := range runItems {
 			if item.Ordinal != int64(index+1) {
 				return nil, errors.New("agent thread history timeline ordinal is not contiguous")
@@ -301,6 +327,59 @@ func agentThreadHistoryFacts(
 		})
 	}
 	return records, nil
+}
+
+type agentHistoryToolCallIdentity struct {
+	RunID         string
+	ToolCallID    string
+	ActionVersion int
+}
+
+func projectAgentInterruptedToolIdentity(
+	item model.AgentTimelineItem,
+	toolCallByIdentity map[agentHistoryToolCallIdentity]model.AgentToolCall,
+) (model.AgentTimelineItem, error) {
+	if item.Kind != model.AgentTimelineItemToolCall || item.Status != model.AgentTimelineItemInterrupted {
+		return item, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(item.ContentJSON), &fields); err != nil {
+		return model.AgentTimelineItem{}, errors.New("agent interrupted tool history content is invalid")
+	}
+	if _, structured := fields["contentType"]; structured {
+		return item, nil
+	}
+	var toolCallID string
+	var actionVersion int
+	if json.Unmarshal(fields["toolCallId"], &toolCallID) != nil || toolCallID == "" ||
+		json.Unmarshal(fields["actionVersion"], &actionVersion) != nil || actionVersion < 1 {
+		return model.AgentTimelineItem{}, errors.New("agent interrupted tool history identity is invalid")
+	}
+	identity := agentHistoryToolCallIdentity{
+		RunID: item.RunID, ToolCallID: toolCallID, ActionVersion: actionVersion,
+	}
+	call, exists := toolCallByIdentity[identity]
+	if !exists {
+		return model.AgentTimelineItem{}, errors.New("agent interrupted tool history audit fact is missing")
+	}
+	auditToolName := agentruntime.ToolName(call.ToolName)
+	if rawToolName, present := fields["toolName"]; present {
+		var contentToolName agentruntime.ToolName
+		if json.Unmarshal(rawToolName, &contentToolName) != nil || contentToolName != auditToolName {
+			return model.AgentTimelineItem{}, errors.New("agent interrupted tool history conflicts with audit facts")
+		}
+	}
+	encodedToolName, err := json.Marshal(auditToolName)
+	if err != nil {
+		return model.AgentTimelineItem{}, err
+	}
+	fields["toolName"] = encodedToolName
+	projected, err := json.Marshal(fields)
+	if err != nil {
+		return model.AgentTimelineItem{}, err
+	}
+	item.ContentJSON = string(projected)
+	return item, nil
 }
 
 func agentHistoryRunTerminal(status agentruntime.RunStatus) bool {

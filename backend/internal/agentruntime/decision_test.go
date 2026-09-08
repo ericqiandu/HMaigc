@@ -7,7 +7,7 @@ import (
 	"infinite-canvas/backend/internal/agentruntime"
 )
 
-func TestCurrentDecisionParserAcceptsV8AndRejectsHistoricalTools(t *testing.T) {
+func TestCurrentDecisionParserAcceptsV10AndRejectsHistoricalTools(t *testing.T) {
 	t.Parallel()
 
 	currentTools := []string{
@@ -15,6 +15,8 @@ func TestCurrentDecisionParserAcceptsV8AndRejectsHistoricalTools(t *testing.T) {
 		"canvas.apply_ops",
 		"assets.read",
 		"assets.publish",
+		"project.read",
+		"project.apply_ops",
 		"media.generate",
 		"vision.analyze",
 		"skills.load",

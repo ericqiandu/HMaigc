@@ -258,6 +258,25 @@ func TestAgentApprovalRejectsMalformedIdentityBeforeRunLookup(t *testing.T) {
 	}
 }
 
+func TestExpiredAgentApprovalRefreshRejectsMalformedIdentityBeforeRunLookup(t *testing.T) {
+	fixture := openProviderAccountHandlerFixture(t)
+	if err := database.EnsureAgentRuntimeIntegritySchema(fixture.db); err != nil {
+		t.Fatal(err)
+	}
+	RegisterAgentRuntimeRoutes(fixture.router.Group("/api"), service.New(repository.New(fixture.db), t.TempDir()))
+
+	response := fixture.request(
+		http.MethodPost,
+		"/api/agent/runs/missing-run/approvals/refresh",
+		`{"toolCallId":"call-1","actionVersion":1,"proposalHash":"ABC"}`,
+		fixture.userCookie,
+		"",
+	)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"errorCode":"agent_approval_invalid"`) {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestAgentEventV5DoesNotRegisterRetiredProductionGraphRoutes(t *testing.T) {
 	fixture := openProviderAccountHandlerFixture(t)
 	RegisterAgentRuntimeRoutes(fixture.router.Group("/api"), service.New(repository.New(fixture.db), t.TempDir()))
@@ -451,7 +470,7 @@ func TestAgentRuntimeHTTPListsOnlyCurrentCanvasActorThreadsByActivity(t *testing
 	createAgentRuntimeHandlerCanvas(t, fixture, "handler-agent-history-canvas")
 	createAgentRuntimeHandlerCanvas(t, fixture, "handler-agent-other-canvas")
 
-	baseTime := time.Date(2026, time.August, 15, 1, 0, 0, 0, time.UTC)
+	baseTime := time.Date(2026, time.August, 15, 9, 0, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60))
 	olderScope := createAgentRuntimeHistoryRun(t, svc, repo, fixture.userID, "handler-agent-history-canvas", "history-thread-older", "history-run-older", "较早的任务", baseTime.Add(time.Hour))
 	newerScope := createAgentRuntimeHistoryRun(t, svc, repo, fixture.userID, "handler-agent-history-canvas", "history-thread-newer", "history-run-newer", "较新的任务", baseTime.Add(2*time.Hour))
 	continuedScope := createAgentRuntimeHistoryRun(t, svc, repo, fixture.userID, "handler-agent-history-canvas", newerScope.ThreadID, "history-run-newer-continued", "继续完成任务", baseTime.Add(3*time.Hour))
@@ -483,6 +502,9 @@ func TestAgentRuntimeHTTPListsOnlyCurrentCanvasActorThreadsByActivity(t *testing
 	response := fixture.request(http.MethodGet, "/api/agent/threads?canvasId=handler-agent-history-canvas&limit=20", "", fixture.userCookie, "")
 	if response.Code != http.StatusOK {
 		t.Fatalf("history status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "+08:00") || !strings.Contains(response.Body.String(), baseTime.UTC().Format(time.RFC3339)) {
+		t.Fatalf("history timestamps are not normalized to UTC: %s", response.Body.String())
 	}
 	var envelope struct {
 		Data struct {

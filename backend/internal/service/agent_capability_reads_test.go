@@ -111,6 +111,115 @@ func TestAgentCapabilityReadCanvasRejectsStaleScopeAndSelection(t *testing.T) {
 	}
 }
 
+func TestAgentCapabilityReadProjectReturnsCanvasLinkedUnitShotsAndConfirmedCharacterEvidence(t *testing.T) {
+	svc, db, fixture := newAgentRuntimeServiceFixture(t, "https://example.com")
+	now := time.Now().UTC()
+	configuration, err := svc.resolveAgentRuntimeConfiguration(context.Background(), agentRuntimeServiceScope(), guidedAgentRuntimeConfigurationInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.repo.CreateInitializedAgentRun(repository.CreateInitializedAgentRunInput{
+		Create: repository.CreateAgentRunInput{Scope: agentRuntimeServiceScope(), ClientRequestID: "project-read-run", Now: now},
+		Initialize: repository.InitializeAgentRunInput{
+			Scope: agentRuntimeServiceScope(), ModelRecordID: fixture.channelModel.ID, ModelKey: fixture.channelModel.ModelKey,
+			MaxSteps: 24, ToolSchemaVersion: agentruntime.CurrentToolSchemaVersion, RuntimeVersion: agentruntime.CurrentRuntimeVersion,
+			PolicyVersion: agentruntime.CurrentPolicyVersion, UserMessage: "读取项目事实", Configuration: configuration, Now: now,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.Project{}).Where("id = ?", "runtime-project").Update("aspect_ratio", "9:16").Error; err != nil {
+		t.Fatal(err)
+	}
+	unit := model.ProjectUnit{
+		ID: "runtime-unit", ProjectID: "runtime-project", Kind: model.ProjectUnitKindChapter,
+		Title: "雨夜归来", SourceText: "林夏在雨夜回到旧车站。", Status: model.ProjectUnitStatusReady,
+		Position: 0, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&unit).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.CanvasUnitLink{ID: "runtime-canvas-unit", ProjectID: "runtime-project", CanvasID: "runtime-canvas", UnitID: unit.ID, Role: "storyboard", CreatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	shots := []model.Shot{
+		{ID: "shot-1", ProjectID: "runtime-project", UnitID: unit.ID, Title: "雨夜车站", Description: "林夏站在雨幕中的旧车站。", Position: 0, DurationMs: 5000, Status: "draft", CreatedAt: now, UpdatedAt: now},
+		{ID: "shot-2", ProjectID: "runtime-project", UnitID: unit.ID, Title: "纸船入水", Description: "林夏将白色纸船放入积水。", Position: 1, DurationMs: 4000, Status: "draft", CreatedAt: now, UpdatedAt: now},
+	}
+	if err := db.Create(&shots).Error; err != nil {
+		t.Fatal(err)
+	}
+	character := model.Asset{ID: "character-linxia", UserID: "runtime-user", Kind: "entity", Category: model.AssetCategoryCharacter, Status: model.AssetVersionStatusConfirmed, PrimaryVersionID: "character-linxia-v3", Title: "林夏", CreatedAt: now, UpdatedAt: now}
+	version := model.AssetVersion{ID: "character-linxia-v3", AssetID: character.ID, Version: 3, Status: model.AssetVersionStatusConfirmed, DefinitionJSON: `{"appearance":"短黑发，黄色雨衣","consistencyPrompt":"保持短黑发、黄色雨衣和白色纸船"}`, CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&character).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&version).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.Resource{ID: "resource-linxia-three-view", UserID: "runtime-user", Kind: "image", Status: model.ResourceStatusReady, MimeType: "image/png", Width: 2048, Height: 1024, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AssetRepresentation{ID: "representation-linxia-three-view", AssetVersionID: version.ID, ResourceID: "resource-linxia-three-view", MediaType: "image", Role: "three_view", CreatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.ProjectAssetLink{ID: "project-character-linxia", ProjectID: "runtime-project", AssetID: character.ID, CreatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	registry, err := newAgentCapabilityRegistry(svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution, err := registry.Execute(context.Background(), agentRuntimeServiceScope(), agentruntime.ToolCallDecision{
+		ToolCallID: "read-project", ToolName: agentruntime.ToolProjectRead, ActionVersion: 1,
+		Arguments: json.RawMessage(`{"domainProjectId":"runtime-project","canvasId":"runtime-canvas"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := agentruntime.DecodeCapabilityResult(agentruntime.ToolProjectRead, execution.Output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := decoded.(agentruntime.ProjectReadResult)
+	if project.DomainProjectID != "runtime-project" || project.Revision != 1 || project.CanvasID != "runtime-canvas" || len(project.Units) != 1 {
+		t.Fatalf("project facts = %#v", project)
+	}
+	if project.Units[0].UnitID != unit.ID || project.Units[0].SourceText != unit.SourceText || len(project.Units[0].Shots) != 2 || project.Units[0].Shots[1].ShotID != "shot-2" {
+		t.Fatalf("linked unit facts = %#v", project.Units)
+	}
+	if len(project.Characters) != 1 || project.Characters[0].AssetID != character.ID || project.Characters[0].VersionID != version.ID || project.Characters[0].Version != 3 || len(project.Characters[0].Representations) != 1 || project.Characters[0].Representations[0].ResourceID != "resource-linxia-three-view" {
+		t.Fatalf("character evidence = %#v", project.Characters)
+	}
+	if err := db.Create(&model.AgentToolCall{
+		ID: "project-read-record", RunID: "runtime-run", ToolCallID: "read-project", ActionVersion: 1,
+		ToolName: string(agentruntime.ToolProjectRead), Status: agentruntime.ToolCallSucceeded,
+		RiskLevel: agentruntime.ToolRiskRead, RequiredAccess: agentruntime.AccessViewer,
+		InputJSON:  `{"domainProjectId":"runtime-project","canvasId":"runtime-canvas"}`,
+		OutputJSON: string(execution.Output), CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.agentRuntimeDeliveryEvidence(agentRuntimeServiceScope(), ""); err != nil {
+		t.Fatalf("project.read must be neutral delivery evidence: %v", err)
+	}
+	for name, arguments := range map[string]string{
+		"other project": `{"domainProjectId":"other-project","canvasId":"runtime-canvas"}`,
+		"other canvas":  `{"domainProjectId":"runtime-project","canvasId":"other-canvas"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, readErr := registry.Execute(context.Background(), agentRuntimeServiceScope(), agentruntime.ToolCallDecision{
+				ToolCallID: "read-project-cross-scope", ToolName: agentruntime.ToolProjectRead, ActionVersion: 1,
+				Arguments: json.RawMessage(arguments),
+			})
+			if readErr == nil {
+				t.Fatal("cross-scope project read was not rejected")
+			}
+		})
+	}
+}
+
 func TestAgentCapabilityReadAssetsReturnsOnlyProjectOwnedResources(t *testing.T) {
 	svc, db, _ := newAgentRuntimeServiceFixture(t, "https://example.com")
 	now := time.Now().UTC()

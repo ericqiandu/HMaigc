@@ -456,9 +456,9 @@ func (r *Repository) RetryTaskWithBilling(userID string, taskID string, order *m
 	return &task, err
 }
 
-// ResumeTaskWithUncertainBilling 只恢复已经取得供应商任务 ID 的查询链路。
-// 它保留原计费订单、冻结运行时和 provider_request_id，确保 worker 只能继续查询而不会再次创建上游任务。
-func (r *Repository) ResumeTaskWithUncertainBilling(userID string, taskID string, policy ActiveTaskPolicy) (*model.Task, error) {
+// ResumeTaskWithProviderRequest 只恢复已有供应商任务 ID 的查询链路。
+// 未确认费用继续沿用 uncertain 订单；已经确认供应商成功的 settled 订单也只恢复结果，绝不再次创建或计费。
+func (r *Repository) ResumeTaskWithProviderRequest(userID string, taskID string, policy ActiveTaskPolicy) (*model.Task, error) {
 	var task model.Task
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		if err := enforceActiveTaskLimit(tx, userID, policy); err != nil {
@@ -467,22 +467,32 @@ func (r *Repository) ResumeTaskWithUncertainBilling(userID string, taskID string
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ? AND user_id = ?", taskID, userID).Error; err != nil {
 			return err
 		}
-		if (task.Status != model.TaskStatusFailed && task.Status != model.TaskStatusCancelled) || strings.TrimSpace(task.ProviderRequestID) == "" || strings.TrimSpace(task.BillingOrderID) == "" {
+		if (task.Status != model.TaskStatusFailed && task.Status != model.TaskStatusCancelled) || strings.TrimSpace(task.BillingOrderID) == "" {
 			return ErrTaskNotRetryable
 		}
 		var order model.BillingOrder
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, "id = ? AND user_id = ? AND task_id = ?", task.BillingOrderID, userID, task.ID).Error; err != nil {
 			return err
 		}
-		if order.Status != model.BillingStatusUncertain || strings.TrimSpace(order.ProviderRequestID) != strings.TrimSpace(task.ProviderRequestID) {
+		providerRequestID := strings.TrimSpace(order.ProviderRequestID)
+		taskProviderRequestID := strings.TrimSpace(task.ProviderRequestID)
+		uncertainRecovery := order.Status == model.BillingStatusUncertain && taskProviderRequestID != "" && taskProviderRequestID == providerRequestID
+		settledSuccessRecovery := order.Status == model.BillingStatusSettled && strings.TrimSpace(order.ProviderTaskStatus) == "succeeded" &&
+			providerRequestID != "" && (taskProviderRequestID == "" || taskProviderRequestID == providerRequestID)
+		if !uncertainRecovery && !settledSuccessRecovery {
 			return ErrBillingStateConflict
 		}
 		now := time.Now()
+		stage := "等待上游结果核对"
+		if settledSuccessRecovery {
+			stage = "恢复上游成功结果"
+		}
 		updated := tx.Model(&model.Task{}).
-			Where("id = ? AND user_id = ? AND status IN ? AND provider_request_id = ?", task.ID, userID, []model.TaskStatus{model.TaskStatusFailed, model.TaskStatusCancelled}, task.ProviderRequestID).
+			Where("id = ? AND user_id = ? AND status IN ? AND billing_order_id = ?", task.ID, userID, []model.TaskStatus{model.TaskStatusFailed, model.TaskStatusCancelled}, order.ID).
 			Updates(map[string]any{
-				"status": model.TaskStatusQueued, "stage": "等待上游结果核对", "progress": 35, "error": "", "result_json": "",
-				"started_at": nil, "completed_at": nil, "updated_at": now, "poll_stage": "provider_resume", "next_poll_at": nil,
+				"status": model.TaskStatusQueued, "stage": stage, "progress": 35, "error": "", "result_json": "",
+				"provider_request_id": providerRequestID,
+				"started_at":          nil, "completed_at": nil, "updated_at": now, "poll_stage": "provider_resume", "next_poll_at": nil,
 				"lease_owner": "", "lease_expires_at": nil, "lease_token": "", "cancel_requested_at": nil, "cancel_reason_code": "",
 			})
 		if updated.Error != nil {

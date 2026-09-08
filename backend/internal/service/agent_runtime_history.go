@@ -1,9 +1,9 @@
 package service
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -63,7 +63,8 @@ type AgentThreadHistoryTurnView struct {
 }
 
 type AgentThreadHistoryView struct {
-	Items []AgentThreadHistoryItem `json:"items"`
+	Items                    []AgentThreadHistoryItem `json:"items"`
+	CanvasProjectionRevision *int64                   `json:"canvasProjectionRevision,omitempty"`
 }
 
 type agentHistoricalArtifactTimelinePayload struct {
@@ -105,13 +106,19 @@ func (s *Service) ListAgentThreads(actor *model.User, canvasID string, limit int
 		return nil, err
 	}
 	view := &AgentThreadHistoryView{Items: make([]AgentThreadHistoryItem, 0, len(records))}
+	terminalProjections := make([]agentTerminalCanvasProjection, 0)
 	for _, record := range records {
+		if record.Thread.CanvasID != scope.CanvasID || record.Thread.TenantKind != scope.TenantKind ||
+			record.Thread.TenantID != scope.TenantID || record.Thread.DomainProjectID != scope.DomainProjectID ||
+			record.Thread.CreatedByUserID != scope.ActorUserID {
+			return nil, errors.New("Agent 历史对话作用域与已授权画布不一致")
+		}
 		item := AgentThreadHistoryItem{
 			Thread: AgentThreadHistoryThreadView{
 				ID: record.Thread.ID, CanvasID: record.Thread.CanvasID, Status: record.Thread.Status,
-				CreatedAt: record.Thread.CreatedAt, UpdatedAt: record.Thread.UpdatedAt,
+				CreatedAt: agentHistoryUTCTime(record.Thread.CreatedAt), UpdatedAt: agentHistoryUTCTime(record.Thread.UpdatedAt),
 			},
-			ActivityAt: record.ActivityAt,
+			ActivityAt: agentHistoryUTCTime(record.ActivityAt),
 			Turns:      make([]AgentThreadHistoryTurnView, 0, len(record.Turns)),
 		}
 		for _, recordTurn := range record.Turns {
@@ -122,6 +129,12 @@ func (s *Service) ListAgentThreads(actor *model.User, canvasID string, limit int
 			if _, err := agentRuntimeViewFromFacts(recordTurn.Run, state); err != nil {
 				return nil, err
 			}
+			if agentRuntimeRunTerminal(state.Status) {
+				projectionScope := scope
+				projectionScope.ThreadID = record.Thread.ID
+				projectionScope.RunID = recordTurn.Run.ID
+				terminalProjections = append(terminalProjections, agentTerminalCanvasProjection{scope: projectionScope, state: state})
+			}
 			turn, err := agentThreadHistoryTurnView(recordTurn.Run, recordTurn.Items)
 			if err != nil {
 				return nil, err
@@ -129,6 +142,13 @@ func (s *Service) ListAgentThreads(actor *model.User, canvasID string, limit int
 			item.Turns = append(item.Turns, turn)
 		}
 		view.Items = append(view.Items, item)
+	}
+	projection, err := s.projectTerminalAgentRunsCanvas(terminalProjections)
+	if err != nil {
+		return nil, fmt.Errorf("对账 Agent 历史终态画布节点: %w", err)
+	}
+	if len(terminalProjections) > 0 {
+		view.CanvasProjectionRevision = &projection.revision
 	}
 	return view, nil
 }
@@ -139,8 +159,8 @@ func agentThreadHistoryTurnView(run model.AgentRun, items []model.AgentTimelineI
 			ID: run.ID, ThreadID: run.ThreadID, Status: run.Status, LastEventSequence: run.LastEventSequence,
 			StateVersion: run.StateVersion, StepNumber: run.StepNumber, MaxSteps: run.MaxSteps,
 			ModelKey: run.ModelKey, ToolSchemaVersion: run.ToolSchemaVersion, RuntimeVersion: run.RuntimeVersion,
-			PolicyVersion: run.PolicyVersion, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
-			CompletedAt: run.CompletedAt,
+			PolicyVersion: run.PolicyVersion, CreatedAt: agentHistoryUTCTime(run.CreatedAt), UpdatedAt: agentHistoryUTCTime(run.UpdatedAt),
+			CompletedAt: agentHistoryUTCTimePointer(run.CompletedAt),
 		},
 		Items: make([]AgentThreadHistoryTimelineItemView, 0, len(items)),
 	}
@@ -151,11 +171,24 @@ func agentThreadHistoryTurnView(run model.AgentRun, items []model.AgentTimelineI
 		}
 		view.Items = append(view.Items, AgentThreadHistoryTimelineItemView{
 			ID: item.ID, RunID: item.RunID, Kind: item.Kind, Status: item.Status, Ordinal: item.Ordinal,
-			SourceEventSequence: item.SourceEventSequence, Content: content, StartedAt: item.StartedAt,
-			CompletedAt: item.CompletedAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
+			SourceEventSequence: item.SourceEventSequence, Content: content, StartedAt: agentHistoryUTCTime(item.StartedAt),
+			CompletedAt: agentHistoryUTCTimePointer(item.CompletedAt), CreatedAt: agentHistoryUTCTime(item.CreatedAt),
+			UpdatedAt: agentHistoryUTCTime(item.UpdatedAt),
 		})
 	}
 	return view, nil
+}
+
+func agentHistoryUTCTime(value time.Time) time.Time {
+	return value.UTC()
+}
+
+func agentHistoryUTCTimePointer(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	normalized := value.UTC()
+	return &normalized
 }
 
 func agentTimelineHistoryContent(item model.AgentTimelineItem) (json.RawMessage, error) {
@@ -214,15 +247,5 @@ func decodeHistoricalAgentArtifactTimelinePayload(raw string) (agentHistoricalAr
 }
 
 func decodeAgentRuntimeState(stateJSON string) (agentruntime.RuntimeState, error) {
-	decoder := json.NewDecoder(bytes.NewBufferString(stateJSON))
-	decoder.DisallowUnknownFields()
-	var state agentruntime.RuntimeState
-	if err := decoder.Decode(&state); err != nil {
-		return agentruntime.RuntimeState{}, errors.New("agent checkpoint state is invalid")
-	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return agentruntime.RuntimeState{}, errors.New("agent checkpoint state is invalid")
-	}
-	return state, nil
+	return agentruntime.DecodeCheckpointState(stateJSON)
 }

@@ -1,23 +1,28 @@
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { compositeEmotionImage } from "@/lib/canvas/canvas-emotion";
+import { buildCanvasImagePromptResultMetadata } from "@/lib/canvas/canvas-image-command-evidence";
+import { assertCanvasImagePromptTaskEvidence } from "@/lib/canvas/canvas-image-prompt-command";
 import { storeGeneratedAudio } from "@/services/api/audio";
+import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { storeGeneratedVideo } from "@/services/api/video";
 import type { GenerationTask } from "@/services/api/task-center";
 import { resolveMediaUrl, type UploadedFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
+import { CanvasNodeType, type CanvasGenerationMode, type CanvasImagePromptTaskEvidenceV1, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
-type BackendGenerationResult = {
+export type BackendGenerationResult = {
     mode?: CanvasGenerationMode;
     images?: Array<{ dataUrl: string; storageKey?: string; width?: number; height?: number; bytes?: number; mimeType?: string }>;
     video?: { dataUrl: string; storageKey?: string; width?: number; height?: number; durationMs?: number; bytes?: number; mimeType?: string };
     audio?: { dataUrl: string; storageKey?: string; durationMs?: number; bytes?: number; mimeType?: string; format?: string };
     text?: string;
+    imagePromptEvidence?: CanvasImagePromptTaskEvidenceV1;
 };
 
 export type BackendGeneratedVideo = NonNullable<BackendGenerationResult["video"]>;
+export type BackendGeneratedImage = NonNullable<BackendGenerationResult["images"]>[number];
 
 const VIDEO_NODE_MAX_WIDTH = 420;
 const VIDEO_NODE_MAX_HEIGHT = 420;
@@ -73,13 +78,25 @@ export async function storeBackendGeneratedVideo(video: BackendGeneratedVideo): 
     };
 }
 
+export async function storeBackendGeneratedImage(image: BackendGeneratedImage): Promise<UploadedImage> {
+    if (!image.storageKey?.trim()) throw new Error("后端图片任务结果缺少资源身份");
+    return {
+        url: await resolveImageUrl(image.storageKey, image.dataUrl),
+        storageKey: image.storageKey,
+        width: image.width || 1024,
+        height: image.height || 1024,
+        bytes: image.bytes || 0,
+        mimeType: image.mimeType || "image/png",
+    };
+}
+
 export function audioMetadata(audio: UploadedFile): CanvasNodeMetadata {
     return { content: audio.url, storageKey: audio.storageKey, status: "success", bytes: audio.bytes, mimeType: audio.mimeType || "audio/mpeg", durationMs: audio.durationMs, errorDetails: undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined };
 }
 
 export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: GenerationTask, nodes: CanvasNodeData[] = [node]): Promise<CanvasNodeData> {
     const mode = generationTaskMode(task, node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "image");
-    const prompt = node.metadata?.prompt || task.prompt;
+    let prompt = node.metadata?.prompt || task.prompt;
     const result = parseBackendGenerationResult(task);
 
     if (mode === "image") {
@@ -95,9 +112,23 @@ export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: 
             if (!sourceDataUrl) throw new Error("无法读取情绪编辑源图片，未使用整图重绘结果");
             resultDataUrl = await compositeEmotionImage(sourceDataUrl, image.dataUrl, emotionEdit.editRegion, emotionEdit.faceBox);
         }
-        const uploaded = image.storageKey && !emotionEdit
-            ? { url: await resolveImageUrl(image.storageKey, image.dataUrl), storageKey: image.storageKey, width: image.width || 1024, height: image.height || 1024, bytes: image.bytes || 0, mimeType: image.mimeType || "image/png" }
-            : await uploadImage(resultDataUrl);
+        const uploaded = !emotionEdit ? await storeBackendGeneratedImage(image) : await uploadImage(resultDataUrl);
+        let imagePromptResultMetadata: Pick<CanvasNodeMetadata, "imageCommandEvidence"> & Partial<Pick<CanvasNodeMetadata, "prompt">> = { imageCommandEvidence: undefined };
+        if (result.imagePromptEvidence) {
+            const promptTaskEvidence = assertCanvasImagePromptTaskEvidence(result.imagePromptEvidence);
+            const resourceId = resourceIdFromStorageKey(uploaded.storageKey);
+            if (!resourceId) throw new Error("人像质感结果缺少服务端资源身份");
+            if (!task.billingOrderId?.trim()) throw new Error("人像质感结果缺少计费订单身份");
+            imagePromptResultMetadata = buildCanvasImagePromptResultMetadata({
+                promptTaskEvidence,
+                taskId: task.id,
+                billingOrderId: task.billingOrderId,
+                resourceId,
+                width: uploaded.width,
+                height: uploaded.height,
+            });
+            prompt = promptTaskEvidence.response.imagePrompt;
+        }
         const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
         const imageSize = fitNodeSize(uploaded.width, uploaded.height, node.width || imageConfig.width, node.height || imageConfig.height);
         return {
@@ -106,7 +137,7 @@ export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: 
             width: imageSize.width,
             height: imageSize.height,
             position: { x: node.position.x + node.width / 2 - imageSize.width / 2, y: node.position.y + node.height / 2 - imageSize.height / 2 },
-            metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt, ...completedTaskMetadata(task), errorDetails: undefined },
+            metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt, ...imagePromptResultMetadata, ...completedTaskMetadata(task), errorDetails: undefined },
         };
     }
 

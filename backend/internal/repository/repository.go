@@ -81,6 +81,41 @@ func (r *Repository) Save(value any) error {
 	return r.db.Save(value).Error
 }
 
+// UpsertTaskResult stores one durable evidence record per task and result kind.
+// A recovered worker may replay the same specialist request, so this write must
+// update the existing fact instead of duplicating it.
+func (r *Repository) UpsertTaskResult(result model.Result) error {
+	if strings.TrimSpace(result.ID) == "" || strings.TrimSpace(result.UserID) == "" || strings.TrimSpace(result.TaskID) == "" || strings.TrimSpace(result.Kind) == "" {
+		return errors.New("task result identity is invalid")
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var task model.Task
+		taskQuery := tx.Select("id", "user_id", "session_id").Where("id = ?", result.TaskID)
+		if r.Dialect() == "postgres" {
+			taskQuery = taskQuery.Clauses(clause.Locking{Strength: "UPDATE"})
+		}
+		if err := taskQuery.Take(&task).Error; err != nil {
+			return err
+		}
+		if task.UserID != result.UserID || task.SessionID != result.SessionID {
+			return errors.New("task result scope conflict")
+		}
+		var existing model.Result
+		query := tx.Where("task_id = ? AND kind = ?", result.TaskID, result.Kind)
+		err := query.First(&existing).Error
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			return tx.Create(&result).Error
+		case err != nil:
+			return err
+		case existing.UserID != result.UserID || existing.SessionID != result.SessionID:
+			return errors.New("task result scope conflict")
+		default:
+			return tx.Model(&existing).Select("payload", "url").Updates(model.Result{Payload: result.Payload, URL: result.URL}).Error
+		}
+	})
+}
+
 func (r *Repository) AllTasks() ([]model.Task, error) {
 	var tasks []model.Task
 	return tasks, r.db.Find(&tasks).Error
@@ -1449,14 +1484,6 @@ func (r *Repository) CanvasUnitLink(projectID string, canvasID string, unitID st
 	return &link, nil
 }
 
-func (r *Repository) UpsertCanvasUnitLink(link *model.CanvasUnitLink) error {
-	result := r.db.Model(&model.CanvasUnitLink{}).Where("project_id = ? AND canvas_id = ? AND unit_id = ?", link.ProjectID, link.CanvasID, link.UnitID).Updates(map[string]any{"role": link.Role})
-	if result.Error != nil || result.RowsAffected > 0 {
-		return result.Error
-	}
-	return r.db.Create(link).Error
-}
-
 func (r *Repository) ProjectCanvasSummaries(userID string, projectID string) ([]model.CanvasProject, error) {
 	var canvases []model.CanvasProject
 	err := r.db.Select("id", "user_id", "project_id", "title", "created_at", "updated_at").Where("user_id = ? AND project_id = ?", userID, projectID).Order("updated_at desc").Find(&canvases).Error
@@ -1486,10 +1513,6 @@ func (r *Repository) DeleteCanvasUnitLink(projectID string, canvasID string, uni
 		}
 		return tx.Model(&model.Project{}).Where("id = ?", projectID).Updates(map[string]any{"revision": gorm.Expr("revision + 1"), "updated_at": time.Now()}).Error
 	})
-}
-
-func (r *Repository) AssignCanvasToProject(userID string, canvasID string, projectID string) error {
-	return r.db.Model(&model.CanvasProject{}).Where("id = ? AND user_id = ?", canvasID, userID).Update("project_id", projectID).Error
 }
 
 func (r *Repository) UnassignCanvasFromProject(userID string, projectID string, canvasID string, payloadJSON string, updatedAt time.Time) error {
@@ -1677,14 +1700,6 @@ func (r *Repository) ShotForProject(projectID string, shotID string) (*model.Sho
 	return &shot, nil
 }
 
-func (r *Repository) UpsertShotAssetReference(reference *model.ShotAssetReference) error {
-	result := r.db.Model(&model.ShotAssetReference{}).Where("shot_id = ? AND asset_version_id = ? AND role = ?", reference.ShotID, reference.AssetVersionID, reference.Role).Updates(map[string]any{"status": reference.Status})
-	if result.Error != nil || result.RowsAffected > 0 {
-		return result.Error
-	}
-	return r.db.Create(reference).Error
-}
-
 func (r *Repository) ProjectShotAssetReferences(projectID string) ([]model.ShotAssetReference, error) {
 	var references []model.ShotAssetReference
 	err := r.db.Table("shot_asset_references").Select("shot_asset_references.*").
@@ -1706,13 +1721,6 @@ func (r *Repository) ProjectAssetCandidate(projectID string, candidateID string)
 		return nil, err
 	}
 	return &candidate, nil
-}
-
-func (r *Repository) CreateProjectAssetCandidates(candidates []model.ProjectAssetCandidate) error {
-	if len(candidates) == 0 {
-		return nil
-	}
-	return r.db.Create(&candidates).Error
 }
 
 // ConfirmProjectAssetCandidate 将正式资产身份、首版本、项目引用和候选状态放在同一事务中，避免出现半确认数据。

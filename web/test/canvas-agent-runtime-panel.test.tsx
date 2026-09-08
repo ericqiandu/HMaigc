@@ -561,6 +561,59 @@ test("运行已终止时即使完成事件稍晚到达也不继续显示流式�
     expect(document.querySelector('[aria-label="Agent 回复"] .canvas-agent-runtime-streaming-caret')).toBeNull();
 });
 
+test("未通过交付校验的回复保留为明确的未采用证据", async () => {
+    let handlers: Parameters<AgentRuntimeClient["subscribe"]>[2] | null = null;
+    const running = runtimeView("running", { stateVersion: 3 });
+    const storage: AgentRuntimeHandleStorage = {
+        load: async () => ({ threadId: "thread-1", activeRunId: "run-1", lastSequence: 0 }),
+        save: async () => undefined,
+        clear: async () => undefined,
+    };
+    const client = runtimeClient({
+        getRun: async () => running,
+        subscribe: (_runId, _afterSequence, nextHandlers) => {
+            handlers = nextHandlers;
+            return () => undefined;
+        },
+    });
+
+    await mount(client, storage);
+    if (!handlers) throw new Error("Agent SSE 未建立订阅");
+    await act(async () =>
+        handlers?.onEvent({
+            protocolVersion: 5,
+            threadId: "thread-1",
+            runId: "run-1",
+            sequence: 2,
+            kind: "item.delta",
+            itemId: "message-1",
+            itemKind: "agent_message",
+            payload: { delta: "章节分镜已生成。", userVisible: true },
+            createdAt: "2026-08-23T00:00:00Z",
+        }),
+    );
+    await act(async () =>
+        handlers?.onEvent({
+            protocolVersion: 5,
+            threadId: "thread-1",
+            runId: "run-1",
+            sequence: 3,
+            kind: "item.failed",
+            itemId: "message-1",
+            itemKind: "agent_message",
+            payload: { message: "章节分镜已生成。", failureCode: "delivery_contract_changed" },
+            createdAt: "2026-08-23T00:00:01Z",
+        }),
+    );
+    await settle();
+
+    expect(document.querySelector('[aria-label="Agent 回复"]')).toBeNull();
+    const rejected = document.querySelector<HTMLElement>('[aria-label="未采用的 Agent 回复"]');
+    expect(rejected?.textContent).toContain("未采用");
+    expect(rejected?.textContent).toContain("章节分镜已生成。");
+    expect(rejected?.getAttribute("data-status")).toBe("failed");
+});
+
 test("启动响应丢失后复用同一 clientRequestId 收敛运行", async () => {
     const calls: string[] = [];
     const runningView = runtimeView("running", { stateVersion: 2, stepNumber: 1, userMessage: "生成三镜头短片" });

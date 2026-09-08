@@ -313,6 +313,62 @@ test("后端权威事件刷新工具结果并只向本机 Codex 交付一次", a
     assert.deepEqual(deliveries[0]?.output, { revision: 12 });
 });
 
+test("权威视图超前时仍逐条保留已订阅的工具生命周期事件", async () => {
+    let backendHandlers: Parameters<AgentRuntimeClient["subscribe"]>[2] | undefined;
+    let subscriptionOpen = false;
+    const ahead = runtimeView({ status: "succeeded", stateVersion: 7, lastEventSequence: 3 });
+    const backend = fakeRuntimeClient({
+        getRun: async () => ahead,
+        subscribe: (_runId, _afterSequence, handlers) => {
+            subscriptionOpen = true;
+            backendHandlers = handlers;
+            handlers.onOpen?.();
+            return () => {
+                subscriptionOpen = false;
+            };
+        },
+    });
+    await mount({
+        sessionStore: fakeSessionStore(null),
+        createClient: () => fakeLocalClient(),
+        localRuntimeClient: fakeLocalRuntimeClient({ startRun: async () => runtimeView({ lastEventSequence: 1 }) }),
+        runtimeClient: backend,
+    });
+    await act(async () => runtime?.connect({ baseUrl: "http://127.0.0.1:17371", token: "ab".repeat(32) }));
+    await act(async () => runtime?.submit("读取画布", { generationModels: {}, skillDirs: [], attachments: [], executionMode: "guided" }, []));
+    assert.ok(backendHandlers);
+
+    const event = (sequence: number): AgentRuntimeEvent => ({
+        protocolVersion: 5,
+        threadId: "audit-thread-1",
+        runId: "run-1",
+        sequence,
+        createdAt: `2026-09-01T00:00:0${sequence}.000Z`,
+        kind: sequence === 2 ? "item.started" : "item.completed",
+        itemId: "tool-item-1",
+        itemKind: "tool_call",
+        payload:
+            sequence === 2
+                ? { toolName: "canvas.read", toolCallId: "tool-1", actionVersion: 1 }
+                : { toolName: "canvas.read", toolCallId: "tool-1", actionVersion: 1, succeeded: true, output: { revision: 10 } },
+    });
+    await act(async () => {
+        backendHandlers?.onEvent(event(2));
+        await flushAsyncWork();
+    });
+    assert.equal(subscriptionOpen, true);
+    await act(async () => {
+        if (subscriptionOpen) backendHandlers?.onEvent(event(3));
+        await flushAsyncWork();
+    });
+
+    assert.deepEqual(
+        runtime?.runtimeEvents.map((item) => item.sequence),
+        [2, 3],
+    );
+    assert.equal(subscriptionOpen, false);
+});
+
 test("连续本机 turn 为新后端 Run 重置事件游标", async () => {
     let localEventHandler: Parameters<LocalAgentClientPort["streamEvents"]>[1] | undefined;
     let turnNumber = 0;
@@ -688,6 +744,7 @@ function fakeRuntimeClient(patch: Partial<AgentRuntimeClient> = {}): AgentRuntim
         steer: async () => view,
         interrupt: async () => view,
         submitApproval: async () => view,
+        refreshExpiredApproval: async () => view,
         submitClarificationResponse: async () => view,
         subscribe: () => () => undefined,
         ...patch,
@@ -738,7 +795,7 @@ function runtimeView(
             maxSteps: 8,
             modelRecordId: "",
             modelKey: "",
-            toolSchemaVersion: 8,
+            toolSchemaVersion: 10,
             runtimeVersion: 5,
             policyVersion: 5,
             createdAt: "2026-09-01T00:00:00.000Z",

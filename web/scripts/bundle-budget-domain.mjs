@@ -44,3 +44,15 @@ export function evaluateJavaScriptRequestBudget(files, maxRequests) {
         passed: requestCount <= maxRequests,
     };
 }
+
+export function evaluateSizeBudget(bytes, maxBytes, warningHeadroomRatio = 0.01) {
+    const remainingBytes = maxBytes - bytes;
+    const passed = remainingBytes >= 0;
+    return {
+        bytes,
+        maxBytes,
+        passed,
+        nearLimit: passed && remainingBytes / maxBytes < warningHeadroomRatio,
+        remainingBytes,
+    };
+}

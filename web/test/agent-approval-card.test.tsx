@@ -67,6 +67,17 @@ test("媒体审批卡展示模型参数、冻结积分与到期时间", async ()
     expect(card?.textContent).toContain("2099/09/01 16:30");
 });
 
+test("项目变更审批卡展示冻结项目版本和章节操作", async () => {
+    await mount(projectCall(), projectApproval(), async () => undefined);
+
+    const card = document.querySelector<HTMLElement>('[aria-label="Agent 执行审批"]');
+    expect(card?.textContent).toContain("project.apply_ops");
+    expect(card?.textContent).toContain("项目版本 7");
+    expect(card?.textContent).toContain("为章节 unit-1 新增 2 个待确认角色");
+    expect(card?.textContent).toContain("为章节 unit-1 替换为 1 个分镜");
+    expect(card?.querySelectorAll("button")).toHaveLength(2);
+});
+
 test("视觉理解审批展示资源数量、细节等级和冻结费用，但不展示内部提示词", async () => {
     await mount(visionCall(), visionApproval(), async () => undefined);
 
@@ -100,14 +111,25 @@ test("提交中的审批只锁定当前 proposal，不会复用到下一份 prop
     await act(async () => resolveFirst?.());
 });
 
-test("过期审批必须由 Agent 创建新提案且不允许继续操作", async () => {
-    await mount(mediaCall(), mediaApproval({ expiresAt: "2026-09-01T07:59:59Z" }), async () => undefined, new Date("2026-09-01T08:00:00Z"));
+test("过期审批只能请求服务端失效旧提案并重新生成", async () => {
+    const refreshes: Array<Omit<AgentApprovalDecision, "decision">> = [];
+    await mount(
+        mediaCall(),
+        mediaApproval({ expiresAt: "2026-09-01T07:59:59Z" }),
+        async () => undefined,
+        new Date("2026-09-01T08:00:00Z"),
+        async (refresh) => {
+            refreshes.push(refresh);
+        },
+    );
 
     const alert = document.querySelector<HTMLElement>('[role="alert"]');
     expect(alert?.textContent).toContain("审批已过期");
-    expect(alert?.textContent).toContain("由 Agent 创建新提案");
+    expect(alert?.textContent).toContain("旧提案不会执行");
     expect(buttons("批准执行")).toHaveLength(0);
     expect(buttons("拒绝执行")).toHaveLength(0);
+    await act(async () => button("重新生成提案").click());
+    expect(refreshes).toEqual([{ toolCallId: "media-1", actionVersion: 4, proposalHash: "b".repeat(64) }]);
 });
 
 test("提案身份与当前工具调用不一致时显式失败", async () => {
@@ -119,16 +141,40 @@ test("提案身份与当前工具调用不一致时显式失败", async () => {
     expect(document.querySelectorAll("button")).toHaveLength(0);
 });
 
-async function mount(call: AgentToolCall, pendingApproval: AgentPendingApproval, onDecision: (decision: AgentApprovalDecision) => Promise<void>, now = new Date("2026-09-01T08:00:00Z")) {
-    await mountMany([{ call, approval: pendingApproval, onDecision }], now);
+async function mount(
+    call: AgentToolCall,
+    pendingApproval: AgentPendingApproval,
+    onDecision: (decision: AgentApprovalDecision) => Promise<void>,
+    now = new Date("2026-09-01T08:00:00Z"),
+    onRefresh: (refresh: Omit<AgentApprovalDecision, "decision">) => Promise<void> = async () => undefined,
+) {
+    await mountMany([{ call, approval: pendingApproval, onDecision, onRefresh }], now);
 }
 
-async function mountMany(cards: Array<{ call: AgentToolCall; approval: AgentPendingApproval; onDecision: (decision: AgentApprovalDecision) => Promise<void> }>, now = new Date("2026-09-01T08:00:00Z")) {
+async function mountMany(
+    cards: Array<{
+        call: AgentToolCall;
+        approval: AgentPendingApproval;
+        onDecision: (decision: AgentApprovalDecision) => Promise<void>;
+        onRefresh?: (refresh: Omit<AgentApprovalDecision, "decision">) => Promise<void>;
+    }>,
+    now = new Date("2026-09-01T08:00:00Z"),
+) {
     const container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
     await act(async () => {
-        root?.render(createElement(App, null, createElement("div", { className: "agent-approval-card-test-list" }, ...cards.map((card) => createElement(AgentApprovalCard, { key: card.approval.proposalHash, ...card, busy: false, muted: "#777", now })))));
+        root?.render(
+            createElement(
+                App,
+                null,
+                createElement(
+                    "div",
+                    { className: "agent-approval-card-test-list" },
+                    ...cards.map((card) => createElement(AgentApprovalCard, { key: card.approval.proposalHash, ...card, onRefresh: card.onRefresh ?? (async () => undefined), busy: false, muted: "#777", now })),
+                ),
+            ),
+        );
     });
 }
 
@@ -169,6 +215,37 @@ function mediaCall(overrides: Partial<Pick<AgentToolCall, "toolCallId" | "action
             clientRequestId: "generate-video-1",
         },
         expectedDelivery: { kind: "generated_asset", requiredArtifacts: ["video"], completionCriteria: [{ fact: "resource", artifact: "video" }] },
+    };
+}
+
+function projectCall(): AgentToolCall {
+    return {
+        toolCallId: "project-change-1",
+        toolName: "project.apply_ops",
+        actionVersion: 1,
+        arguments: {
+            domainProjectId: "project-1",
+            baseRevision: 7,
+            clientMutationId: "project-mutation-1",
+            operations: [
+                {
+                    operationId: "characters-1",
+                    type: "create_character_candidates",
+                    unitId: "unit-1",
+                    candidates: [
+                        { name: "小明", description: "青年侦探", appearance: "黑色短发", personality: "冷静", voice: "低沉", role: "主角", sourceEvidence: "小明走进雨夜。" },
+                        { name: "小亮", description: "记者", appearance: "棕色风衣", personality: "敏锐", voice: "清亮", role: "配角", sourceEvidence: "小亮举起相机。" },
+                    ],
+                },
+                {
+                    operationId: "shots-1",
+                    type: "replace_unit_shots",
+                    unitId: "unit-1",
+                    shots: [{ title: "雨夜重逢", description: "中景，两人在巷口重逢。", durationMs: 5_000 }],
+                },
+            ],
+        },
+        expectedDelivery: { kind: "project_change", targetProjectId: "project-1", completionCriteria: [{ fact: "project_revision" }] },
     };
 }
 
@@ -222,6 +299,16 @@ function visionApproval(): AgentPendingApproval {
         proposalHash: "d".repeat(64),
         effect: { kind: "vision_analysis", summary: "理解 2 张图片", targetIds: ["resource-image-1", "resource-image-2"] },
         quote: { modelRecordId: "vision-record-1", modelKey: "deepseek-v4-flash-vision-exp", priceVersion: 4, amountMicrocredits: 1_000 },
+    });
+}
+
+function projectApproval(): AgentPendingApproval {
+    return approval({
+        toolCallId: "project-change-1",
+        toolName: "project.apply_ops",
+        actionVersion: 1,
+        proposalHash: "e".repeat(64),
+        effect: { kind: "project_mutation", summary: "更新第一章角色与分镜", targetIds: ["project-1", "unit-1"] },
     });
 }
 

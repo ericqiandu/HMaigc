@@ -52,8 +52,8 @@ func TestBuiltinsExposeValidatedFirstPartySkills(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(skills) != 13 {
-		t.Fatalf("builtin skills = %d, want 13", len(skills))
+	if len(skills) != 14 {
+		t.Fatalf("builtin skills = %d, want 14", len(skills))
 	}
 	previousDir := ""
 	for _, skill := range skills {
@@ -81,7 +81,8 @@ func TestBuiltinsAuthorizeOnlyAtomicCapabilities(t *testing.T) {
 	allowed := map[agentruntime.AgentToolName]struct{}{
 		agentruntime.ToolCanvasRead: {}, agentruntime.ToolCanvasApplyOps: {},
 		agentruntime.ToolAssetsRead: {}, agentruntime.ToolAssetsPublish: {},
-		agentruntime.ToolMediaGenerate: {}, agentruntime.ToolSkillsLoad: {},
+		agentruntime.ToolProjectApplyOps: {},
+		agentruntime.ToolMediaGenerate:   {}, agentruntime.ToolSkillsLoad: {},
 	}
 	for _, skill := range skills {
 		for _, tool := range skill.CapabilityManifest.Tools {

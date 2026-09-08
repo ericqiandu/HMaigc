@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
 
-import { applyCanvasLiveConnectionDrag, applyCanvasLiveNodeDrag, clearCanvasLiveConnectionDrag, clearCanvasLiveNodeDrag, createFrameDropContext, findFrameDropTargetFromContext, resolveCanvasLiveConnectionDragTargets, resolveCanvasLiveNodeDragTargets } from "../src/lib/canvas/canvas-drag-performance";
+import {
+    applyCanvasLiveConnectionDrag,
+    applyCanvasLiveNodeDrag,
+    clearCanvasLiveConnectionDrag,
+    clearCanvasLiveNodeDrag,
+    createFrameDropContext,
+    findFrameDropTargetFromContext,
+    resolveCanvasLiveConnectionDragTargets,
+    resolveCanvasLiveNodeDragTargets,
+} from "../src/lib/canvas/canvas-interaction-runtime";
 import { buildCanvasResourceReferencesFromGraph, buildNodeMentionReferencesByNodeId, createCanvasResourceGraph } from "../src/lib/canvas/canvas-resource-references";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../src/types/canvas";
 
@@ -87,10 +96,7 @@ describe("canvas performance hot paths", () => {
 
         applyCanvasLiveConnectionDrag(targets, { x: 20, y: -10 });
         const incidentPaths = surface.querySelectorAll<SVGPathElement>("[data-canvas-connection-id='incident'] path");
-        expect(Array.from(incidentPaths).map((path) => path.getAttribute("d"))).toEqual([
-            "M 120 40 C 210 40, 210 90, 300 90",
-            "M 120 40 C 210 40, 210 90, 300 90",
-        ]);
+        expect(Array.from(incidentPaths).map((path) => path.getAttribute("d"))).toEqual(["M 120 40 C 210 40, 210 90, 300 90", "M 120 40 C 210 40, 210 90, 300 90"]);
         expect(surface.querySelector("[data-canvas-connection-id='untouched'] path")?.getAttribute("d")).toBe("original-untouched");
         expect(surface.querySelector("[data-canvas-connection-id='incident'] linearGradient")?.getAttribute("x1")).toBe("120");
 
@@ -127,5 +133,83 @@ describe("canvas performance hot paths", () => {
 
         expect(source).toContain("connectionHitIndexRef.current = createCanvasConnectionHitIndex(nodesRef.current)");
         expect(source).not.toContain("[...nodesRef.current]");
+    });
+
+    test("keeps node and frame resize mousemove handlers on CSS preview only", async () => {
+        const nodeSource = await Bun.file(new URL("../src/components/canvas/canvas-node.tsx", import.meta.url)).text();
+        const frameSource = await Bun.file(new URL("../src/components/canvas/canvas-frame-node.tsx", import.meta.url)).text();
+
+        for (const source of [nodeSource, frameSource]) {
+            const moveStart = source.indexOf("const handleResizeMove");
+            const moveEnd = source.indexOf("const handleResizeUp", moveStart);
+            const moveHandler = source.slice(moveStart, moveEnd);
+            expect(moveHandler).toContain("applyCanvasLiveResize");
+            expect(moveHandler).not.toContain("onResizeCommit");
+            expect(moveHandler).not.toContain("setNodes");
+            expect(moveHandler).not.toContain("JSON.stringify");
+            expect(moveHandler).not.toContain("fetch(");
+        }
+    });
+
+    test("defers canvas-store serialization outside the Zustand setItem adapter", async () => {
+        const source = await Bun.file(new URL("../src/stores/canvas/use-canvas-store.ts", import.meta.url)).text();
+        const setItemStart = source.indexOf("setItem: (name, value) =>");
+        const setItemEnd = source.indexOf("removeItem:", setItemStart);
+        const setItemAdapter = source.slice(setItemStart, setItemEnd);
+
+        expect(setItemStart).toBeGreaterThan(-1);
+        expect(setItemAdapter).toContain("schedule(name, value)");
+        expect(setItemAdapter).not.toContain("JSON.stringify");
+        expect(setItemAdapter).not.toContain("localForageStorage.setItem");
+    });
+
+    test("queries the render index on viewport changes without scanning the full graph", async () => {
+        const source = await Bun.file(new URL("../src/pages/canvas/use-canvas-render-model.ts", import.meta.url)).text();
+        const renderIndexSource = await Bun.file(new URL("../src/lib/canvas/canvas-render-index.ts", import.meta.url)).text();
+        const queryStart = source.indexOf("const renderQuery = useMemo");
+        const queryEnd = source.indexOf("const imageAssets", queryStart);
+        const viewportProjection = source.slice(queryStart, queryEnd);
+
+        expect(source).toContain("createCanvasRenderIndex(nodes, connections, renderHiddenNodeIds)");
+        expect(queryStart).toBeGreaterThan(-1);
+        expect(viewportProjection).toContain("renderIndex.query");
+        expect(viewportProjection).not.toContain("nodes.filter");
+        expect(viewportProjection).not.toContain("nodes.forEach");
+        expect(viewportProjection).not.toContain("connections.flatMap");
+        expect(viewportProjection).not.toContain("JSON.stringify");
+        expect(renderIndexSource).toContain("queryOversizedNodeTree");
+        expect(renderIndexSource).not.toContain("for (const entry of oversizedNodes)");
+    });
+
+    test("benchmarks every commercial canvas scale and gesture against mixed graphs", async () => {
+        const fixtureSource = await Bun.file(new URL("../perf/canvas-performance-fixture.tsx", import.meta.url)).text();
+        const runnerSource = await Bun.file(new URL("../scripts/run-canvas-performance-benchmark.mjs", import.meta.url)).text();
+
+        expect(fixtureSource).toContain("window.runCanvasBenchmarkScenario");
+        expect(fixtureSource).toContain("createCanvasRenderIndex");
+        expect(fixtureSource).toContain("projectSerialization");
+        expect(fixtureSource).toContain("networkRequest");
+        expect(fixtureSource).toContain("fullGraphScan");
+        expect(fixtureSource).not.toContain("Math.random");
+        expect(runnerSource).toContain("const RUNS_PER_SCALE = 3");
+        expect(runnerSource).toContain("const NODE_COUNTS = [50, 200, 500]");
+        expect(runnerSource).toContain("CANVAS_BENCHMARK_SCENARIOS");
+        expect(runnerSource).not.toContain("writeFileSync(BASELINE");
+    });
+
+    test("keeps alignment and selection-box pointer moves off full-canvas scans", async () => {
+        const domainSource = await Bun.file(new URL("../src/lib/canvas/canvas-project-domain.ts", import.meta.url)).text();
+        const selectionSource = await Bun.file(new URL("../src/pages/canvas/use-canvas-selection-controller.ts", import.meta.url)).text();
+
+        expect(domainSource).not.toContain("context.targets.forEach");
+        expect(selectionSource).toContain("selectionIndexRef.current?.query");
+        expect(selectionSource).not.toContain("selectionCandidatesRef.current.forEach");
+    });
+
+    test("keeps the optional node prompt editor outside the initial canvas dependency closure", async () => {
+        const source = await Bun.file(new URL("../src/pages/canvas/project.tsx", import.meta.url)).text();
+
+        expect(source).toContain('const CanvasNodePromptPanel = lazy(() => import("@/components/canvas/canvas-node-prompt-panel")');
+        expect(source).not.toContain('import { CanvasNodePromptPanel');
     });
 });

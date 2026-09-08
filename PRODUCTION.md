@@ -48,6 +48,19 @@ bun run build
 
 上述检查必须记录审计时间、候选与 blocker 数量、操作者、目标版本、索引验证结果、烟雾测试结果和回滚点。没有证据等同于未通过。
 
+### 图片 Prompt Specialist 分阶段放量
+
+图片节点的 `portraitTexture` 属于付费生成链路，必须按“基础设施就绪 → 管理员灰度 → 用户放量”顺序启用，不能随 Backend/Web 镜像发布自动全量开启：
+
+1. 首次部署保持 `CANVAS_IMAGE_PROMPT_SPECIALIST_ENABLED=false`。数据库迁移会原子创建一份五项能力全部关闭的完整产品灰度配置，且不会覆盖管理员已经保存的配置；迁移后缺少或损坏该配置属于部署失败，读取接口仍必须显式报错，不能在运行时以默认值代替。
+2. 在受保护的 `production.env` 配置 `CANVAS_IMAGE_PROMPT_SPECIALIST_URL`、独立的 `CANVAS_IMAGE_PROMPT_HMAC_SERVICE_ID`、至少 32 字节的 `CANVAS_IMAGE_PROMPT_HMAC_SECRET` 与 `CANVAS_IMAGE_PROMPT_TIMEOUT_MS`。同时配置 `CANVAS_IMAGE_PROMPT_RELAY_ALLOWED_SERVICE_ID` 和另一枚 32–512 UTF-8 字节的 `CANVAS_IMAGE_PROMPT_RELAY_HMAC_SECRET`，并确保 Redis 可用；反向密钥必须与正向密钥不同，且与 Hono 的 `IMAGE_PROMPT_HMAIGC_RELAY_HMAC_SECRET` 精确配对。生产 URL 必须是精确的 HTTPS `/internal/v1/specialists/image-prompt` 地址，Hono 回调地址必须是 HMaigc 的 `/internal/v1/model-relays/image-prompt/chat-completions`。
+3. 在后台“模型中心 → Agent 模型配置”单独配置“图片提示词模型”。该模型与通用文本决策模型相互独立，必须选择已发布、已定价且绑定健康版本化供应商凭据的系统文本模型；缺失、失效或误选官方直连模型时，图片命令必须显式失败，禁止复用文本决策模型或自动降级。
+4. 发布启用 Specialist 的 Backend 镜像后，仅将验证账号加入 `canvasToolRegistryV2.adminAllowlist`。使用真实图片执行一次受控付费烟雾测试，核对报价确认、BillingOrder、Task、Resource、`image_prompt_evidence`、结构化日志和最终图片节点全部属于同一用户/团队作用域。
+5. 只有受控测试通过，才逐步提高 `canvasToolRegistryV2.percentage`；每次调整必须留下 `product_rollouts.update` 管理审计记录，并观察 Specialist 稳定错误码、供应商失败率、积分结算与资产写入。
+6. 发生异常时先把 `canvasToolRegistryV2.percentage` 归零并清空 allowlist，阻止新请求；不得删除已经成功生成的图片或证据。随后回滚 Backend/Web 镜像或修复 Specialist，历史 BillingOrder、Task、Resource 和结果记录必须保持追加式可追溯。
+
+正向与反向 HMAC 密钥必须彼此独立，也不得复用用户会话、Hono-to-agents Bearer Token、支付、模型渠道或 OSS 密钥。密钥轮换需要协调对应方向的两端切换窗口；在当前单密钥契约下，禁止通过同时接受旧新密钥的兼容分支延长窗口。图片提示词模型身份和加密 provider endpoint/credential version 只由 HMaigc 冻结与解析；Hono、agents-cli 和 New API 均不是该 Specialist 的模型事实源。
+
 ## 2. 发布
 
 日常发布不登录服务器执行源码命令：

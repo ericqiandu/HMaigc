@@ -7,7 +7,8 @@ import { CanvasNode } from "@/components/canvas/canvas-node";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { isFrameNode } from "@/lib/canvas/canvas-frame";
-import type { CanvasConnection, CanvasNodeData, ConnectionHandle, Position, SelectionBox } from "@/types/canvas";
+import type { CanvasMediaVisibilityTier } from "@/lib/canvas/canvas-render-index";
+import type { CanvasConnection, CanvasMediaIntrinsicSize, CanvasNodeData, ConnectionHandle, Position, SelectionBox } from "@/types/canvas";
 
 type DisplayConnection = { connection: CanvasConnection; from: CanvasNodeData; to: CanvasNodeData };
 type SelectedConnectionAction = { connectionId: string; position: Position };
@@ -30,6 +31,7 @@ type CanvasProjectWorldLayersProps = {
     connectionTargetNodeId: string | null;
     nodeById: Map<string, CanvasNodeData>;
     visibleNodes: CanvasNodeData[];
+    mediaTierByNodeId: ReadonlyMap<string, CanvasMediaVisibilityTier>;
     frameChildrenById: Map<string, CanvasNodeData[]>;
     dragPreview: DragPreview;
     selectedNodeIds: Set<string>;
@@ -58,7 +60,8 @@ type CanvasProjectWorldLayersProps = {
     onNodeHoverStart: (nodeId: string) => void;
     onNodeHoverEnd: (nodeId: string) => void;
     onConnectStart: (event: ReactPointerEvent, nodeId: string, handleType: "source" | "target", handleId?: string) => void;
-    onNodeResize: (nodeId: string, width: number, height: number, position?: Position) => void;
+    onNodeResizeCommit: (nodeId: string, width: number, height: number, position?: Position) => void;
+    onVideoIntrinsicSize: (nodeId: string, size: CanvasMediaIntrinsicSize) => void;
     onToggleFrame: (nodeId: string) => void;
     onNodeTitleChange: (nodeId: string, title: string) => void;
     onNodeContextMenu: (event: ReactMouseEvent, nodeId: string) => void;
@@ -124,9 +127,10 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                         scale={viewportScale}
                         isSelected={props.selectedNodeIds.has(node.id)}
                         isDropTarget={props.frameDropTargetId === node.id}
+                        mediaVisibilityTier={props.mediaTierByNodeId.get(node.id) ?? "visible"}
                         readOnly={props.readOnly}
                         onMouseDown={props.onNodeMouseDown}
-                        onResize={props.onNodeResize}
+                        onResizeCommit={props.onNodeResizeCommit}
                         onToggleCollapsed={props.onToggleFrame}
                         onTitleChange={props.onNodeTitleChange}
                         onContextMenu={props.onNodeContextMenu}
@@ -149,6 +153,7 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                         batchRecovering={props.collapsingBatchIds.has(node.id)}
                         batchMotion={props.batchMotionById.get(node.id)}
                         showImageInfo={props.showImageInfo}
+                        mediaVisibilityTier={props.mediaTierByNodeId.get(node.id) ?? "visible"}
                         reduceMediaEffects={props.reduceMediaEffects || props.isNodeDragging || props.mediaEffectsDisabledNodeId === node.id}
                         readOnly={props.readOnly}
                         resourceLabel={props.resourceReferenceByNodeId.get(node.id)}
@@ -158,7 +163,8 @@ export function CanvasProjectWorldLayers(props: CanvasProjectWorldLayersProps) {
                         onHoverStart={props.onNodeHoverStart}
                         onHoverEnd={props.onNodeHoverEnd}
                         onConnectStart={props.onConnectStart}
-                        onResize={props.onNodeResize}
+                        onResizeCommit={props.onNodeResizeCommit}
+                        onVideoIntrinsicSize={props.readOnly ? undefined : props.onVideoIntrinsicSize}
                         onContentChange={props.onNodeContentChange}
                         onToggleBatch={props.onToggleBatch}
                         onSetBatchPrimary={props.onSetBatchPrimary}

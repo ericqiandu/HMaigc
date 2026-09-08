@@ -194,7 +194,7 @@ func ValidateSkillSelectionsForSpecialist(skills []SkillSelection, specialist Sp
 func validSkillCapabilityToolName(tool AgentToolName) bool {
 	switch tool {
 	case ToolSpecialistDelegate, ToolVisionAnalyze, ToolMediaGenerate, ToolMediaAssemble, ToolCanvasProject,
-		ToolCanvasRead, ToolCanvasApplyOps, ToolAssetsRead, ToolAssetsPublish, ToolSkillsLoad:
+		ToolCanvasRead, ToolCanvasApplyOps, ToolAssetsRead, ToolAssetsPublish, ToolProjectRead, ToolProjectApplyOps, ToolSkillsLoad:
 		return true
 	default:
 		return false

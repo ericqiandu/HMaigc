@@ -9,7 +9,7 @@ import { imageMetadata, parseBackendGenerationResult } from "@/lib/canvas/canvas
 import { systemProviderTaskConfig } from "@/lib/ai/system-provider-config";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import type { ConfirmedTaskBillingQuote } from "@/lib/billing/task-billing-quote";
-import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
+import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasImageGenerationType, type CanvasImagePromptCommandV1, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { resolveVideoGenerationMode, videoModeOperation } from "@/lib/canvas/canvas-video-generation-mode";
@@ -30,6 +30,7 @@ export async function runBackendCanvasGenerationTask({
     metadata,
     onTaskCreated,
     expectedQuote,
+    imagePromptCommand,
 }: {
     projectId: string;
     nodeId: string;
@@ -44,7 +45,11 @@ export async function runBackendCanvasGenerationTask({
     metadata?: Record<string, unknown>;
     onTaskCreated?: (task: GenerationTask) => void;
     expectedQuote?: ConfirmedTaskBillingQuote;
+    imagePromptCommand?: CanvasImagePromptCommandV1;
 }) {
+    if ((mode === "image" || mode === "video") && !expectedQuote) {
+        throw new Error("付费生成任务缺少用户已确认报价");
+    }
     const taskReferenceImages = await Promise.all(referenceImages.map(prepareBackendImageReference));
     const taskReferenceVideos = await Promise.all(referenceVideos.map((video) => mediaToBackendReference(video)));
     const taskReferenceAudios = await Promise.all(referenceAudios.map((audio) => mediaToBackendReference(audio)));
@@ -69,6 +74,7 @@ export async function runBackendCanvasGenerationTask({
                 referenceVideos: taskReferenceVideos,
                 referenceAudios: taskReferenceAudios,
                 mask: taskMask,
+                ...(imagePromptCommand ? { imagePromptCommand } : {}),
                 metadata: { nodeId, ...metadata },
             },
         },

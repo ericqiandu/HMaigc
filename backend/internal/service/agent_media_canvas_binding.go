@@ -1,18 +1,28 @@
 package service
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"infinite-canvas/backend/internal/agentruntime"
 	"infinite-canvas/backend/internal/model"
 )
 
-const agentMediaPromptCanvasCommitAttempts = 3
+const agentMediaResultCanvasCommitAttempts = 3
+
+type agentMediaCanvasRequestFacts struct {
+	RequestedAspectRatio string
+	RequestedResolution  string
+	StringMetadata       map[string]string
+	NumberMetadata       map[string]int64
+	NullMetadata         []string
+}
 
 func (s *Service) validateAgentMediaTargetCanvasNode(scope agentruntime.Scope, nodeID string, mediaKind agentruntime.MediaKind) error {
 	canvas, _, err := s.canvasAccess(scope.ActorUserID, scope.CanvasID)
@@ -50,23 +60,63 @@ func (s *Service) validateAgentMediaTargetCanvasNode(scope agentruntime.Scope, n
 	return nil
 }
 
-func (s *Service) persistAgentMediaPromptOnCanvas(
+func (s *Service) persistAgentMediaResultOnCanvas(
 	scope agentruntime.Scope,
 	call agentruntime.ToolCallDecision,
 	arguments agentruntime.MediaGenerateArguments,
-	prompt string,
+	task *model.Task,
+	receipt agentruntime.MediaGenerateResult,
 ) error {
-	prompt = strings.TrimSpace(prompt)
+	if task == nil || task.ID != receipt.TaskID || task.UserID != scope.ActorUserID || task.ProjectID != scope.CanvasID ||
+		task.Operation != agentMediaGenerationOperationForRun(scope.RunID) || task.Status != model.TaskStatusSucceeded ||
+		task.BillingOrderID == "" || task.BillingOrderID != receipt.BillingOrderID || task.Capability != string(arguments.MediaKind) ||
+		task.CompletedAt == nil || task.CreatedAt.IsZero() || task.UpdatedAt.IsZero() ||
+		receipt.MediaKind != arguments.MediaKind || receipt.ClientRequestID != arguments.ClientRequestID || len(receipt.Resources) < 1 {
+		return errors.New("media.generate successful task facts conflict with the target canvas binding")
+	}
+	prompt := strings.TrimSpace(task.Prompt)
 	if prompt == "" {
 		return errors.New("media.generate authoritative prompt is empty")
 	}
-	clientMutationID := agentMediaPromptCanvasMutationID(scope, call)
-	for attempt := 0; attempt < agentMediaPromptCanvasCommitAttempts; attempt++ {
+	primary := receipt.Resources[0]
+	if primary.Kind != arguments.MediaKind || primary.ResourceID == "" || primary.URL != "/api/resources/"+primary.ResourceID+"/file" {
+		return errors.New("media.generate primary resource facts are invalid")
+	}
+	resource, err := s.agentResourceForScope(scope, primary.ResourceID)
+	if err != nil || resource.Status != model.ResourceStatusReady || resource.Kind != string(arguments.MediaKind) {
+		return errors.Join(errors.New("media.generate primary resource is unavailable in the approved tenant scope"), err)
+	}
+	order, err := s.repo.BillingOrder(task.BillingOrderID)
+	if err != nil {
+		return errors.Join(errors.New("media.generate billing model facts are unavailable"), err)
+	}
+	if order.ID != receipt.BillingOrderID || order.UserID != scope.ActorUserID || order.TeamID != taskTeamID(scope) || order.TaskID != task.ID ||
+		order.ChannelID == "" || order.ChannelModelID != arguments.ModelRecordID || order.Model != arguments.ModelKey ||
+		order.Capability != string(arguments.MediaKind) || order.PriceVersion < 1 || order.Status != model.BillingStatusSettled {
+		return errors.New("media.generate billing model facts conflict with the approved generation")
+	}
+	generationModel := agentruntime.GenerationModelSelection{
+		ChannelID: order.ChannelID, ModelRecordID: order.ChannelModelID, Model: order.Model, PriceVersion: order.PriceVersion,
+	}
+	clientMutationID := agentMediaResultCanvasMutationID(scope, call)
+	for attempt := 0; attempt < agentMediaResultCanvasCommitAttempts; attempt++ {
 		canvas, _, err := s.canvasAccess(scope.ActorUserID, scope.CanvasID)
 		if err != nil {
 			return err
 		}
-		updatedNode, changed, err := agentMediaPromptBoundNode(canvas.PayloadJSON, arguments.TargetCanvasNodeID, arguments.MediaKind, prompt)
+		updatedNode, changed, err := agentMediaResultBoundNode(
+			canvas.PayloadJSON,
+			arguments.TargetCanvasNodeID,
+			arguments.MediaKind,
+			prompt,
+			*task,
+			primary,
+			*resource,
+			call,
+			arguments,
+			generationModel,
+			scope.RunID,
+		)
 		if err != nil {
 			return err
 		}
@@ -86,10 +136,26 @@ func (s *Service) persistAgentMediaPromptOnCanvas(
 			return err
 		}
 	}
-	return errors.New("media.generate target canvas changed while persisting the authoritative prompt")
+	return errors.New("media.generate target canvas changed while persisting the successful result")
 }
 
-func agentMediaPromptBoundNode(payload string, nodeID string, mediaKind agentruntime.MediaKind, prompt string) (json.RawMessage, bool, error) {
+func agentMediaResultBoundNode(
+	payload string,
+	nodeID string,
+	mediaKind agentruntime.MediaKind,
+	prompt string,
+	task model.Task,
+	primary agentruntime.MediaGeneratedResourceResult,
+	resource model.Resource,
+	call agentruntime.ToolCallDecision,
+	arguments agentruntime.MediaGenerateArguments,
+	generationModel agentruntime.GenerationModelSelection,
+	runID string,
+) (json.RawMessage, bool, error) {
+	if generationModel.ChannelID == "" || generationModel.ModelRecordID != arguments.ModelRecordID ||
+		generationModel.Model != arguments.ModelKey || generationModel.PriceVersion < 1 {
+		return nil, false, errors.New("media.generate generation model facts conflict with the approved request")
+	}
 	var document agentCanvasStoredDocument
 	if json.Unmarshal([]byte(payload), &document) != nil || document.Nodes == nil {
 		return nil, false, errors.New("media.generate target canvas facts are invalid")
@@ -103,29 +169,171 @@ func agentMediaPromptBoundNode(payload string, nodeID string, mediaKind agentrun
 		return nil, false, errors.New("media.generate target canvas node is missing")
 	}
 	var facts struct {
-		Type     string `json:"type"`
-		Metadata struct {
-			Prompt          string  `json:"prompt"`
-			ComposerContent *string `json:"composerContent"`
-		} `json:"metadata"`
+		Type string `json:"type"`
 	}
 	if json.Unmarshal(current, &facts) != nil || facts.Type != string(mediaKind) {
 		return nil, false, errors.New("media.generate target canvas node kind conflicts with the generated media")
 	}
-	if facts.Metadata.Prompt == prompt && facts.Metadata.ComposerContent != nil && *facts.Metadata.ComposerContent == prompt {
-		return nil, false, nil
+	metadata := map[string]json.RawMessage{
+		"errorDetails":            json.RawMessage("null"),
+		"generationErrorCode":     json.RawMessage("null"),
+		"failedPromptFingerprint": json.RawMessage("null"),
+		"naturalWidth":            json.RawMessage("null"),
+		"naturalHeight":           json.RawMessage("null"),
+		"durationMs":              json.RawMessage("null"),
 	}
-	patch, err := json.Marshal(map[string]map[string]string{
-		"metadata": {"prompt": prompt, "composerContent": prompt},
+	requestFacts, err := agentMediaCanvasRequestMetadata(arguments)
+	if err != nil {
+		return nil, false, err
+	}
+	values := map[string]string{
+		"prompt": prompt, "composerContent": prompt,
+		"content": primary.URL, "storageKey": "resource:" + primary.ResourceID, "status": "success",
+		"taskId": task.ID, "taskStatus": string(model.TaskStatusSucceeded), "taskStage": task.Stage,
+		"taskCreatedAt": task.CreatedAt.UTC().Format(time.RFC3339Nano), "taskUpdatedAt": task.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		"mimeType": resource.MimeType, "channelId": generationModel.ChannelID, "model": generationModel.Model,
+	}
+	for key, value := range requestFacts.StringMetadata {
+		values[key] = value
+	}
+	for _, key := range requestFacts.NullMetadata {
+		metadata[key] = json.RawMessage("null")
+	}
+	for key, value := range values {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, false, err
+		}
+		metadata[key] = encoded
+	}
+	numberValues := map[string]int64{"taskProgress": 100, "bytes": resource.Size}
+	for key, value := range requestFacts.NumberMetadata {
+		numberValues[key] = value
+	}
+	for key, value := range numberValues {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, false, err
+		}
+		metadata[key] = encoded
+	}
+	evidence, err := json.Marshal(struct {
+		RunID                string `json:"runId"`
+		ToolCallID           string `json:"toolCallId"`
+		ActionVersion        int    `json:"actionVersion"`
+		TaskID               string `json:"taskId"`
+		BillingOrderID       string `json:"billingOrderId"`
+		ResourceID           string `json:"resourceId"`
+		ClientRequestID      string `json:"clientRequestId"`
+		ChannelID            string `json:"channelId"`
+		ModelRecordID        string `json:"modelRecordId"`
+		ModelKey             string `json:"modelKey"`
+		PriceVersion         int64  `json:"priceVersion"`
+		RequestedAspectRatio string `json:"requestedAspectRatio,omitempty"`
+		RequestedResolution  string `json:"requestedResolution,omitempty"`
+		ActualWidth          int    `json:"actualWidth,omitempty"`
+		ActualHeight         int    `json:"actualHeight,omitempty"`
+		ActualDurationMS     int64  `json:"actualDurationMs,omitempty"`
+	}{
+		RunID: runID, ToolCallID: call.ToolCallID, ActionVersion: call.ActionVersion,
+		TaskID: task.ID, BillingOrderID: task.BillingOrderID, ResourceID: primary.ResourceID,
+		ClientRequestID: arguments.ClientRequestID, ChannelID: generationModel.ChannelID,
+		ModelRecordID: generationModel.ModelRecordID, ModelKey: generationModel.Model, PriceVersion: generationModel.PriceVersion,
+		RequestedAspectRatio: requestFacts.RequestedAspectRatio, RequestedResolution: requestFacts.RequestedResolution,
+		ActualWidth: resource.Width, ActualHeight: resource.Height, ActualDurationMS: resource.DurationMs,
 	})
 	if err != nil {
 		return nil, false, err
 	}
+	metadata["generationEvidence"] = evidence
+	if resource.Width > 0 {
+		metadata["naturalWidth"], err = json.Marshal(resource.Width)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	if resource.Height > 0 {
+		metadata["naturalHeight"], err = json.Marshal(resource.Height)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	if resource.DurationMs > 0 {
+		metadata["durationMs"], err = json.Marshal(resource.DurationMs)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	patch, err := json.Marshal(struct {
+		Metadata map[string]json.RawMessage `json:"metadata"`
+	}{Metadata: metadata})
+	if err != nil {
+		return nil, false, err
+	}
 	updated, err := applyAgentCanvasNodePatch(current, nodeID, patch)
-	return updated, err == nil, err
+	if err != nil {
+		return nil, false, err
+	}
+	currentCanonical, currentErr := canonicalAgentJSON(current)
+	updatedCanonical, updatedErr := canonicalAgentJSON(updated)
+	if currentErr != nil || updatedErr != nil {
+		return nil, false, errors.Join(errors.New("media.generate target canvas node facts are invalid"), currentErr, updatedErr)
+	}
+	if bytes.Equal(currentCanonical, updatedCanonical) {
+		return nil, false, nil
+	}
+	return updated, true, nil
 }
 
-func agentMediaPromptCanvasMutationID(scope agentruntime.Scope, call agentruntime.ToolCallDecision) string {
-	digest := sha256.Sum256([]byte(fmt.Sprintf("agent-media-prompt\x00%s\x00%s\x00%d", scope.RunID, call.ToolCallID, call.ActionVersion)))
-	return "agent-media-prompt-" + hex.EncodeToString(digest[:16])
+func agentMediaCanvasRequestMetadata(arguments agentruntime.MediaGenerateArguments) (agentMediaCanvasRequestFacts, error) {
+	facts := agentMediaCanvasRequestFacts{StringMetadata: map[string]string{}, NumberMetadata: map[string]int64{}}
+	switch arguments.MediaKind {
+	case agentruntime.MediaKindImage:
+		parameters, err := decodeAgentImageGenerationParameters(arguments.Parameters)
+		if err != nil {
+			return agentMediaCanvasRequestFacts{}, errors.Join(errors.New("media.generate approved image parameters are invalid"), err)
+		}
+		facts.RequestedAspectRatio = parameters.AspectRatio
+		facts.RequestedResolution = parameters.Resolution
+		facts.StringMetadata["size"] = parameters.AspectRatio
+		facts.StringMetadata["quality"] = parameters.Quality
+		facts.StringMetadata["transparentBackground"] = fmt.Sprintf("%t", parameters.TransparentBackground)
+		facts.NumberMetadata["count"] = int64(parameters.Count)
+	case agentruntime.MediaKindVideo:
+		parameters, err := decodeAgentVideoGenerationParameters(arguments.Parameters)
+		if err != nil {
+			return agentMediaCanvasRequestFacts{}, errors.Join(errors.New("media.generate approved video parameters are invalid"), err)
+		}
+		facts.RequestedAspectRatio = parameters.AspectRatio
+		facts.RequestedResolution = parameters.Resolution
+		facts.StringMetadata["size"] = parameters.AspectRatio
+		facts.StringMetadata["vquality"] = parameters.Resolution
+		facts.StringMetadata["seconds"] = fmt.Sprintf("%d", parameters.DurationSeconds)
+		facts.StringMetadata["generateAudio"] = fmt.Sprintf("%t", parameters.GenerateAudio)
+	case agentruntime.MediaKindAudio:
+		parameters, err := decodeAgentAudioGenerationParameters(arguments.Parameters)
+		if err != nil {
+			return agentMediaCanvasRequestFacts{}, errors.Join(errors.New("media.generate approved audio parameters are invalid"), err)
+		}
+		for key, value := range map[string]string{
+			"audioVoice": parameters.Voice, "audioFormat": parameters.Format, "audioSpeed": parameters.Speed,
+			"audioVolume": parameters.Volume, "audioPitch": parameters.Pitch, "audioEmotion": parameters.Emotion,
+			"audioLanguageBoost": parameters.LanguageBoost, "audioSampleRate": parameters.SampleRate,
+			"audioBitrate": parameters.Bitrate, "audioChannel": parameters.Channel, "audioInstructions": parameters.Instructions,
+		} {
+			if value != "" {
+				facts.StringMetadata[key] = value
+			} else {
+				facts.NullMetadata = append(facts.NullMetadata, key)
+			}
+		}
+	default:
+		return agentMediaCanvasRequestFacts{}, errors.New("media.generate approved media kind is invalid")
+	}
+	return facts, nil
+}
+
+func agentMediaResultCanvasMutationID(scope agentruntime.Scope, call agentruntime.ToolCallDecision) string {
+	digest := sha256.Sum256([]byte(fmt.Sprintf("agent-media-result\x00%s\x00%s\x00%d", scope.RunID, call.ToolCallID, call.ActionVersion)))
+	return "agent-media-result-" + hex.EncodeToString(digest[:16])
 }

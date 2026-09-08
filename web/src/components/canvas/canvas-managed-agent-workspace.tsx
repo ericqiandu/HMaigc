@@ -36,6 +36,8 @@ export type CanvasManagedAgentWorkspaceProps = {
     agentLaunchRequest?: CanvasAgentLaunchRequest;
     onAgentLaunchHandled?: (launchRequestId: string) => void;
     onBeforeRun?: () => Promise<void>;
+    onRuntimeView?: (view: AgentRuntimeView) => void;
+    onCanvasProjection?: (revision: number) => void;
     onRuntimeEvent?: (event: AgentRuntimeEvent) => void;
     runtimeClient?: AgentRuntimeClient;
     runtimeStorage?: AgentRuntimeHandleStorage;
@@ -50,6 +52,8 @@ export function CanvasManagedAgentWorkspace({
     agentLaunchRequest,
     onAgentLaunchHandled,
     onBeforeRun,
+    onRuntimeView,
+    onCanvasProjection,
     onRuntimeEvent,
     runtimeClient,
     runtimeStorage,
@@ -62,7 +66,7 @@ export function CanvasManagedAgentWorkspace({
     const [historyOpen, setHistoryOpen] = useState(false);
     const [clarificationHistoryOpen, setClarificationHistoryOpen] = useState(false);
     const launchAttemptRef = useRef("");
-    const runtime = useAgentRuntime({ canvasId: projectId, client: runtimeClient, storage: runtimeStorage, onRuntimeEvent });
+    const runtime = useAgentRuntime({ canvasId: projectId, client: runtimeClient, storage: runtimeStorage, onRuntimeView, onCanvasProjection, onRuntimeEvent });
     const active = Boolean(runtime.view && !runtime.terminal);
     const { prompt, generationModels: agentModels, skillSelections: selectedSkills, executionMode } = draft;
     const setPrompt = useCallback((value: SetStateAction<string>) => setDraft((current) => ({ ...current, prompt: typeof value === "function" ? value(current.prompt) : value })), []);
@@ -247,7 +251,7 @@ export function CanvasManagedAgentWorkspace({
                     </div>
                 ) : null}
                 {runtime.view?.state.status === "waiting_approval" && runtime.view.state.pendingToolCall && runtime.view.pendingApproval ? (
-                    <AgentApprovalCard call={runtime.view.state.pendingToolCall} approval={runtime.view.pendingApproval} busy={runtime.busy} muted={theme.node.muted} onDecision={runtime.decideApproval} />
+                    <AgentApprovalCard call={runtime.view.state.pendingToolCall} approval={runtime.view.pendingApproval} busy={runtime.busy} muted={theme.node.muted} onDecision={runtime.decideApproval} onRefresh={runtime.refreshExpiredApproval} />
                 ) : null}
             </section>
 
@@ -371,8 +375,10 @@ function AgentRunContent({
                 events={meaningfulEvents}
             />
             {conversation.items.map((item) => {
+                const rejected = item.status === "failed";
                 return (
-                    <article key={item.id} className="canvas-agent-runtime-final" data-status={item.status} aria-label="Agent 回复">
+                    <article key={item.id} className="canvas-agent-runtime-final" data-status={item.status} aria-label={rejected ? "未采用的 Agent 回复" : "Agent 回复"}>
+                        {rejected ? <span className="canvas-agent-runtime-final-status">未采用</span> : null}
                         <p className="canvas-agent-runtime-final-copy">{item.text}</p>
                     </article>
                 );

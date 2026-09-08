@@ -46,7 +46,7 @@ const view = {
         maxSteps: 8,
         modelRecordId: "model-1",
         modelKey: "agent-model",
-        toolSchemaVersion: 8,
+        toolSchemaVersion: 10,
         runtimeVersion: 5,
         policyVersion: 5,
         createdAt: "2026-08-15T00:00:00Z",
@@ -216,6 +216,7 @@ const productionToolCases: Array<[AgentToolName, Record<string, unknown>]> = [
     ["canvas.apply_ops", state.pendingToolCall.arguments],
     ["assets.read", { domainProjectId: "project-1", resourceIds: ["resource-1"], limit: 20 }],
     ["assets.publish", { resourceId: "resource-1", domainProjectId: "project-1", displayName: "角色图", clientMutationId: "publish-1" }],
+    ["project.apply_ops", { domainProjectId: "project-1", baseRevision: 3, clientMutationId: "project-mutation-1", operations: [{ operationId: "shots-1", type: "replace_unit_shots", unitId: "unit-1", shots: [{ title: "镜头一", description: "中景，角色入场。", durationMs: 5_000 }] }] }],
     ["media.generate", { mediaKind: "image", modelRecordId: "model-1", modelKey: "gpt-image-2", parameters: { prompt: "生成角色图" }, sourceResourceIds: [], targetCanvasNodeId: "node-1", clientRequestId: "generate-1" }],
     ["vision.analyze", { modelRecordId: "vision-record-1", modelKey: "deepseek-v4-flash-vision-exp", sourceResourceIds: ["resource-1"], prompt: "提取画面事实", detail: "low", clientRequestId: "vision-1" }],
     ["skills.load", { skillDir: "storyboard", version: 1, checksum: "a".repeat(64) }],
@@ -239,6 +240,32 @@ test.each(productionToolCases)("Agent Runtime DTO 接受当前生产工具 %s", 
     };
 
     expect(parseAgentRuntimeView(productionView).state.pendingToolCall?.toolName).toBe(toolName);
+});
+
+test("已取消的已启动媒体工具保留待结算身份", () => {
+    const pendingToolCall = {
+        ...state.pendingToolCall,
+        toolName: "media.generate",
+        arguments: {
+            mediaKind: "image",
+            modelRecordId: "image-model-record",
+            modelKey: "gpt-image-2",
+            parameters: { prompt: "纯白纸船漂浮在平静蓝色水面上" },
+            sourceResourceIds: [],
+            targetCanvasNodeId: "image-node-1",
+            clientRequestId: "generate-image-1",
+        },
+    };
+    const interrupted = {
+        ...viewWithoutPendingApproval,
+        run: { ...view.run, status: "cancelled", completedAt: "2026-08-15T00:00:02Z" },
+        state: { ...state, status: "cancelled", pendingToolCall, pendingToolStarted: true },
+    };
+
+    const parsed = parseAgentRuntimeView(interrupted);
+    expect(parsed.state.status).toBe("cancelled");
+    expect(parsed.state.pendingToolStarted).toBe(true);
+    expect(parsed.state.pendingToolCall?.toolCallId).toBe("tool-1");
 });
 
 test("模型决策拒绝状态保留结构化自修事实", () => {
@@ -362,13 +389,36 @@ test("终态 v3 运行保留原始执行模式并允许只读查看", () => {
     expect(parsed.run.runtimeVersion).toBe(3);
 });
 
-test("活动运行只接受 5/5/8 合同，旧 v3 不可继续执行", () => {
+test("活动运行只接受 5/5/10 合同，旧 v3 不可继续执行", () => {
     expect(() =>
         parseAgentRuntimeView({
             ...view,
             run: { ...view.run, runtimeVersion: 3, policyVersion: 3, toolSchemaVersion: 4 },
         }),
     ).toThrow("3/3/4");
+});
+
+test("终态 5/5/8 运行只允许历史查看", () => {
+    const { pendingToolCall: _pendingToolCall, ...terminalState } = state;
+    const parsed = parseAgentRuntimeView({
+        ...viewWithoutPendingApproval,
+        run: {
+            ...view.run,
+            status: "succeeded",
+            toolSchemaVersion: 8,
+            completedAt: "2026-09-05T00:00:02Z",
+        },
+        state: {
+            ...terminalState,
+            status: "succeeded",
+            expectedDelivery: { kind: "answer", completionCriteria: [{ fact: "final_message" }] },
+            verification: { status: "satisfied", rationale: "历史运行已完成" },
+            finalMessage: "历史结果",
+        },
+    });
+
+    expect(parsed.run.toolSchemaVersion).toBe(8);
+    expect(parsed.state.finalMessage).toBe("历史结果");
 });
 
 test("historical 执行模式只接受首代已终结运行", () => {
@@ -496,7 +546,8 @@ const history = {
 };
 
 test("会话历史严格保留全部轮次、时间线和空会话事实", () => {
-    const parsed = parseAgentThreadHistory(history);
+    const parsed = parseAgentThreadHistory({ ...history, canvasProjectionRevision: 12 });
+    expect(parsed.canvasProjectionRevision).toBe(12);
     expect(parsed.items[0]?.turns[0]?.items[0]?.content.message).toBe(state.userMessage);
     expect(parsed.items[0]?.activityAt).toBe("2026-08-15T02:00:00Z");
     expect(parsed.items[1]?.thread.id).toBe("thread-empty");
@@ -643,6 +694,37 @@ test.each(["in_progress", "completed", "failed", "declined", "interrupted"] as c
     const item = { ...source, status, completedAt: status === "in_progress" ? undefined : source.completedAt };
     const parsed = parseAgentThreadHistory({ items: [{ ...history.items[0], turns: [{ ...history.items[0]!.turns[0], items: [item] }] }] });
     expect(parsed.items[0]?.turns[0]?.items[0]?.status).toBe(status);
+});
+
+test("会话历史接受完整的工具中断事实", () => {
+    const source = history.items[0]!.turns[0]!.items[0]!;
+    const parsed = parseAgentThreadHistory({
+        items: [
+            {
+                ...history.items[0],
+                turns: [
+                    {
+                        ...history.items[0]!.turns[0],
+                        items: [
+                            {
+                                ...source,
+                                kind: "tool_call",
+                                status: "interrupted",
+                                content: { toolCallId: "media-call-1", toolName: "media.generate", actionVersion: 1, interrupted: true },
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+    });
+
+    expect(parsed.items[0]?.turns[0]?.items[0]?.content).toEqual({
+        toolCallId: "media-call-1",
+        toolName: "media.generate",
+        actionVersion: 1,
+        interrupted: true,
+    });
 });
 
 test("结构化追问 DTO 拒绝未知类型、重复身份、非法答案和未知字段", () => {

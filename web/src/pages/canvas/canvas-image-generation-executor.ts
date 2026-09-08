@@ -1,13 +1,12 @@
 import { nanoid } from "nanoid";
 
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
-import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
+import { imageMetadata, storeBackendGeneratedImage } from "@/lib/canvas/canvas-generation-task-sync";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { prepareInPlaceMediaVersion } from "@/lib/canvas/canvas-media-versions";
 import { buildImageGenerationMetadata, getGenerationCount, isGenerationCanceled, runBackendCanvasGenerationTask } from "@/lib/canvas/canvas-project-generation";
 import { CONTENT_MODERATION_ERROR_CODE, generationFailureMetadata, type GenerationFailureMetadata } from "@/lib/generation-error";
 import { normalizeImageConfigForModel } from "@/lib/image-model-capabilities";
-import { uploadImage } from "@/services/image-storage";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 import type { CanvasGenerationExecution } from "./canvas-generation-executor-types";
@@ -78,6 +77,7 @@ export async function executeImageGeneration({
             batchExpanded: count > 1 ? true : undefined,
             generationErrorCode: undefined,
             failedPromptFingerprint: undefined,
+            imageCommandEvidence: undefined,
         },
     };
     const childNodes: CanvasNodeData[] = childIds.map((id, index) => ({
@@ -142,7 +142,7 @@ export async function executeImageGeneration({
                 });
                 const image = result.images?.[0];
                 if (!image?.dataUrl) throw new Error("后端任务没有返回图片");
-                const uploaded = await uploadImage(image.dataUrl);
+                const uploaded = await storeBackendGeneratedImage(image);
                 const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                 setNodes((current) => {
                     const root = current.find((node) => node.id === rootId);
@@ -150,8 +150,8 @@ export async function executeImageGeneration({
                         if (node.id !== targetId && node.id !== rootId) return node;
                         const center = { x: node.position.x + node.width / 2, y: node.position.y + node.height / 2 };
                         const geometry = node.metadata?.locked ? {} : { position: { x: center.x - imageSize.width / 2, y: center.y - imageSize.height / 2 }, width: imageSize.width, height: imageSize.height };
-                        if (node.id === rootId && (targetId === rootId || !root?.metadata?.primaryImageId)) return { ...node, ...geometry, metadata: { ...node.metadata, ...imageMetadata(uploaded), primaryImageId: targetId } };
-                        if (node.id === targetId) return { ...node, ...geometry, metadata: { ...node.metadata, ...imageMetadata(uploaded) } };
+                        if (node.id === rootId && (targetId === rootId || !root?.metadata?.primaryImageId)) return { ...node, ...geometry, metadata: { ...node.metadata, ...imageMetadata(uploaded), imageCommandEvidence: undefined, primaryImageId: targetId } };
+                        if (node.id === targetId) return { ...node, ...geometry, metadata: { ...node.metadata, ...imageMetadata(uploaded), imageCommandEvidence: undefined } };
                         return node;
                     });
                 });

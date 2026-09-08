@@ -5,6 +5,7 @@ import {
     agentRuntimeClient,
     agentRuntimeHandleStorage,
     AgentRuntimeRequestError,
+    type AgentApprovalRefreshSubmission,
     type AgentApprovalSubmission,
     type AgentClarificationAnswerInput,
     type AgentRuntimeClient,
@@ -65,10 +66,12 @@ type UseAgentRuntimeInput = {
     canvasId: string;
     client?: AgentRuntimeClient;
     storage?: AgentRuntimeHandleStorage;
+    onRuntimeView?: (view: AgentRuntimeView) => void;
+    onCanvasProjection?: (revision: number) => void;
     onRuntimeEvent?: (event: AgentRuntimeEvent) => void;
 };
 
-export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage = agentRuntimeHandleStorage, onRuntimeEvent }: UseAgentRuntimeInput) {
+export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage = agentRuntimeHandleStorage, onRuntimeView, onCanvasProjection, onRuntimeEvent }: UseAgentRuntimeInput) {
     const [threadId, setThreadId] = useState("");
     const [view, setView] = useState<AgentRuntimeView | null>(null);
     const [timeline, setTimeline] = useState(initialAgentTimelineState);
@@ -89,8 +92,16 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
     const historyReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const runRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const stoppingRunIDRef = useRef("");
+    const onRuntimeViewRef = useRef(onRuntimeView);
+    const onCanvasProjectionRef = useRef(onCanvasProjection);
     const onRuntimeEventRef = useRef(onRuntimeEvent);
 
+    useEffect(() => {
+        onRuntimeViewRef.current = onRuntimeView;
+    }, [onRuntimeView]);
+    useEffect(() => {
+        onCanvasProjectionRef.current = onCanvasProjection;
+    }, [onCanvasProjection]);
     useEffect(() => {
         onRuntimeEventRef.current = onRuntimeEvent;
     }, [onRuntimeEvent]);
@@ -111,6 +122,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
         (nextView: AgentRuntimeView) => {
             setView(nextView);
             setError("");
+            onRuntimeViewRef.current?.(nextView);
             void persist(nextView).catch((cause: unknown) => setError(errorMessage(cause, "Agent 恢复句柄保存失败")));
         },
         [persist],
@@ -157,7 +169,10 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
         setHistoryError("");
         try {
             const history = await client.listThreads(canvasId, 20);
-            if (historyRequestRef.current === requestID) setThreads(history.items);
+            if (historyRequestRef.current === requestID) {
+                setThreads(history.items);
+                if (history.canvasProjectionRevision !== undefined) onCanvasProjectionRef.current?.(history.canvasProjectionRevision);
+            }
         } catch (cause) {
             if (historyRequestRef.current === requestID) setHistoryError(errorMessage(cause, "Agent 历史加载失败"));
         } finally {
@@ -248,6 +263,9 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
                 const historyItems = historyResult.status === "fulfilled" ? historyResult.value.items : [];
                 const handleLoadError = handleResult.status === "rejected" ? errorMessage(handleResult.reason, "Agent 本地恢复句柄读取失败") : "";
                 setThreads(historyItems);
+                if (historyResult.status === "fulfilled" && historyResult.value.canvasProjectionRevision !== undefined) {
+                    onCanvasProjectionRef.current?.(historyResult.value.canvasProjectionRevision);
+                }
                 setHistoryLoading(false);
                 if (historyResult.status === "rejected") setHistoryError(errorMessage(historyResult.reason, "Agent 历史加载失败"));
 
@@ -472,6 +490,37 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
         [adoptView, busy, client, view],
     );
 
+    const refreshExpiredApproval = useCallback(
+        async (submission: AgentApprovalRefreshSubmission) => {
+            const call = view?.state.status === "waiting_approval" ? view.state.pendingToolCall : undefined;
+            const approval = view?.state.status === "waiting_approval" ? view.pendingApproval : undefined;
+            if (!call || !approval || !view || busy) return;
+            if (submission.toolCallId !== call.toolCallId || submission.actionVersion !== call.actionVersion || submission.proposalHash !== approval.proposalHash) {
+                setError("过期审批身份已变化，请刷新后重试");
+                return;
+            }
+            setBusy(true);
+            setError("");
+            try {
+                adoptView(await client.refreshExpiredApproval(view.run.id, submission));
+            } catch (cause) {
+                if (cause instanceof AgentRuntimeRequestError && cause.status === 409) {
+                    try {
+                        adoptView(await client.getRun(view.run.id));
+                        setError("审批状态已更新，请核对当前提案");
+                    } catch (refreshCause) {
+                        setError(errorMessage(refreshCause, "审批状态刷新失败"));
+                    }
+                    return;
+                }
+                setError(errorMessage(cause, "重新生成审批提案失败"));
+            } finally {
+                setBusy(false);
+            }
+        },
+        [adoptView, busy, client, view],
+    );
+
     const submitClarificationResponse = useCallback(
         async (input: { requestId: string; questionId: string; answer: AgentClarificationAnswerInput; complete: boolean }) => {
             const pending = view?.state.status === "waiting_input" ? view.state.pendingClarification : undefined;
@@ -555,6 +604,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             interrupt,
             submitClarificationResponse,
             decideApproval,
+            refreshExpiredApproval,
             newThread,
             selectThread,
             reloadThreads,
@@ -564,6 +614,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
             busy,
             connection,
             decideApproval,
+            refreshExpiredApproval,
             error,
             historyError,
             historyLoading,

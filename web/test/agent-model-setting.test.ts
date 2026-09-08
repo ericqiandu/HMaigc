@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 
-import { agentDefaultModelOptions, agentVisionModelOptions, pricingContractForModel, supportsTokenUsageBilling, type AgentModelCandidate } from "../src/pages/admin/model-pricing/agent-model-options";
-import { parseAgentVisionModelSetting } from "../src/services/api/auth";
+import { agentDefaultModelOptions, agentVisionModelOptions, imagePromptModelOptions, pricingContractForModel, supportsTokenUsageBilling, type AgentModelCandidate } from "../src/pages/admin/model-pricing/agent-model-options";
+import { parseAgentVisionModelSetting, parseImagePromptModelSetting } from "../src/services/api/auth";
 
 let configStore: typeof import("../src/stores/use-config-store");
 
@@ -87,6 +87,18 @@ describe("Agent default model setting", () => {
         ).toEqual([{ label: "DeepSeek Vision · 筷子科技", value: valid.id }]);
     });
 
+    test("image prompt candidates require a versioned managed text model", () => {
+        const managed = candidate({ id: "managed-prompt", providerCredentialId: "credential-v1" });
+        expect(
+            imagePromptModelOptions([
+                managed,
+                candidate({ id: "direct-prompt", providerCredentialId: undefined }),
+                candidate({ id: "vision-prompt", providerCredentialId: "credential-v1", capability: "vision" }),
+                candidate({ id: "disabled-prompt", providerCredentialId: "credential-v1", enabled: false }),
+            ]),
+        ).toEqual([{ label: "GPT 5.5 · 筷子科技", value: managed.id }]);
+    });
+
     test("complete token supplier pricing hard-cuts a text model to token billing", () => {
         expect(
             pricingContractForModel(candidate({ modelKey: "deepseek-v4-pro", providerCapabilities: { resolutions: [], inputVariants: [], supportsTokenUsageBilling: true } }), {
@@ -154,6 +166,27 @@ describe("Agent default model setting", () => {
         });
         expect(() => parseAgentVisionModelSetting({ configured: true, channelModelId: "", channelId: "deepseek-channel", modelKey: "deepseek-v4-flash-vision-exp", displayName: "DeepSeek Vision" })).toThrow("缺少已配置模型身份");
         expect(() => parseAgentVisionModelSetting({ configured: false })).toThrow("返回格式错误");
+    });
+
+    test("strictly decodes the image prompt model setting", () => {
+        expect(
+            parseImagePromptModelSetting({
+                configured: true,
+                channelModelId: "prompt-model-record",
+                channelId: "managed-channel",
+                modelKey: "deepseek-v4-flash",
+                displayName: "DeepSeek V4 Flash",
+            }),
+        ).toEqual({
+            configured: true,
+            channelModelId: "prompt-model-record",
+            channelId: "managed-channel",
+            modelKey: "deepseek-v4-flash",
+            displayName: "DeepSeek V4 Flash",
+        });
+        expect(() => parseImagePromptModelSetting({ configured: true, channelModelId: "", channelId: "managed-channel", modelKey: "deepseek-v4-flash", displayName: "DeepSeek V4 Flash" })).toThrow(
+            "缺少已配置模型身份",
+        );
     });
 
     test("session merge accepts only an exact model reference present in the server catalog", () => {

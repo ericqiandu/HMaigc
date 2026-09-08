@@ -23,6 +23,18 @@ type mediaFileMetadata struct {
 
 type mediaFileProbe func(context.Context, string) (mediaFileMetadata, error)
 
+const (
+	generatedMediaDurationVerified         = "verified"
+	generatedMediaDurationProviderReported = "provider_reported"
+	generatedMediaDurationUnverified       = "unverified"
+)
+
+type generatedMediaDurationResolution struct {
+	DurationMS   int64
+	Verification string
+	ProbeError   string
+}
+
 func (s *Service) authoritativeMediaDuration(kind string, body io.ReadSeeker) (int64, error) {
 	if kind != "video" && kind != "audio" {
 		return 0, nil
@@ -50,6 +62,25 @@ func (s *Service) authoritativeMediaDuration(kind string, body io.ReadSeeker) (i
 	return durationMs, nil
 }
 
+func (s *Service) resolveGeneratedMediaDuration(kind string, providerDurationMS int64, body io.ReadSeeker) generatedMediaDurationResolution {
+	if kind != "video" && kind != "audio" {
+		return generatedMediaDurationResolution{}
+	}
+	durationMS, err := s.authoritativeMediaDuration(kind, body)
+	if err == nil {
+		return generatedMediaDurationResolution{DurationMS: durationMS, Verification: generatedMediaDurationVerified}
+	}
+	resolution := generatedMediaDurationResolution{
+		Verification: generatedMediaDurationUnverified,
+		ProbeError:   truncateRunes(err.Error(), 300),
+	}
+	if providerDurationMS > 0 {
+		resolution.DurationMS = providerDurationMS
+		resolution.Verification = generatedMediaDurationProviderReported
+	}
+	return resolution
+}
+
 func ffprobeMediaDuration(ctx context.Context, body io.Reader) (int64, error) {
 	temporary, err := os.CreateTemp("", "hmaigc-media-probe-*")
 	if err != nil {
@@ -70,7 +101,7 @@ func ffprobeMediaDuration(ctx context.Context, body io.Reader) (int64, error) {
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
-		return 0, fmt.Errorf("ffprobe 执行失败：%s", strings.TrimSpace(stderr.String()))
+		return 0, fmt.Errorf("ffprobe 执行失败: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return parseMediaDurationMilliseconds(stdout.String())
 }

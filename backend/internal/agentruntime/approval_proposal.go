@@ -32,6 +32,7 @@ type ApprovalEffectKind string
 const (
 	ApprovalEffectCanvasMutation  ApprovalEffectKind = "canvas_mutation"
 	ApprovalEffectAssetPublish    ApprovalEffectKind = "asset_publish"
+	ApprovalEffectProjectMutation ApprovalEffectKind = "project_mutation"
 	ApprovalEffectMediaGeneration ApprovalEffectKind = "media_generation"
 	ApprovalEffectVisionAnalysis  ApprovalEffectKind = "vision_analysis"
 )
@@ -324,6 +325,11 @@ func approvalEffectFor(toolName ToolName, decoded CapabilityArguments) (Approval
 		return ApprovalEffect{
 			Kind: ApprovalEffectAssetPublish, Summary: "发布资源 " + arguments.ResourceID,
 			TargetIDs: []string{arguments.ResourceID, arguments.DomainProjectID},
+		}, nil
+	case ProjectApplyOpsArguments:
+		return ApprovalEffect{
+			Kind: ApprovalEffectProjectMutation, Summary: fmt.Sprintf("执行 %d 项项目操作", len(arguments.Operations)),
+			TargetIDs: []string{arguments.DomainProjectID},
 		}, nil
 	case MediaGenerateArguments:
 		return ApprovalEffect{

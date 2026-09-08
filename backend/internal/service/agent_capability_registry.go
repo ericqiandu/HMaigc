@@ -42,6 +42,8 @@ func newAgentCapabilityRegistry(service *Service) (*agentCapabilityRegistry, err
 		{agentruntime.ToolCanvasApplyOps, canvasApplyOpsArgumentsSchema, canvasApplyOpsResultSchema},
 		{agentruntime.ToolAssetsRead, assetsReadArgumentsSchema, assetsReadResultSchema},
 		{agentruntime.ToolAssetsPublish, assetsPublishArgumentsSchema, assetsPublishResultSchema},
+		{agentruntime.ToolProjectRead, projectReadArgumentsSchema, projectReadResultSchema},
+		{agentruntime.ToolProjectApplyOps, projectApplyOpsArgumentsSchema, projectApplyOpsResultSchema},
 		{agentruntime.ToolMediaGenerate, mediaGenerateArgumentsSchema, mediaGenerateResultSchema},
 		{agentruntime.ToolVisionAnalyze, visionAnalyzeArgumentsSchema, visionAnalyzeResultSchema},
 		{agentruntime.ToolSkillsLoad, skillsLoadArgumentsSchema, skillsLoadResultSchema},
@@ -74,6 +76,8 @@ func newAgentCapabilityRegistry(service *Service) (*agentCapabilityRegistry, err
 			{name: agentruntime.ToolCanvasApplyOps, executor: agentCanvasApplyOpsCapabilityExecutor{service: service}},
 			{name: agentruntime.ToolAssetsRead, executor: agentAssetsReadCapabilityExecutor{service: service}},
 			{name: agentruntime.ToolAssetsPublish, executor: agentAssetsPublishCapabilityExecutor{service: service}},
+			{name: agentruntime.ToolProjectRead, executor: agentProjectReadCapabilityExecutor{service: service}},
+			{name: agentruntime.ToolProjectApplyOps, executor: agentProjectApplyOpsCapabilityExecutor{service: service}},
 			{name: agentruntime.ToolMediaGenerate, executor: agentMediaGenerateCapabilityExecutor{service: service}},
 			{name: agentruntime.ToolVisionAnalyze, executor: agentVisionAnalyzeCapabilityExecutor{service: service}},
 			{name: agentruntime.ToolSkillsLoad, executor: agentSkillsLoadCapabilityExecutor{service: service}},
@@ -276,6 +280,84 @@ const canvasApplyOpsArgumentsSchema = `{
   "required":["canvasId","baseRevision","clientMutationId","operations"]
 }`
 const canvasApplyOpsResultSchema = `{"type":"object","additionalProperties":false,"properties":{"canvasId":{"type":"string"},"baseRevision":{"type":"integer"},"committedRevision":{"type":"integer"},"clientMutationId":{"type":"string"},"proposalHash":{"type":"string"},"appliedOperationIds":{"type":"array","items":{"type":"string"}},"evidence":{"type":"object","additionalProperties":false,"properties":{"addedNodeIds":{"type":"array","items":{"type":"string"}},"updatedNodeIds":{"type":"array","items":{"type":"string"}},"deletedNodeIds":{"type":"array","items":{"type":"string"}},"upsertedConnectionIds":{"type":"array","items":{"type":"string"}},"deletedConnectionIds":{"type":"array","items":{"type":"string"}},"selectedNodeIds":{"type":"array","items":{"type":"string"}},"viewportApplied":{"type":"boolean"}},"required":["addedNodeIds","updatedNodeIds","deletedNodeIds","upsertedConnectionIds","deletedConnectionIds","selectedNodeIds","viewportApplied"]}},"required":["canvasId","baseRevision","committedRevision","clientMutationId","proposalHash","appliedOperationIds","evidence"]}`
+const projectApplyOpsArgumentsSchema = `{
+  "type":"object",
+  "additionalProperties":false,
+  "properties":{
+    "domainProjectId":{"type":"string","minLength":1,"maxLength":120},
+    "baseRevision":{"type":"integer","minimum":0},
+    "clientMutationId":{"type":"string","minLength":1,"maxLength":120},
+    "operations":{
+      "type":"array","minItems":1,"maxItems":100,
+      "items":{"oneOf":[
+        {
+          "type":"object","additionalProperties":false,
+          "properties":{
+            "operationId":{"type":"string","minLength":1,"maxLength":120},
+            "type":{"const":"create_character_candidates"},
+            "unitId":{"type":"string","minLength":1,"maxLength":120},
+            "candidates":{"type":"array","minItems":1,"maxItems":100,"items":{
+              "type":"object","additionalProperties":false,
+              "properties":{
+                "name":{"type":"string","minLength":1,"maxLength":240},
+                "aliases":{"type":"array","maxItems":20,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":240}},
+                "role":{"type":"string","minLength":1,"maxLength":2048},
+                "appearance":{"type":"string","minLength":1,"maxLength":2048},
+                "clothing":{"type":"string","minLength":1,"maxLength":2048},
+                "physique":{"type":"string","minLength":1,"maxLength":2048},
+                "personality":{"type":"string","minLength":1,"maxLength":2048},
+                "props":{"type":"string","maxLength":2048},
+                "consistencyPrompt":{"type":"string","minLength":1,"maxLength":2048},
+                "multiViewPrompt":{"type":"string","minLength":1,"maxLength":2048},
+                "voiceLanguage":{"type":"string","minLength":1,"maxLength":2048},
+                "voiceAge":{"type":"string","minLength":1,"maxLength":2048},
+                "voiceTimbre":{"type":"string","minLength":1,"maxLength":2048}
+              },
+              "required":["name","aliases","role","appearance","clothing","physique","personality","props","consistencyPrompt","multiViewPrompt","voiceLanguage","voiceAge","voiceTimbre"]
+            }}
+          },
+          "required":["operationId","type","unitId","candidates"]
+        },
+        {
+          "type":"object","additionalProperties":false,
+          "properties":{
+            "operationId":{"type":"string","minLength":1,"maxLength":120},
+            "type":{"const":"replace_unit_shots"},
+            "unitId":{"type":"string","minLength":1,"maxLength":120},
+            "shots":{"type":"array","minItems":1,"maxItems":200,"items":{
+              "type":"object","additionalProperties":false,
+              "properties":{
+                "title":{"type":"string","minLength":1,"maxLength":240},
+                "description":{"type":"string","minLength":1,"maxLength":8192},
+                "durationMs":{"type":"integer","minimum":1000,"maximum":30000}
+              },
+              "required":["title","description","durationMs"]
+            }}
+          },
+          "required":["operationId","type","unitId","shots"]
+        }
+      ]}
+    }
+  },
+  "required":["domainProjectId","baseRevision","clientMutationId","operations"]
+}`
+const projectApplyOpsResultSchema = `{"type":"object","additionalProperties":false,"properties":{"domainProjectId":{"type":"string"},"baseRevision":{"type":"integer"},"committedRevision":{"type":"integer"},"clientMutationId":{"type":"string"},"proposalHash":{"type":"string"},"appliedOperationIds":{"type":"array","items":{"type":"string"}},"candidateIds":{"type":"array","items":{"type":"string"}},"shotIds":{"type":"array","items":{"type":"string"}}},"required":["domainProjectId","baseRevision","committedRevision","clientMutationId","proposalHash","appliedOperationIds","candidateIds","shotIds"]}`
+const projectReadArgumentsSchema = `{"type":"object","additionalProperties":false,"properties":{"domainProjectId":{"type":"string","minLength":1,"maxLength":120},"canvasId":{"type":"string","minLength":1,"maxLength":120}},"required":["domainProjectId","canvasId"]}`
+const projectReadResultSchema = `{
+  "type":"object","additionalProperties":false,
+  "properties":{
+    "domainProjectId":{"type":"string"},"canvasId":{"type":"string"},"name":{"type":"string"},"projectType":{"type":"string"},"aspectRatio":{"type":"string"},"revision":{"type":"integer"},
+    "units":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{
+      "unitId":{"type":"string"},"kind":{"type":"string"},"title":{"type":"string"},"sourceText":{"type":"string"},"status":{"type":"string"},"position":{"type":"integer"},"linkRole":{"type":"string"},
+      "shots":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"shotId":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},"position":{"type":"integer"},"durationMs":{"type":"integer"},"status":{"type":"string"}},"required":["shotId","title","description","position","durationMs","status"]}}
+    },"required":["unitId","kind","title","sourceText","status","position","linkRole","shots"]}},
+    "characters":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{
+      "assetId":{"type":"string"},"name":{"type":"string"},"versionId":{"type":"string"},"version":{"type":"integer"},"status":{"type":"string"},"definition":{"type":"object"},
+      "representations":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"representationId":{"type":"string"},"resourceId":{"type":"string"},"mediaType":{"type":"string"},"role":{"type":"string"}},"required":["representationId","resourceId","mediaType","role"]}}
+    },"required":["assetId","name","versionId","version","status","definition","representations"]}}
+  },
+  "required":["domainProjectId","canvasId","name","projectType","aspectRatio","revision","units","characters"]
+}`
 const assetsReadArgumentsSchema = `{"type":"object","additionalProperties":false,"properties":{"domainProjectId":{"type":"string"},"resourceIds":{"type":"array","items":{"type":"string"}},"limit":{"type":"integer"}},"required":["domainProjectId","resourceIds","limit"]}`
 const assetsReadResultSchema = `{"type":"object","additionalProperties":false,"properties":{"domainProjectId":{"type":"string"},"resources":{"type":"array","items":{"type":"object"}}},"required":["domainProjectId","resources"]}`
 const assetsPublishArgumentsSchema = `{"type":"object","additionalProperties":false,"properties":{"resourceId":{"type":"string"},"domainProjectId":{"type":"string"},"displayName":{"type":"string"},"clientMutationId":{"type":"string"}},"required":["resourceId","domainProjectId","displayName","clientMutationId"]}`

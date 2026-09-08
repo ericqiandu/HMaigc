@@ -26,10 +26,27 @@ type ProviderCredentialSecret struct {
 
 type FrozenProviderRuntime struct {
 	ProviderAccountID    string
+	ProviderKind         string
 	ProviderCredentialID string
 	BaseURL              string
 	CredentialVersion    int64
 	KeyCipher            string `json:"-"`
+}
+
+// FrozenProviderRuntimeByVersionIDs resolves one immutable endpoint/key pair.
+// The joins deliberately prove both versions belong to the same provider account.
+func (r *Repository) FrozenProviderRuntimeByVersionIDs(endpointVersionID string, credentialVersionID string) (*FrozenProviderRuntime, error) {
+	var runtime FrozenProviderRuntime
+	err := r.db.Table("provider_accounts AS accounts").
+		Select("accounts.id AS provider_account_id, accounts.provider_kind, credentials.id AS provider_credential_id, endpoints.base_url, versions.version AS credential_version, versions.key_cipher").
+		Joins("JOIN provider_endpoint_versions AS endpoints ON endpoints.id = ? AND endpoints.provider_account_id = accounts.id", endpointVersionID).
+		Joins("JOIN provider_credential_versions AS versions ON versions.id = ?", credentialVersionID).
+		Joins("JOIN provider_credentials AS credentials ON credentials.id = versions.provider_credential_id AND credentials.provider_account_id = accounts.id").
+		Take(&runtime).Error
+	if err != nil {
+		return nil, err
+	}
+	return &runtime, nil
 }
 
 type ProviderCredentialVerification struct {
@@ -175,7 +192,7 @@ func (r *Repository) MigrateKuaiziAccountCredential(input KuaiziAccountCredentia
 func (r *Repository) FrozenProviderRuntime(task model.Task) (*FrozenProviderRuntime, error) {
 	var runtime FrozenProviderRuntime
 	err := r.db.Table("provider_accounts AS accounts").
-		Select("accounts.id AS provider_account_id, credentials.id AS provider_credential_id, endpoints.base_url, versions.version AS credential_version, versions.key_cipher").
+		Select("accounts.id AS provider_account_id, accounts.provider_kind, credentials.id AS provider_credential_id, endpoints.base_url, versions.version AS credential_version, versions.key_cipher").
 		Joins("JOIN provider_endpoint_versions AS endpoints ON endpoints.id = ? AND endpoints.provider_account_id = accounts.id", task.ProviderEndpointVersionID).
 		Joins("JOIN provider_credential_versions AS versions ON versions.id = ?", task.ProviderCredentialVersionID).
 		Joins("JOIN provider_credentials AS credentials ON credentials.id = versions.provider_credential_id AND credentials.provider_account_id = accounts.id").

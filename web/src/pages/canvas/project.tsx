@@ -10,7 +10,14 @@ import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resour
 import copyToClipboard from "copy-to-clipboard";
 import { nanoid } from "nanoid";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
-import { agentCanvasCommittedReceipt, agentCanvasCommittedReceiptFromToolResult, type AgentCanvasApplyOpsReceipt } from "@/lib/canvas/canvas-agent-runtime-event";
+import {
+    agentCanvasCommittedReceipt,
+    agentCanvasCommittedReceiptFromToolResult,
+    agentMediaGeneratedCanvasRefreshDecision,
+    agentMediaGeneratedCanvasRefreshDecisionFromToolResult,
+    type AgentCanvasApplyOpsReceipt,
+    type AgentMediaCanvasRefreshDecision,
+} from "@/lib/canvas/canvas-agent-runtime-event";
 import type { LocalAgentAuthoritativeToolResult } from "@/services/local-agent/local-agent-bridge";
 import { prepareAgentCanvasRun } from "@/lib/canvas/canvas-collaboration-preflight";
 import { normalizeRestoredCanvasViewport } from "@/lib/canvas/canvas-viewport";
@@ -39,11 +46,11 @@ import { CanvasStylePickerModal } from "@/components/canvas/canvas-style-picker-
 import { CanvasFileDropOverlay } from "@/components/canvas/canvas-file-drop-overlay";
 import { InfiniteCanvas } from "@/components/canvas/infinite-canvas";
 import { Minimap } from "@/components/canvas/canvas-mini-map";
-import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
+import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
 import { getProject } from "@/services/api/projects";
 import { ensureRemoteCanvasProjectReady } from "@/services/user-data-sync";
-import type { AgentRuntimeEvent } from "@/services/api/agent-runtime";
+import type { AgentRuntimeEvent, AgentRuntimeView } from "@/services/api/agent-runtime";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { CanvasCollaborationPresenceButton, CanvasRemotePresenceLayer } from "@/components/canvas/canvas-collaboration-presence";
 import { CanvasScriptEditor, CanvasScriptNodeContent, STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardMinNodeHeight, storyboardTableHeight } from "@/components/canvas/canvas-script-node";
@@ -115,6 +122,7 @@ const CanvasVersionCompareModal = lazy(() => import("@/components/canvas/canvas-
 const CanvasProjectContextMenu = lazy(() => import("./canvas-project-context-menu").then((module) => ({ default: module.CanvasProjectContextMenu })));
 const CanvasProjectMediaDialogs = lazy(() => import("./canvas-project-media-dialogs").then((module) => ({ default: module.CanvasProjectMediaDialogs })));
 const CanvasProjectStatusDialogs = lazy(() => import("./canvas-project-status-dialogs").then((module) => ({ default: module.CanvasProjectStatusDialogs })));
+const CanvasNodePromptPanel = lazy(() => import("@/components/canvas/canvas-node-prompt-panel").then((module) => ({ default: module.CanvasNodePromptPanel })));
 
 const NODE_STATUS_SUCCESS = "success" as const;
 const EMPTY_RESOURCE_REFERENCES: CanvasResourceReference[] = [];
@@ -185,6 +193,7 @@ function InfiniteCanvasPage() {
 
     const config = useConfigStore((state) => state.config);
     const currentUserId = useUserStore((state) => state.user?.id);
+    const currentUserRole = useUserStore((state) => state.user?.role);
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const assets = useAssetStore((state) => state.assets);
@@ -357,6 +366,14 @@ function InfiniteCanvasPage() {
     const canAccessLinkedProject = Boolean(currentProject?.projectId && (!currentProject.teamId || (currentProject.ownerUserId && currentProject.ownerUserId === currentUserId)));
     const linkedProjectId = canAccessLinkedProject ? currentProject?.projectId || "" : "";
     const linkedProjectQuery = useQuery({ queryKey: ["project", linkedProjectId], queryFn: () => getProject(linkedProjectId), enabled: Boolean(linkedProjectId) });
+    const productRolloutsQuery = useQuery({
+        queryKey: ["product-rollouts"],
+        queryFn: async ({ signal }) => (await import("@/services/api/product-rollouts")).getProductRollouts(signal),
+        retry: false,
+    });
+    useEffect(() => {
+        if (currentUserRole === "admin" && productRolloutsQuery.error) message.error(`图片工具配置加载失败：${productRolloutsQuery.error.message}`);
+    }, [currentUserRole, message, productRolloutsQuery.error]);
     useEffect(() => {
         if (!projectLoaded || !linkedProjectQuery.data) return;
         setNodes((current) => refreshCanvasCharacterReferenceNodes(current, linkedProjectQuery.data.assets));
@@ -485,19 +502,46 @@ function InfiniteCanvasPage() {
         },
         [collaboration.refreshRemoteState, fitCanvasSelection, message, projectId],
     );
+    const applyAgentMediaCanvasRefreshDecision = useCallback((decision: AgentMediaCanvasRefreshDecision) => {
+        if (decision.kind === "not_applicable") return;
+        if (decision.kind === "invalid") {
+            message.error(`Agent 媒体成功回执校验失败：${decision.message}`);
+            return;
+        }
+        void collaboration.refreshRemoteState().catch((cause: unknown) => {
+            message.error(cause instanceof Error ? `Agent 媒体结果刷新失败：${cause.message}` : "Agent 媒体结果刷新失败");
+        });
+    }, [collaboration.refreshRemoteState, message]);
+    const handleAgentCanvasProjection = useCallback((revision: number) => {
+        void collaboration.refreshRemoteState(revision).catch((cause: unknown) => {
+            message.error(cause instanceof Error ? `Agent 节点对账刷新失败：${cause.message}` : "Agent 节点对账刷新失败");
+        });
+    }, [collaboration.refreshRemoteState, message]);
+    const handleAgentRuntimeView = useCallback((view: AgentRuntimeView) => {
+        if (view.canvasProjectionRevision === undefined) return;
+        handleAgentCanvasProjection(view.canvasProjectionRevision);
+    }, [handleAgentCanvasProjection]);
     const handleAgentToolResult = useCallback(
         (event: AgentRuntimeEvent) => {
             const receipt = agentCanvasCommittedReceipt(event, projectId);
-            if (receipt) applyAgentCanvasReceipt(receipt);
+            if (receipt) {
+                applyAgentCanvasReceipt(receipt);
+                return;
+            }
+            applyAgentMediaCanvasRefreshDecision(agentMediaGeneratedCanvasRefreshDecision(event));
         },
-        [applyAgentCanvasReceipt, projectId],
+        [applyAgentCanvasReceipt, applyAgentMediaCanvasRefreshDecision, projectId],
     );
     const handleLocalAgentToolResult = useCallback(
         (result: LocalAgentAuthoritativeToolResult) => {
             const receipt = agentCanvasCommittedReceiptFromToolResult(result, projectId);
-            if (receipt) applyAgentCanvasReceipt(receipt);
+            if (receipt) {
+                applyAgentCanvasReceipt(receipt);
+                return;
+            }
+            applyAgentMediaCanvasRefreshDecision(agentMediaGeneratedCanvasRefreshDecisionFromToolResult(result));
         },
-        [applyAgentCanvasReceipt, projectId],
+        [applyAgentCanvasReceipt, applyAgentMediaCanvasRefreshDecision, projectId],
     );
     const handleCollaborationPointerMove = useCallback(
         (event: React.PointerEvent<HTMLElement>) => {
@@ -590,6 +634,7 @@ function InfiniteCanvasPage() {
         extractingVideoFrameNodeId,
         generateAngleNode,
         generateEmotionNode,
+        generatePortraitTextureNode,
         maskEditImageNode,
         maskEditNodeId,
         mergeSelectedVideos,
@@ -610,6 +655,7 @@ function InfiniteCanvasPage() {
         upscaleNodeId,
     } = useCanvasMediaTools({
         projectId,
+        canvasRevision: currentProject?.revision || 0,
         nodesRef,
         connectionsRef,
         selectedNodeIdsRef,
@@ -788,7 +834,8 @@ function InfiniteCanvasPage() {
         handleFontSizeChange,
         handleNodeContentChange,
         handleNodePromptChange,
-        handleNodeResize,
+        handleNodeResizeCommit,
+        handleVideoIntrinsicSize,
         handleNodeTitleChange,
         openingBatchIds,
         saveNodeAsset,
@@ -829,6 +876,7 @@ function InfiniteCanvasPage() {
         imageAssets,
         infoNode,
         maskEditNode,
+        mediaTierByNodeId,
         mentionReferencesByNodeId,
         nodeById,
         previewNode,
@@ -1195,24 +1243,26 @@ function InfiniteCanvasPage() {
                     onClose={() => setDialogNodeId(null)}
                 />
             ) : (
-                <CanvasNodePromptPanel
-                    projectId={projectId}
-                    node={panelNode}
-                    isRunning={runningNodeId === panelNode.id}
-                    availableReferences={canvasResourceReferences}
-                    mentionReferences={mentionReferencesByNodeId.get(panelNode.id) || EMPTY_RESOURCE_REFERENCES}
-                    onReferenceConnect={connectExistingNodes}
-                    canReferenceConnect={canConnectExistingNodes}
-                    onPromptChange={handleNodePromptChange}
-                    onConfigChange={handleConfigNodeChange}
-                    onGenerate={(nodeId, mode, prompt, expectedQuote) => void handleGenerateNode(nodeId, mode, prompt, { expectedQuote })}
-                    onStop={stopNodeGeneration}
-                    workspaceMode={workspaceMode}
-                    onImageSettingsOpenChange={(open) => {
-                        setNodeImageSettingsOpen(open);
-                        if (open) setToolbarNodeId(null);
-                    }}
-                />
+                <Suspense fallback={null}>
+                    <CanvasNodePromptPanel
+                        projectId={projectId}
+                        node={panelNode}
+                        isRunning={runningNodeId === panelNode.id}
+                        availableReferences={canvasResourceReferences}
+                        mentionReferences={mentionReferencesByNodeId.get(panelNode.id) || EMPTY_RESOURCE_REFERENCES}
+                        onReferenceConnect={connectExistingNodes}
+                        canReferenceConnect={canConnectExistingNodes}
+                        onPromptChange={handleNodePromptChange}
+                        onConfigChange={handleConfigNodeChange}
+                        onGenerate={(nodeId, mode, prompt, expectedQuote) => void handleGenerateNode(nodeId, mode, prompt, { expectedQuote })}
+                        onStop={stopNodeGeneration}
+                        workspaceMode={workspaceMode}
+                        onImageSettingsOpenChange={(open) => {
+                            setNodeImageSettingsOpen(open);
+                            if (open) setToolbarNodeId(null);
+                        }}
+                    />
+                </Suspense>
             );
         },
         [
@@ -1287,7 +1337,7 @@ function InfiniteCanvasPage() {
                             if (contentNode.metadata?.storyboardComposerHeight === height) return;
                             handleConfigNodeChange(contentNode.id, { storyboardComposerHeight: height });
                             const minHeight = storyboardMinNodeHeight(height);
-                            if (contentNode.height < minHeight) handleNodeResize(contentNode.id, contentNode.width, minHeight);
+                            if (contentNode.height < minHeight) handleNodeResizeCommit(contentNode.id, contentNode.width, minHeight);
                         }}
                         onConnectStart={(event, rowId, handleType) => handleConnectStart(event, contentNode.id, handleType, rowId === "context" ? "storyboard:context" : `row:${rowId}`)}
                         onScrollTopChange={(scrollTop) => setScriptScrollTopById((current) => (current[contentNode.id] === scrollTop ? current : { ...current, [contentNode.id]: scrollTop }))}
@@ -1337,7 +1387,7 @@ function InfiniteCanvasPage() {
             handleConfigNodeChange,
             handleConnectStart,
             handleGenerateNode,
-            handleNodeResize,
+            handleNodeResizeCommit,
             mentionReferencesByNodeId,
             mergeVideosByIds,
             mergeVideoProgress,
@@ -1541,6 +1591,7 @@ function InfiniteCanvasPage() {
                         connectionTargetNodeId={connectionTargetNodeId}
                         nodeById={nodeById}
                         visibleNodes={visibleNodes}
+                        mediaTierByNodeId={mediaTierByNodeId}
                         frameChildrenById={frameChildrenById}
                         dragPreview={dragPreview}
                         selectedNodeIds={selectedNodeIds}
@@ -1583,7 +1634,8 @@ function InfiniteCanvasPage() {
                         onNodeHoverStart={handleCanvasNodeHoverStart}
                         onNodeHoverEnd={handleCanvasNodeHoverEnd}
                         onConnectStart={handleConnectStart}
-                        onNodeResize={handleNodeResize}
+                        onNodeResizeCommit={handleNodeResizeCommit}
+                        onVideoIntrinsicSize={handleVideoIntrinsicSize}
                         onToggleFrame={toggleFrameCollapsed}
                         onNodeTitleChange={handleNodeTitleChange}
                         onNodeContextMenu={handleNodeContextMenu}
@@ -1719,6 +1771,7 @@ function InfiniteCanvasPage() {
                             setDialogNodeId(null);
                             setEmotionNodeId((current) => (current === node.id ? null : node.id));
                         }}
+                        onPortraitTexture={(node) => void generatePortraitTextureNode(node)}
                         onCrop={(node) => setCropNodeId(node.id)}
                         onSplit={(node) => setSplitNodeId(node.id)}
                         onUpscale={(node) => setUpscaleNodeId(node.id)}
@@ -1730,6 +1783,7 @@ function InfiniteCanvasPage() {
                         onViewImage={(node) => setPreviewNodeId(node.id)}
                         onExtractVideoLastFrame={(node) => void extractVideoLastFrame(node)}
                         extractingVideoFrame={toolbarNode?.id === extractingVideoFrameNodeId}
+                        portraitTextureEnabled={productRolloutsQuery.data?.canvasToolRegistryV2 === true}
                         onReversePrompt={createImageReversePromptNodes}
                         onRetry={(node) => void handleRetryNode(node)}
                         onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
@@ -2008,6 +2062,8 @@ function InfiniteCanvasPage() {
                         agentLaunchRequest={agentLaunchRemoteReady ? agentLaunchRequest : undefined}
                         onAgentLaunchHandled={handleAgentLaunchHandled}
                         onBeforeRun={prepareAgentRun}
+                        onRuntimeView={handleAgentRuntimeView}
+                        onCanvasProjection={handleAgentCanvasProjection}
                         onRuntimeEvent={handleAgentToolResult}
                         onLocalToolResult={handleLocalAgentToolResult}
                     />

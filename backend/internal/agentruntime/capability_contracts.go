@@ -29,7 +29,7 @@ var (
 	errCapabilityResultInvalid    = errors.New("agent capability result is invalid")
 )
 
-// CapabilityArguments is intentionally closed. Only the seven current capability
+// CapabilityArguments is intentionally closed. Only the current capability
 // request contracts in this package can cross the model/runtime boundary.
 type CapabilityArguments interface {
 	capabilityArguments()
@@ -72,6 +72,59 @@ type AssetsPublishArguments struct {
 }
 
 func (AssetsPublishArguments) capabilityArguments() {}
+
+type ProjectReadArguments struct {
+	DomainProjectID string `json:"domainProjectId"`
+	CanvasID        string `json:"canvasId"`
+}
+
+func (ProjectReadArguments) capabilityArguments() {}
+
+type ProjectOperationType string
+
+const (
+	ProjectOperationCreateCharacterCandidates ProjectOperationType = "create_character_candidates"
+	ProjectOperationReplaceUnitShots          ProjectOperationType = "replace_unit_shots"
+)
+
+type ProjectCharacterCandidateInput struct {
+	Name              string   `json:"name"`
+	Aliases           []string `json:"aliases"`
+	Role              string   `json:"role"`
+	Appearance        string   `json:"appearance"`
+	Clothing          string   `json:"clothing"`
+	Physique          string   `json:"physique"`
+	Personality       string   `json:"personality"`
+	Props             string   `json:"props"`
+	ConsistencyPrompt string   `json:"consistencyPrompt"`
+	MultiViewPrompt   string   `json:"multiViewPrompt"`
+	VoiceLanguage     string   `json:"voiceLanguage"`
+	VoiceAge          string   `json:"voiceAge"`
+	VoiceTimbre       string   `json:"voiceTimbre"`
+}
+
+type ProjectShotInput struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	DurationMS  int64  `json:"durationMs"`
+}
+
+type ProjectOperation struct {
+	OperationID string                           `json:"operationId"`
+	Type        ProjectOperationType             `json:"type"`
+	UnitID      string                           `json:"unitId"`
+	Candidates  []ProjectCharacterCandidateInput `json:"candidates,omitempty"`
+	Shots       []ProjectShotInput               `json:"shots,omitempty"`
+}
+
+type ProjectApplyOpsArguments struct {
+	DomainProjectID  string             `json:"domainProjectId"`
+	BaseRevision     int64              `json:"baseRevision"`
+	ClientMutationID string             `json:"clientMutationId"`
+	Operations       []ProjectOperation `json:"operations"`
+}
+
+func (ProjectApplyOpsArguments) capabilityArguments() {}
 
 type MediaKind string
 
@@ -140,6 +193,10 @@ func DecodeCapabilityArguments(name ToolName, payload json.RawMessage) (Capabili
 		return decodeAssetsReadArguments(payload)
 	case ToolAssetsPublish:
 		return decodeAssetsPublishArguments(payload)
+	case ToolProjectRead:
+		return decodeProjectReadArguments(payload)
+	case ToolProjectApplyOps:
+		return decodeProjectApplyOpsArguments(payload)
 	case ToolMediaGenerate:
 		return decodeMediaGenerateArguments(payload)
 	case ToolVisionAnalyze:
@@ -149,6 +206,176 @@ func DecodeCapabilityArguments(name ToolName, payload json.RawMessage) (Capabili
 	default:
 		return nil, errCapabilityArgumentsInvalid
 	}
+}
+
+func decodeProjectReadArguments(payload json.RawMessage) (CapabilityArguments, error) {
+	var wire ProjectReadArguments
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error { return decoder.Decode(&wire) }, capabilityPayloadLimit) != nil {
+		return nil, errCapabilityArgumentsInvalid
+	}
+	projectID, err := normalizeIdentifier(wire.DomainProjectID, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityArgumentsInvalid
+	}
+	canvasID, err := normalizeIdentifier(wire.CanvasID, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityArgumentsInvalid
+	}
+	return ProjectReadArguments{DomainProjectID: projectID, CanvasID: canvasID}, nil
+}
+
+func decodeProjectApplyOpsArguments(payload json.RawMessage) (CapabilityArguments, error) {
+	var wire struct {
+		DomainProjectID  string            `json:"domainProjectId"`
+		BaseRevision     *int64            `json:"baseRevision"`
+		ClientMutationID string            `json:"clientMutationId"`
+		Operations       []json.RawMessage `json:"operations"`
+	}
+	if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error {
+		return decoder.Decode(&wire)
+	}, capabilityPayloadLimit) != nil || wire.BaseRevision == nil || *wire.BaseRevision < 0 || len(wire.Operations) < 1 || len(wire.Operations) > capabilityOperationLimit {
+		return nil, errCapabilityArgumentsInvalid
+	}
+	projectID, err := normalizeIdentifier(wire.DomainProjectID, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityArgumentsInvalid
+	}
+	mutationID, err := normalizeIdentifier(wire.ClientMutationID, capabilityIdentifierLimit)
+	if err != nil {
+		return nil, errCapabilityArgumentsInvalid
+	}
+	operations := make([]ProjectOperation, 0, len(wire.Operations))
+	operationIDs := make(map[string]struct{}, len(wire.Operations))
+	touchedUnits := make(map[string]map[ProjectOperationType]struct{})
+	for _, raw := range wire.Operations {
+		operation, decodeErr := decodeProjectOperation(raw)
+		if decodeErr != nil {
+			return nil, errCapabilityArgumentsInvalid
+		}
+		if _, duplicate := operationIDs[operation.OperationID]; duplicate {
+			return nil, errCapabilityArgumentsInvalid
+		}
+		operationIDs[operation.OperationID] = struct{}{}
+		if touchedUnits[operation.UnitID] == nil {
+			touchedUnits[operation.UnitID] = make(map[ProjectOperationType]struct{})
+		}
+		if _, duplicate := touchedUnits[operation.UnitID][operation.Type]; duplicate {
+			return nil, errCapabilityArgumentsInvalid
+		}
+		touchedUnits[operation.UnitID][operation.Type] = struct{}{}
+		operations = append(operations, operation)
+	}
+	return ProjectApplyOpsArguments{DomainProjectID: projectID, BaseRevision: *wire.BaseRevision, ClientMutationID: mutationID, Operations: operations}, nil
+}
+
+func decodeProjectOperation(payload json.RawMessage) (ProjectOperation, error) {
+	var header struct {
+		OperationID string               `json:"operationId"`
+		Type        ProjectOperationType `json:"type"`
+	}
+	if json.Unmarshal(payload, &header) != nil {
+		return ProjectOperation{}, errCapabilityArgumentsInvalid
+	}
+	operationID, err := normalizeIdentifier(header.OperationID, capabilityIdentifierLimit)
+	if err != nil {
+		return ProjectOperation{}, errCapabilityArgumentsInvalid
+	}
+	switch header.Type {
+	case ProjectOperationCreateCharacterCandidates:
+		var wire struct {
+			OperationID string                           `json:"operationId"`
+			Type        ProjectOperationType             `json:"type"`
+			UnitID      string                           `json:"unitId"`
+			Candidates  []ProjectCharacterCandidateInput `json:"candidates"`
+		}
+		if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error { return decoder.Decode(&wire) }, capabilityPayloadLimit) != nil || len(wire.Candidates) < 1 || len(wire.Candidates) > capabilityResourceLimit {
+			return ProjectOperation{}, errCapabilityArgumentsInvalid
+		}
+		unitID, normalizeErr := normalizeIdentifier(wire.UnitID, capabilityIdentifierLimit)
+		if normalizeErr != nil {
+			return ProjectOperation{}, errCapabilityArgumentsInvalid
+		}
+		candidates := make([]ProjectCharacterCandidateInput, 0, len(wire.Candidates))
+		names := make(map[string]struct{}, len(wire.Candidates))
+		for _, candidate := range wire.Candidates {
+			normalized, candidateErr := normalizeProjectCharacterCandidate(candidate)
+			if candidateErr != nil {
+				return ProjectOperation{}, errCapabilityArgumentsInvalid
+			}
+			if _, duplicate := names[normalized.Name]; duplicate {
+				return ProjectOperation{}, errCapabilityArgumentsInvalid
+			}
+			names[normalized.Name] = struct{}{}
+			candidates = append(candidates, normalized)
+		}
+		return ProjectOperation{OperationID: operationID, Type: header.Type, UnitID: unitID, Candidates: candidates}, nil
+	case ProjectOperationReplaceUnitShots:
+		var wire struct {
+			OperationID string               `json:"operationId"`
+			Type        ProjectOperationType `json:"type"`
+			UnitID      string               `json:"unitId"`
+			Shots       []ProjectShotInput   `json:"shots"`
+		}
+		if decodeStrictCapabilityJSON(payload, func(decoder *json.Decoder) error { return decoder.Decode(&wire) }, capabilityPayloadLimit) != nil || len(wire.Shots) < 1 || len(wire.Shots) > 200 {
+			return ProjectOperation{}, errCapabilityArgumentsInvalid
+		}
+		unitID, normalizeErr := normalizeIdentifier(wire.UnitID, capabilityIdentifierLimit)
+		if normalizeErr != nil {
+			return ProjectOperation{}, errCapabilityArgumentsInvalid
+		}
+		shots := make([]ProjectShotInput, 0, len(wire.Shots))
+		for _, shot := range wire.Shots {
+			title, titleErr := normalizeText(shot.Title, capabilityDisplayNameLimit)
+			description, descriptionErr := normalizeText(shot.Description, 8*1024)
+			if titleErr != nil || descriptionErr != nil || shot.DurationMS < 1_000 || shot.DurationMS > 30_000 {
+				return ProjectOperation{}, errCapabilityArgumentsInvalid
+			}
+			shots = append(shots, ProjectShotInput{Title: title, Description: description, DurationMS: shot.DurationMS})
+		}
+		return ProjectOperation{OperationID: operationID, Type: header.Type, UnitID: unitID, Shots: shots}, nil
+	default:
+		return ProjectOperation{}, errCapabilityArgumentsInvalid
+	}
+}
+
+func normalizeProjectCharacterCandidate(candidate ProjectCharacterCandidateInput) (ProjectCharacterCandidateInput, error) {
+	name, err := normalizeText(candidate.Name, capabilityDisplayNameLimit)
+	if err != nil || candidate.Aliases == nil || len(candidate.Aliases) > 20 {
+		return ProjectCharacterCandidateInput{}, errCapabilityArgumentsInvalid
+	}
+	aliases := make([]string, 0, len(candidate.Aliases))
+	seenAliases := make(map[string]struct{}, len(candidate.Aliases))
+	for _, alias := range candidate.Aliases {
+		normalized, aliasErr := normalizeText(alias, capabilityDisplayNameLimit)
+		if aliasErr != nil || normalized == name {
+			return ProjectCharacterCandidateInput{}, errCapabilityArgumentsInvalid
+		}
+		if _, duplicate := seenAliases[normalized]; duplicate {
+			return ProjectCharacterCandidateInput{}, errCapabilityArgumentsInvalid
+		}
+		seenAliases[normalized] = struct{}{}
+		aliases = append(aliases, normalized)
+	}
+	normalizeRequired := func(value string) (string, error) { return normalizeText(value, 2*1024) }
+	role, roleErr := normalizeRequired(candidate.Role)
+	appearance, appearanceErr := normalizeRequired(candidate.Appearance)
+	clothing, clothingErr := normalizeRequired(candidate.Clothing)
+	physique, physiqueErr := normalizeRequired(candidate.Physique)
+	personality, personalityErr := normalizeRequired(candidate.Personality)
+	consistencyPrompt, consistencyErr := normalizeRequired(candidate.ConsistencyPrompt)
+	multiViewPrompt, multiViewErr := normalizeRequired(candidate.MultiViewPrompt)
+	voiceLanguage, languageErr := normalizeRequired(candidate.VoiceLanguage)
+	voiceAge, ageErr := normalizeRequired(candidate.VoiceAge)
+	voiceTimbre, timbreErr := normalizeRequired(candidate.VoiceTimbre)
+	props := strings.TrimSpace(candidate.Props)
+	if !utf8.ValidString(props) || utf8.RuneCountInString(props) > 2*1024 || roleErr != nil || appearanceErr != nil || clothingErr != nil || physiqueErr != nil || personalityErr != nil || consistencyErr != nil || multiViewErr != nil || languageErr != nil || ageErr != nil || timbreErr != nil {
+		return ProjectCharacterCandidateInput{}, errCapabilityArgumentsInvalid
+	}
+	return ProjectCharacterCandidateInput{
+		Name: name, Aliases: aliases, Role: role, Appearance: appearance, Clothing: clothing, Physique: physique,
+		Personality: personality, Props: props, ConsistencyPrompt: consistencyPrompt, MultiViewPrompt: multiViewPrompt,
+		VoiceLanguage: voiceLanguage, VoiceAge: voiceAge, VoiceTimbre: voiceTimbre,
+	}, nil
 }
 
 func ValidateMediaGenerateModelCapability(arguments MediaGenerateArguments, authoritativeCapability string) error {
