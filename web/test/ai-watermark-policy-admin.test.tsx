@@ -2,20 +2,17 @@ import "./setup-happy-dom";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "antd";
-import { afterEach, beforeAll, expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { act, createElement } from "react";
 import type { Root } from "react-dom/client";
 
 import type { WatermarkPolicyApi, WatermarkPolicyPublication } from "../src/services/api/watermark-policy";
 
-let Editor: typeof import("../src/pages/admin/settings/ai-watermark-policy-editor").AIWatermarkPolicyEditor;
-let createRoot: (container: Element | DocumentFragment) => Root;
+const [{ createRoot }, { AIWatermarkPolicyEditor: Editor }] = await Promise.all([
+    import("react-dom/client"),
+    import("../src/pages/admin/settings/ai-watermark-policy-editor"),
+]);
 let root: Root | null = null;
-
-beforeAll(async () => {
-    ({ createRoot } = await import("react-dom/client"));
-    ({ AIWatermarkPolicyEditor: Editor } = await import("../src/pages/admin/settings/ai-watermark-policy-editor"));
-});
 
 afterEach(async () => {
     if (root) await act(async () => root?.unmount());
