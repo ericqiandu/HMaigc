@@ -7,7 +7,7 @@ import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { formatCredits } from "@/constant/credits";
 import { buildTaskBillingQuoteRequest, type ConfirmedTaskBillingQuote } from "@/lib/billing/task-billing-quote";
 import { createPaidCommandGate } from "@/lib/billing/paid-command-gate";
-import { applyGenerationTaskResultToNodes, audioMetadata, imageMetadata, storeBackendGeneratedVideo, videoMetadata } from "@/lib/canvas/canvas-generation-task-sync";
+import { applyGenerationTaskResultToNodes, audioMetadata, imageMetadata, storeBackendGeneratedImage, storeBackendGeneratedVideo, videoMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { retryBoundGenerationTask } from "@/lib/canvas/canvas-generation-task-state";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { buildEmotionImageArtifacts, compositeEmotionImage, emotionGenerationSize } from "@/lib/canvas/canvas-emotion";
@@ -390,7 +390,7 @@ export function useCanvasGenerationRetry({ projectId, domainProjectId, activated
                 });
                 const image = result.images?.[0];
                 if (!image?.dataUrl) throw new Error("后端任务没有返回图片");
-                const uploadedImage = await uploadImage(image.dataUrl);
+                const uploadedImage = await storeBackendGeneratedImage(image);
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                 const imageSize = fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
                 const generationMetadata = savedImageMetadata?.generationType
@@ -406,7 +406,7 @@ export function useCanvasGenerationRetry({ projectId, domainProjectId, activated
                     : buildImageGenerationMetadata(useReferenceImages ? "edit" : "generation", generationConfig, 1, retryImages);
                 setNodes((current) =>
                     current.map((item) =>
-                        item.id === node.id ? { ...item, type: CanvasNodeType.Image, width: imageSize.width, height: imageSize.height, metadata: { ...item.metadata, ...imageMetadata(uploadedImage), prompt, ...generationMetadata } } : item,
+                        item.id === node.id ? { ...item, type: CanvasNodeType.Image, width: imageSize.width, height: imageSize.height, metadata: { ...item.metadata, ...imageMetadata(uploadedImage), prompt, ...generationMetadata, imageCommandEvidence: undefined } } : item,
                     ),
                 );
             } catch (error) {

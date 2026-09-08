@@ -79,7 +79,7 @@ export async function storeBackendGeneratedVideo(video: BackendGeneratedVideo): 
 }
 
 export async function storeBackendGeneratedImage(image: BackendGeneratedImage): Promise<UploadedImage> {
-    if (!image.storageKey) return uploadImage(image.dataUrl);
+    if (!image.storageKey?.trim()) throw new Error("后端图片任务结果缺少资源身份");
     return {
         url: await resolveImageUrl(image.storageKey, image.dataUrl),
         storageKey: image.storageKey,
@@ -113,7 +113,7 @@ export async function buildGenerationTaskNodeResult(node: CanvasNodeData, task: 
             resultDataUrl = await compositeEmotionImage(sourceDataUrl, image.dataUrl, emotionEdit.editRegion, emotionEdit.faceBox);
         }
         const uploaded = !emotionEdit ? await storeBackendGeneratedImage(image) : await uploadImage(resultDataUrl);
-        let imagePromptResultMetadata = {};
+        let imagePromptResultMetadata: Pick<CanvasNodeMetadata, "imageCommandEvidence"> & Partial<Pick<CanvasNodeMetadata, "prompt">> = { imageCommandEvidence: undefined };
         if (result.imagePromptEvidence) {
             const promptTaskEvidence = assertCanvasImagePromptTaskEvidence(result.imagePromptEvidence);
             const resourceId = resourceIdFromStorageKey(uploaded.storageKey);

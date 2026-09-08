@@ -409,7 +409,7 @@ export function useCanvasMediaTools({
                 const result = await runBackendCanvasGenerationTask({ projectId, nodeId: childId, mode: "image", prompt, config: generationConfig, referenceImages: [source], mask: { id: `${node.id}-mask`, name: "mask.png", type: "image/png", dataUrl: storedMask.url, storageKey: storedMask.storageKey }, signal: controller.signal, metadata: { sourceNodeId: node.id, edit: "mask", maskResourceId: resourceIdFromStorageKey(storedMask.storageKey) }, onTaskCreated: (nextTask) => { task = nextTask; bindGenerationTask(childId, nextTask); }, expectedQuote });
                 const image = result.images?.[0];
                 if (!image?.dataUrl) throw new Error("后端任务没有返回图片");
-                const uploaded = await uploadImage(image.dataUrl);
+                const uploaded = await storeBackendGeneratedImage(image);
                 const size = fitNodeSize(uploaded.width, uploaded.height, node.width, node.height);
                 const imageCommandEvidence = buildCanvasImageCommandEvidence({ sourceNodeId: node.id, command: "maskEdit", parameters: { maskStorageKey: storedMask.storageKey, maskResourceId: resourceIdFromStorageKey(storedMask.storageKey) }, prompt, taskId: task?.id, billingOrderId: task?.billingOrderId, resourceId: resourceIdFromStorageKey(uploaded.storageKey), width: uploaded.width, height: uploaded.height });
                 setNodes((current) => current.map((item) => item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata, imageCommandEvidence } } : item));
@@ -467,7 +467,7 @@ export function useCanvasMediaTools({
                 const result = await runBackendCanvasGenerationTask({ projectId, nodeId: childId, mode: "image", prompt, config: generationConfig, referenceImages: [source], signal: controller.signal, metadata: { sourceNodeId: node.id, edit: "angle", angle: params }, onTaskCreated: (nextTask) => { task = nextTask; bindGenerationTask(childId, nextTask); }, expectedQuote });
                 const image = result.images?.[0];
                 if (!image?.dataUrl) throw new Error("后端任务没有返回图片");
-                const uploaded = await uploadImage(image.dataUrl);
+                const uploaded = await storeBackendGeneratedImage(image);
                 const size = fitNodeSize(uploaded.width, uploaded.height, imageSpec.width, imageSpec.height);
                 const imageCommandEvidence = buildCanvasImageCommandEvidence({ sourceNodeId: node.id, command: "angle", parameters: { ...params }, prompt, taskId: task?.id, billingOrderId: task?.billingOrderId, resourceId: resourceIdFromStorageKey(uploaded.storageKey), width: uploaded.width, height: uploaded.height });
                 setNodes((current) => current.map((item) => item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata, imageCommandEvidence } } : item));
