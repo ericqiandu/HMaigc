@@ -4,6 +4,7 @@ import {
     collectJavaScriptImportClosure,
     collectStaticAssetClosure,
     evaluateJavaScriptRequestBudget,
+    evaluateSizeBudget,
 } from "../scripts/bundle-budget-domain.mjs";
 
 describe("bundle budget import closure", () => {
@@ -65,6 +66,38 @@ describe("bundle budget request limits", () => {
             requestCount: 3,
             maxRequests: 3,
             passed: true,
+        });
+    });
+});
+
+describe("bundle budget size limits", () => {
+    test("passes with healthy headroom", () => {
+        expect(evaluateSizeBudget(900, 1_000)).toEqual({
+            bytes: 900,
+            maxBytes: 1_000,
+            passed: true,
+            nearLimit: false,
+            remainingBytes: 100,
+        });
+    });
+
+    test("warns inside the final one percent without failing the build", () => {
+        expect(evaluateSizeBudget(995, 1_000)).toEqual({
+            bytes: 995,
+            maxBytes: 1_000,
+            passed: true,
+            nearLimit: true,
+            remainingBytes: 5,
+        });
+    });
+
+    test("fails after the hard limit", () => {
+        expect(evaluateSizeBudget(1_001, 1_000)).toEqual({
+            bytes: 1_001,
+            maxBytes: 1_000,
+            passed: false,
+            nearLimit: false,
+            remainingBytes: -1,
         });
     });
 });

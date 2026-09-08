@@ -26,6 +26,7 @@ export type GenerationTask = {
     operation?: string;
     provider?: string;
     model?: string;
+    billingOrderId?: string;
     errorCode?: string;
     previewUrl?: string;
     previewKind?: "image" | "video";

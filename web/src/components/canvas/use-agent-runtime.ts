@@ -66,10 +66,12 @@ type UseAgentRuntimeInput = {
     canvasId: string;
     client?: AgentRuntimeClient;
     storage?: AgentRuntimeHandleStorage;
+    onRuntimeView?: (view: AgentRuntimeView) => void;
+    onCanvasProjection?: (revision: number) => void;
     onRuntimeEvent?: (event: AgentRuntimeEvent) => void;
 };
 
-export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage = agentRuntimeHandleStorage, onRuntimeEvent }: UseAgentRuntimeInput) {
+export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage = agentRuntimeHandleStorage, onRuntimeView, onCanvasProjection, onRuntimeEvent }: UseAgentRuntimeInput) {
     const [threadId, setThreadId] = useState("");
     const [view, setView] = useState<AgentRuntimeView | null>(null);
     const [timeline, setTimeline] = useState(initialAgentTimelineState);
@@ -90,8 +92,16 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
     const historyReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const runRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const stoppingRunIDRef = useRef("");
+    const onRuntimeViewRef = useRef(onRuntimeView);
+    const onCanvasProjectionRef = useRef(onCanvasProjection);
     const onRuntimeEventRef = useRef(onRuntimeEvent);
 
+    useEffect(() => {
+        onRuntimeViewRef.current = onRuntimeView;
+    }, [onRuntimeView]);
+    useEffect(() => {
+        onCanvasProjectionRef.current = onCanvasProjection;
+    }, [onCanvasProjection]);
     useEffect(() => {
         onRuntimeEventRef.current = onRuntimeEvent;
     }, [onRuntimeEvent]);
@@ -112,6 +122,7 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
         (nextView: AgentRuntimeView) => {
             setView(nextView);
             setError("");
+            onRuntimeViewRef.current?.(nextView);
             void persist(nextView).catch((cause: unknown) => setError(errorMessage(cause, "Agent 恢复句柄保存失败")));
         },
         [persist],
@@ -158,7 +169,10 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
         setHistoryError("");
         try {
             const history = await client.listThreads(canvasId, 20);
-            if (historyRequestRef.current === requestID) setThreads(history.items);
+            if (historyRequestRef.current === requestID) {
+                setThreads(history.items);
+                if (history.canvasProjectionRevision !== undefined) onCanvasProjectionRef.current?.(history.canvasProjectionRevision);
+            }
         } catch (cause) {
             if (historyRequestRef.current === requestID) setHistoryError(errorMessage(cause, "Agent 历史加载失败"));
         } finally {
@@ -249,6 +263,9 @@ export function useAgentRuntime({ canvasId, client = agentRuntimeClient, storage
                 const historyItems = historyResult.status === "fulfilled" ? historyResult.value.items : [];
                 const handleLoadError = handleResult.status === "rejected" ? errorMessage(handleResult.reason, "Agent 本地恢复句柄读取失败") : "";
                 setThreads(historyItems);
+                if (historyResult.status === "fulfilled" && historyResult.value.canvasProjectionRevision !== undefined) {
+                    onCanvasProjectionRef.current?.(historyResult.value.canvasProjectionRevision);
+                }
                 setHistoryLoading(false);
                 if (historyResult.status === "rejected") setHistoryError(errorMessage(historyResult.reason, "Agent 历史加载失败"));
 

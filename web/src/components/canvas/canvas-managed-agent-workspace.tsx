@@ -36,6 +36,8 @@ export type CanvasManagedAgentWorkspaceProps = {
     agentLaunchRequest?: CanvasAgentLaunchRequest;
     onAgentLaunchHandled?: (launchRequestId: string) => void;
     onBeforeRun?: () => Promise<void>;
+    onRuntimeView?: (view: AgentRuntimeView) => void;
+    onCanvasProjection?: (revision: number) => void;
     onRuntimeEvent?: (event: AgentRuntimeEvent) => void;
     runtimeClient?: AgentRuntimeClient;
     runtimeStorage?: AgentRuntimeHandleStorage;
@@ -50,6 +52,8 @@ export function CanvasManagedAgentWorkspace({
     agentLaunchRequest,
     onAgentLaunchHandled,
     onBeforeRun,
+    onRuntimeView,
+    onCanvasProjection,
     onRuntimeEvent,
     runtimeClient,
     runtimeStorage,
@@ -62,7 +66,7 @@ export function CanvasManagedAgentWorkspace({
     const [historyOpen, setHistoryOpen] = useState(false);
     const [clarificationHistoryOpen, setClarificationHistoryOpen] = useState(false);
     const launchAttemptRef = useRef("");
-    const runtime = useAgentRuntime({ canvasId: projectId, client: runtimeClient, storage: runtimeStorage, onRuntimeEvent });
+    const runtime = useAgentRuntime({ canvasId: projectId, client: runtimeClient, storage: runtimeStorage, onRuntimeView, onCanvasProjection, onRuntimeEvent });
     const active = Boolean(runtime.view && !runtime.terminal);
     const { prompt, generationModels: agentModels, skillSelections: selectedSkills, executionMode } = draft;
     const setPrompt = useCallback((value: SetStateAction<string>) => setDraft((current) => ({ ...current, prompt: typeof value === "function" ? value(current.prompt) : value })), []);

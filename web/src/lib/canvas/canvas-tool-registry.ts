@@ -1,4 +1,4 @@
-import { CONTENT_MODERATION_ERROR_CODE, isContentModerationError } from "@/lib/generation-error";
+import { AGENT_MEDIA_SETTLEMENT_PENDING_ERROR_CODE, CONTENT_MODERATION_ERROR_CODE, isContentModerationError } from "@/lib/generation-error";
 import { supportsVideoAssetUpload } from "@/lib/canvas/canvas-video-composition";
 import { CanvasNodeType, type CanvasNodeData, type CanvasWorkspaceMode } from "@/types/canvas";
 
@@ -12,6 +12,7 @@ export type CanvasImageToolId =
     | "annotation"
     | "maskEdit"
     | "emotion"
+    | "portraitTexture"
     | "crop"
     | "split"
     | "upscale"
@@ -50,6 +51,7 @@ export interface CanvasToolContext {
     node: CanvasNodeData;
     workspaceMode: CanvasWorkspaceMode;
     extractingVideoFrame: boolean;
+    portraitTextureEnabled?: boolean;
 }
 
 const imageToolIds: readonly CanvasImageToolId[] = [
@@ -60,6 +62,7 @@ const imageToolIds: readonly CanvasImageToolId[] = [
     "annotation",
     "maskEdit",
     "emotion",
+    "portraitTexture",
     "crop",
     "split",
     "upscale",
@@ -72,7 +75,7 @@ function descriptor(id: CanvasToolId, group: CanvasToolGroup, order: number, vis
     return { id, group, order, visible, disabled: false };
 }
 
-export function resolveCanvasTools({ node, workspaceMode, extractingVideoFrame }: CanvasToolContext): CanvasToolDescriptor[] {
+export function resolveCanvasTools({ node, workspaceMode, extractingVideoFrame, portraitTextureEnabled = false }: CanvasToolContext): CanvasToolDescriptor[] {
     const isImage = node.type === CanvasNodeType.Image;
     const isVideo = node.type === CanvasNodeType.Video;
     const isAudio = node.type === CanvasNodeType.Audio;
@@ -85,7 +88,8 @@ export function resolveCanvasTools({ node, workspaceMode, extractingVideoFrame }
     const hasAudio = isAudio && Boolean(node.metadata?.content);
     const simpleMode = workspaceMode === "simple";
     const requiresPromptChange = node.metadata?.generationErrorCode === CONTENT_MODERATION_ERROR_CODE || isContentModerationError(node.metadata?.errorDetails);
-    const canRetry = node.metadata?.status === "error" && !requiresPromptChange;
+    const settlementPending = node.metadata?.generationErrorCode === AGENT_MEDIA_SETTLEMENT_PENDING_ERROR_CODE;
+    const canRetry = node.metadata?.status === "error" && !requiresPromptChange && !settlementPending;
     const tools: CanvasToolDescriptor[] = [
         descriptor("info", "node", 0, true),
         descriptor("delete", "node", 10, true),
@@ -102,7 +106,7 @@ export function resolveCanvasTools({ node, workspaceMode, extractingVideoFrame }
         descriptor("uploadImage", "asset", 120, isImage && !hasImage),
         descriptor("uploadVideo", "asset", 130, supportsVideoAssetUpload(node)),
         descriptor("uploadAudio", "asset", 140, isAudio),
-        ...imageToolIds.map((id, index) => descriptor(id, "edit", 150 + index * 10, hasImage && !simpleMode)),
+        ...imageToolIds.map((id, index) => descriptor(id, "edit", 150 + index * 10, hasImage && !simpleMode && (id !== "portraitTexture" || portraitTextureEnabled))),
     ];
 
     if (extractingVideoFrame) {

@@ -53,12 +53,33 @@ export type AgentVisionModelSetting = AgentDefaultModelReference & {
     displayName: string;
 };
 
+export type ImagePromptModelSetting = AgentDefaultModelReference & {
+    configured: boolean;
+    displayName: string;
+};
+
 export function parseAgentVisionModelSetting(value: unknown): AgentVisionModelSetting {
     if (!isRecord(value) || typeof value.configured !== "boolean" || typeof value.channelModelId !== "string" || typeof value.channelId !== "string" || typeof value.modelKey !== "string" || typeof value.displayName !== "string") {
         throw new Error("视觉理解模型配置接口返回格式错误");
     }
     if (value.configured && (!value.channelModelId.trim() || !value.channelId.trim() || !value.modelKey.trim())) {
         throw new Error("视觉理解模型配置接口缺少已配置模型身份");
+    }
+    return {
+        configured: value.configured,
+        channelModelId: value.channelModelId,
+        channelId: value.channelId,
+        modelKey: value.modelKey,
+        displayName: value.displayName,
+    };
+}
+
+export function parseImagePromptModelSetting(value: unknown): ImagePromptModelSetting {
+    if (!isRecord(value) || typeof value.configured !== "boolean" || typeof value.channelModelId !== "string" || typeof value.channelId !== "string" || typeof value.modelKey !== "string" || typeof value.displayName !== "string") {
+        throw new Error("图片提示词模型配置接口返回格式错误");
+    }
+    if (value.configured && (!value.channelModelId.trim() || !value.channelId.trim() || !value.modelKey.trim())) {
+        throw new Error("图片提示词模型配置接口缺少已配置模型身份");
     }
     return {
         configured: value.configured,
@@ -620,6 +641,18 @@ export async function updateAdminAgentVisionModelSetting(channelModelId: string)
     const result = await request<unknown>(api.put("/admin/settings/agent-vision-model", { channelModelId }));
     if (!isRecord(result) || !("setting" in result)) throw new Error("视觉理解模型配置接口返回格式错误");
     return { setting: parseAgentVisionModelSetting(result.setting) };
+}
+
+export async function getAdminImagePromptModelSetting() {
+    const result = await request<unknown>(api.get("/admin/settings/image-prompt-model"));
+    if (!isRecord(result) || !("setting" in result)) throw new Error("图片提示词模型配置接口返回格式错误");
+    return { setting: parseImagePromptModelSetting(result.setting) };
+}
+
+export async function updateAdminImagePromptModelSetting(channelModelId: string) {
+    const result = await request<unknown>(api.put("/admin/settings/image-prompt-model", { channelModelId }));
+    if (!isRecord(result) || !("setting" in result)) throw new Error("图片提示词模型配置接口返回格式错误");
+    return { setting: parseImagePromptModelSetting(result.setting) };
 }
 
 export function deleteAdminModelPricing(id: string) {

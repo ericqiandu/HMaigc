@@ -50,7 +50,7 @@ import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-p
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
 import { getProject } from "@/services/api/projects";
 import { ensureRemoteCanvasProjectReady } from "@/services/user-data-sync";
-import type { AgentRuntimeEvent } from "@/services/api/agent-runtime";
+import type { AgentRuntimeEvent, AgentRuntimeView } from "@/services/api/agent-runtime";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { CanvasCollaborationPresenceButton, CanvasRemotePresenceLayer } from "@/components/canvas/canvas-collaboration-presence";
 import { CanvasScriptEditor, CanvasScriptNodeContent, STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardMinNodeHeight, storyboardTableHeight } from "@/components/canvas/canvas-script-node";
@@ -193,6 +193,7 @@ function InfiniteCanvasPage() {
 
     const config = useConfigStore((state) => state.config);
     const currentUserId = useUserStore((state) => state.user?.id);
+    const currentUserRole = useUserStore((state) => state.user?.role);
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const assets = useAssetStore((state) => state.assets);
@@ -365,6 +366,14 @@ function InfiniteCanvasPage() {
     const canAccessLinkedProject = Boolean(currentProject?.projectId && (!currentProject.teamId || (currentProject.ownerUserId && currentProject.ownerUserId === currentUserId)));
     const linkedProjectId = canAccessLinkedProject ? currentProject?.projectId || "" : "";
     const linkedProjectQuery = useQuery({ queryKey: ["project", linkedProjectId], queryFn: () => getProject(linkedProjectId), enabled: Boolean(linkedProjectId) });
+    const productRolloutsQuery = useQuery({
+        queryKey: ["product-rollouts"],
+        queryFn: async ({ signal }) => (await import("@/services/api/product-rollouts")).getProductRollouts(signal),
+        retry: false,
+    });
+    useEffect(() => {
+        if (currentUserRole === "admin" && productRolloutsQuery.error) message.error(`图片工具配置加载失败：${productRolloutsQuery.error.message}`);
+    }, [currentUserRole, message, productRolloutsQuery.error]);
     useEffect(() => {
         if (!projectLoaded || !linkedProjectQuery.data) return;
         setNodes((current) => refreshCanvasCharacterReferenceNodes(current, linkedProjectQuery.data.assets));
@@ -503,6 +512,15 @@ function InfiniteCanvasPage() {
             message.error(cause instanceof Error ? `Agent 媒体结果刷新失败：${cause.message}` : "Agent 媒体结果刷新失败");
         });
     }, [collaboration.refreshRemoteState, message]);
+    const handleAgentCanvasProjection = useCallback((revision: number) => {
+        void collaboration.refreshRemoteState(revision).catch((cause: unknown) => {
+            message.error(cause instanceof Error ? `Agent 节点对账刷新失败：${cause.message}` : "Agent 节点对账刷新失败");
+        });
+    }, [collaboration.refreshRemoteState, message]);
+    const handleAgentRuntimeView = useCallback((view: AgentRuntimeView) => {
+        if (view.canvasProjectionRevision === undefined) return;
+        handleAgentCanvasProjection(view.canvasProjectionRevision);
+    }, [handleAgentCanvasProjection]);
     const handleAgentToolResult = useCallback(
         (event: AgentRuntimeEvent) => {
             const receipt = agentCanvasCommittedReceipt(event, projectId);
@@ -616,6 +634,7 @@ function InfiniteCanvasPage() {
         extractingVideoFrameNodeId,
         generateAngleNode,
         generateEmotionNode,
+        generatePortraitTextureNode,
         maskEditImageNode,
         maskEditNodeId,
         mergeSelectedVideos,
@@ -636,6 +655,7 @@ function InfiniteCanvasPage() {
         upscaleNodeId,
     } = useCanvasMediaTools({
         projectId,
+        canvasRevision: currentProject?.revision || 0,
         nodesRef,
         connectionsRef,
         selectedNodeIdsRef,
@@ -1751,6 +1771,7 @@ function InfiniteCanvasPage() {
                             setDialogNodeId(null);
                             setEmotionNodeId((current) => (current === node.id ? null : node.id));
                         }}
+                        onPortraitTexture={(node) => void generatePortraitTextureNode(node)}
                         onCrop={(node) => setCropNodeId(node.id)}
                         onSplit={(node) => setSplitNodeId(node.id)}
                         onUpscale={(node) => setUpscaleNodeId(node.id)}
@@ -1762,6 +1783,7 @@ function InfiniteCanvasPage() {
                         onViewImage={(node) => setPreviewNodeId(node.id)}
                         onExtractVideoLastFrame={(node) => void extractVideoLastFrame(node)}
                         extractingVideoFrame={toolbarNode?.id === extractingVideoFrameNodeId}
+                        portraitTextureEnabled={productRolloutsQuery.data?.canvasToolRegistryV2 === true}
                         onReversePrompt={createImageReversePromptNodes}
                         onRetry={(node) => void handleRetryNode(node)}
                         onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
@@ -2040,6 +2062,8 @@ function InfiniteCanvasPage() {
                         agentLaunchRequest={agentLaunchRemoteReady ? agentLaunchRequest : undefined}
                         onAgentLaunchHandled={handleAgentLaunchHandled}
                         onBeforeRun={prepareAgentRun}
+                        onRuntimeView={handleAgentRuntimeView}
+                        onCanvasProjection={handleAgentCanvasProjection}
                         onRuntimeEvent={handleAgentToolResult}
                         onLocalToolResult={handleLocalAgentToolResult}
                     />

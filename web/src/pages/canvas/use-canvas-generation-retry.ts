@@ -1,15 +1,19 @@
-import { useCallback, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import { App } from "antd";
 
 import { buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
+import { formatCredits } from "@/constant/credits";
+import { buildTaskBillingQuoteRequest, type ConfirmedTaskBillingQuote } from "@/lib/billing/task-billing-quote";
+import { createPaidCommandGate } from "@/lib/billing/paid-command-gate";
 import { applyGenerationTaskResultToNodes, audioMetadata, imageMetadata, storeBackendGeneratedVideo, videoMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { retryBoundGenerationTask } from "@/lib/canvas/canvas-generation-task-state";
 import { fitNodeSize } from "@/lib/canvas/canvas-node-size";
 import { buildEmotionImageArtifacts, compositeEmotionImage, emotionGenerationSize } from "@/lib/canvas/canvas-emotion";
 import {
     buildAudioGenerationMetadata,
+    backendProviderConfig,
     buildGenerationConfig,
     buildImageGenerationMetadata,
     buildVideoGenerationMetadata,
@@ -28,7 +32,7 @@ import { generationFailureMetadata, unchangedModeratedPrompt } from "@/lib/gener
 import { handleMissingSystemModel } from "@/lib/settings-navigation";
 import { storeGeneratedAudio } from "@/services/api/audio";
 import type { PlatformSkill } from "@/services/api/skills";
-import { retryGenerationTask, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
+import { requestTaskBillingQuote, retryGenerationTask, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
@@ -53,9 +57,10 @@ const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
 
 export function useCanvasGenerationRetry({ projectId, domainProjectId, activatedSkills, nodesRef, connectionsRef, setNodes, setRunningNodeId, startGenerationRequest, finishGenerationRequest, bindGenerationTask }: UseCanvasGenerationRetryOptions) {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
+    const paidRetryGateRef = useRef(createPaidCommandGate());
 
     return useCallback(
         async (node: CanvasNodeData) => {
@@ -190,6 +195,44 @@ export function useCanvasGenerationRetry({ projectId, domainProjectId, activated
                       }
                     : undefined;
 
+            let expectedQuote: ConfirmedTaskBillingQuote | undefined;
+            if (retryMode === "image" || retryMode === "video") {
+                try {
+                    const selectedVideoContext = retryMode === "video" && videoContext ? selectVideoGenerationContext(node.metadata, videoContext) : undefined;
+                    if (retryMode === "video" && !selectedVideoContext) throw new Error("视频重试缺少可报价的生成上下文");
+                    const operation = retryMode === "video" ? buildVideoGenerationMetadata(node, selectedVideoContext!).videoEditOperation || "video" : "image";
+                    const quoteResult = await paidRetryGateRef.current.run({
+                        commandKey: `${node.id}:retry`,
+                        loadQuote: () => requestTaskBillingQuote(buildTaskBillingQuoteRequest({
+                            projectId,
+                            mode: retryMode,
+                            operation,
+                            batchCount: 1,
+                            usage: {
+                                referenceImageCount: retryMode === "image" ? (isEmotionRetry ? 2 : useReferenceImages ? retryImages.length : 0) : selectedVideoContext?.referenceImages.length || 0,
+                                referenceVideoCount: selectedVideoContext?.referenceVideos.length || 0,
+                            },
+                            config: backendProviderConfig(generationConfig),
+                        })),
+                        confirm: (quote) => new Promise<boolean>((resolve) => modal.confirm({
+                            title: `确认${retryMode === "image" ? "图片" : "视频"}重试报价`,
+                            content: `预计消耗 ${formatCredits(quote.amountMicrocredits)} 积分。`,
+                            okText: "确认重试",
+                            cancelText: "取消",
+                            centered: true,
+                            onOk: () => resolve(true),
+                            onCancel: () => resolve(false),
+                        })),
+                        execute: async (quote) => quote,
+                    });
+                    if (quoteResult.status === "rejected") return;
+                    expectedQuote = quoteResult.value;
+                } catch (error) {
+                    message.error(error instanceof Error ? error.message : "无法确认重试报价");
+                    return;
+                }
+            }
+
             setRunningNodeId(node.id);
             setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, failedPromptFingerprint: undefined } } : item)));
             const controller = startGenerationRequest(node.id, sourceNode.id, node.id);
@@ -238,6 +281,7 @@ export function useCanvasGenerationRetry({ projectId, domainProjectId, activated
                         signal: controller.signal,
                         metadata: { retry: true, sourceNodeId: sourceNode.id, resolvedCharacterVersions: context?.resolvedCharacterVersions || [], resolvedCharacterVoices: context?.resolvedCharacterVoices || [], ...videoGenerationMetadata },
                         onTaskCreated: (task) => bindGenerationTask(node.id, task),
+                        expectedQuote,
                     });
                     if (!result.video?.dataUrl) throw new Error("后端任务没有返回视频");
                     const video = await storeBackendGeneratedVideo(result.video);
@@ -314,6 +358,7 @@ export function useCanvasGenerationRetry({ projectId, domainProjectId, activated
                         signal: controller.signal,
                         metadata: { retry: true, sourceNodeId: emotionSource.id, edit: "emotion", emotion: nextEmotionEdit, resolvedCharacterVersions: context?.resolvedCharacterVersions || [] },
                         onTaskCreated: (task) => bindGenerationTask(node.id, task),
+                        expectedQuote,
                     });
                     const image = result.images?.[0];
                     if (!image?.dataUrl) throw new Error("后端任务没有返回图片");
@@ -341,6 +386,7 @@ export function useCanvasGenerationRetry({ projectId, domainProjectId, activated
                     signal: controller.signal,
                     metadata: { retry: true, sourceNodeId: sourceNode.id, resolvedCharacterVersions: context?.resolvedCharacterVersions || [] },
                     onTaskCreated: (task) => bindGenerationTask(node.id, task),
+                    expectedQuote,
                 });
                 const image = result.images?.[0];
                 if (!image?.dataUrl) throw new Error("后端任务没有返回图片");
@@ -372,7 +418,7 @@ export function useCanvasGenerationRetry({ projectId, domainProjectId, activated
                 finishGenerationRequest(node.id, controller);
             }
         },
-        [activatedSkills, bindGenerationTask, connectionsRef, domainProjectId, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, nodesRef, projectId, setNodes, setRunningNodeId, startGenerationRequest],
+        [activatedSkills, bindGenerationTask, connectionsRef, domainProjectId, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, modal, nodesRef, projectId, setNodes, setRunningNodeId, startGenerationRequest],
     );
 }
 

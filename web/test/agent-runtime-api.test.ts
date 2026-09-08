@@ -546,7 +546,8 @@ const history = {
 };
 
 test("会话历史严格保留全部轮次、时间线和空会话事实", () => {
-    const parsed = parseAgentThreadHistory(history);
+    const parsed = parseAgentThreadHistory({ ...history, canvasProjectionRevision: 12 });
+    expect(parsed.canvasProjectionRevision).toBe(12);
     expect(parsed.items[0]?.turns[0]?.items[0]?.content.message).toBe(state.userMessage);
     expect(parsed.items[0]?.activityAt).toBe("2026-08-15T02:00:00Z");
     expect(parsed.items[1]?.thread.id).toBe("thread-empty");

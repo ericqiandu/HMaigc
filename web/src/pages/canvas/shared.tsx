@@ -389,6 +389,7 @@ export default function SharedCanvasPage() {
                 onSaveAsset={unauthorized}
                 onMaskEdit={unauthorized}
                 onEmotion={unauthorized}
+                onPortraitTexture={unauthorized}
                 onCrop={unauthorized}
                 onSplit={unauthorized}
                 onUpscale={unauthorized}
@@ -397,6 +398,7 @@ export default function SharedCanvasPage() {
                 onViewImage={unauthorized}
                 onExtractVideoLastFrame={unauthorized}
                 extractingVideoFrame={false}
+                portraitTextureEnabled={false}
                 onReversePrompt={unauthorized}
                 onRetry={unauthorized}
                 onToggleFreeResize={unauthorized}

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"os"
 
@@ -15,6 +16,59 @@ const siteLogoUploadBodyLimit = (2 << 20) + (1 << 20)
 const siteMarketingImageUploadBodyLimit = (8 << 20) + (1 << 20)
 
 func RegisterSiteSettingRoutes(r *gin.RouterGroup, svc *service.Service) {
+	r.GET("/product-rollouts", func(c *gin.Context) {
+		actor, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		result, err := svc.ProductRollouts(actor)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
+
+	r.GET("/admin/settings/product-rollouts", func(c *gin.Context) {
+		actor, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		result, err := svc.AdminProductRollouts(actor)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
+
+	r.PUT("/admin/settings/product-rollouts", func(c *gin.Context) {
+		actor, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, siteSettingBodyLimit)
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		request, err := service.ParseProductRolloutSettingJSON(body)
+		if err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		result, err := svc.UpdateProductRollouts(actor, *request)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
+
 	r.GET("/public/site", func(c *gin.Context) {
 		result, err := svc.PublicSiteShellSetting()
 		if err != nil {

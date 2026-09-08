@@ -24,7 +24,9 @@ function ToolbarFixture() {
     const leaveTimerRef = useRef<number | null>(null);
     const [hoveredNode, setHoveredNode] = useState<CanvasNodeData | null>(null);
     const [lastAction, setLastAction] = useState("none");
-    const extractingVideoFrame = new URLSearchParams(window.location.search).get("busy") === "1";
+    const searchParams = new URLSearchParams(window.location.search);
+    const extractingVideoFrame = searchParams.get("busy") === "1";
+    const portraitTextureEnabled = searchParams.get("portraitTexture") === "1";
 
     const cancelLeave = useCallback(() => {
         if (leaveTimerRef.current !== null) window.clearTimeout(leaveTimerRef.current);
@@ -77,6 +79,8 @@ function ToolbarFixture() {
                     onSaveAsset={record("saveAsset")}
                     onMaskEdit={record("maskEdit")}
                     onEmotion={record("emotion")}
+                    onPortraitTexture={record("portraitTexture")}
+                    portraitTextureEnabled={portraitTextureEnabled}
                     onCrop={record("crop")}
                     onSplit={record("split")}
                     onUpscale={record("upscale")}

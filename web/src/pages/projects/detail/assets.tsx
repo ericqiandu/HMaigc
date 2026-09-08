@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useMutationState, useQuery } from "@tanstack/react-query";
 import { App, Button, Dropdown, Form, Input, Modal, Popconfirm, Select, Tabs, type FormInstance } from "antd";
 import { Box, Check, ChevronDown, FileText, Image as ImageIcon, Link2, Music2, Plus, RefreshCw, Sparkles, Trash2, UserRound, Video, VolumeX } from "lucide-react";
@@ -6,7 +6,12 @@ import { Box, Check, ChevronDown, FileText, Image as ImageIcon, Link2, Music2, P
 import { WorkspaceState } from "@/components/layout/workspace-state";
 import { WorkspaceSignalIcon } from "@/components/ui/aceternity/workspace-signal-icon";
 import { canvasStylePresets } from "@/components/canvas/canvas-style-picker-modal";
+import { formatCredits } from "@/constant/credits";
+import { buildTaskBillingQuoteRequest, type ConfirmedTaskBillingQuote } from "@/lib/billing/task-billing-quote";
+import { createPaidCommandGate } from "@/lib/billing/paid-command-gate";
+import { backendProviderConfig } from "@/lib/canvas/canvas-project-generation";
 import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
+import { requestTaskBillingQuote } from "@/services/api/task-center";
 import {
     bindProjectCharacterVoice,
     confirmProjectAssetCandidate,
@@ -24,10 +29,10 @@ import {
 } from "@/services/api/projects";
 import { saveRemoteUserDataNow } from "@/services/user-data-sync";
 import { useAssetStore, type Asset, type AssetCategory, type AssetStatus, type EntityAsset, type ImageAsset } from "@/stores/use-asset-store";
-import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 
 import { ProjectCharacterCard } from "./project-character-card";
-import { generateCharacterTurnaround } from "./project-character-media";
+import { generateCharacterTurnaround, type ProjectStylePrompt } from "./project-character-media";
 import { categoryLabels, categoryLabel, mediaLabel, StatusPill, formatTime, type ProjectDetailViewProps } from "./shared";
 
 const categories = ["all", "character", "environment", "wardrobe", "prop", "weapon", "style", "other"];
@@ -39,9 +44,10 @@ const characterFields = [
 ] as const;
 
 type CharacterForm = { name: string } & Record<(typeof characterFields)[number][0], string>;
+type CharacterTurnaroundGeneration = { asset: ProjectAsset; config: AiConfig; expectedQuote: ConfirmedTaskBillingQuote; projectStyle?: ProjectStylePrompt };
 
 export default function ProjectAssetsView({ detail, refreshProject }: ProjectDetailViewProps) {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const personalAssets = useAssetStore((state) => state.assets);
     const updatePersonalAsset = useAssetStore((state) => state.updateAsset);
     const effectiveConfig = useEffectiveConfig();
@@ -57,6 +63,7 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
     const [voiceProfileId, setVoiceProfileId] = useState("");
     const [voiceInstructions, setVoiceInstructions] = useState("");
     const [form] = Form.useForm<CharacterForm>();
+    const paidGenerationGateRef = useRef(createPaidCommandGate());
 
     const projectAssetIds = new Set(detail.assets.map((asset) => asset.id));
     const availableAssets = personalAssets.filter((asset) => !projectAssetIds.has(asset.id));
@@ -70,7 +77,7 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
     const voices = useQuery({ queryKey: ["voice-profiles"], queryFn: listVoiceProfiles, enabled: Boolean(voiceAsset) });
     const generatingAssets = useMutationState({
         filters: { mutationKey: ["project-character-turnaround", detail.project.id], status: "pending" },
-        select: (mutation) => mutation.state.variables as ProjectAsset | undefined,
+        select: (mutation) => (mutation.state.variables as CharacterTurnaroundGeneration | undefined)?.asset,
     });
     const generatingAssetIds = new Set(generatingAssets.map((asset) => asset?.id).filter((id): id is string => Boolean(id)));
 
@@ -95,17 +102,12 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
     });
     const generateMutation = useMutation({
         mutationKey: ["project-character-turnaround", detail.project.id],
-        mutationFn: async (asset: ProjectAsset) => {
+        mutationFn: async ({ asset, config, expectedQuote, projectStyle }: CharacterTurnaroundGeneration) => {
             if (!asset.character) throw new Error("角色版本信息不完整");
-            const model = effectiveConfig.imageModel || effectiveConfig.model;
-            const config = { ...effectiveConfig, model };
-            if (!isAiConfigReady(config, model)) throw new Error("系统暂无可用图片模型，请联系管理员完成 AI 模型配置");
-            const projectStyle = canvasStylePresets.find((preset) => preset.id === detail.project.stylePresetId);
-            await generateCharacterTurnaround({ projectId: detail.project.id, assetId: asset.id, versionId: asset.character.versionId, name: asset.title, definition: asset.character.definition, projectStyle, config });
+            await generateCharacterTurnaround({ projectId: detail.project.id, assetId: asset.id, versionId: asset.character.versionId, name: asset.title, definition: asset.character.definition, projectStyle, config, expectedQuote });
             return getProjectCharacter(detail.project.id, asset.id);
         },
         onSuccess: (result) => { syncPersonalCharacterProjection(result.asset); done("三视图已生成并绑定到新角色版本"); },
-        onError: failed("三视图生成失败"),
     });
     const bindImagesMutation = useMutation({
         mutationFn: async () => {
@@ -131,6 +133,44 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
     };
     const openImages = (asset: ProjectAsset) => { setImageAsset(asset); setImageSelection(""); };
     const openVoice = (asset: ProjectAsset) => { setVoiceAsset(asset); setVoiceProfileId(asset.character?.voice?.profile.id || ""); setVoiceInstructions(asset.character?.voice?.instructions || ""); };
+    const submitCharacterTurnaround = async (asset: ProjectAsset) => {
+        if (!asset.character) {
+            message.error("角色版本信息不完整");
+            return;
+        }
+        const model = effectiveConfig.imageModel || effectiveConfig.model;
+        const config = { ...effectiveConfig, model };
+        if (!isAiConfigReady(config, model)) {
+            message.error("系统暂无可用图片模型，请联系管理员完成 AI 模型配置");
+            return;
+        }
+        const projectStyle = canvasStylePresets.find((preset) => preset.id === detail.project.stylePresetId);
+        try {
+            await paidGenerationGateRef.current.run({
+                commandKey: `character-turnaround:${asset.id}`,
+                loadQuote: () => requestTaskBillingQuote(buildTaskBillingQuoteRequest({
+                    projectId: detail.project.id,
+                    mode: "image",
+                    operation: "image",
+                    batchCount: 1,
+                    usage: { referenceImageCount: 0, referenceVideoCount: 0 },
+                    config: backendProviderConfig(config),
+                })),
+                confirm: (quote) => new Promise<boolean>((resolve) => modal.confirm({
+                    title: `确认生成 ${asset.title} 的三视图`,
+                    content: `模型：${model}；预计消耗 ${formatCredits(quote.amountMicrocredits)} 积分。`,
+                    okText: "确认生成",
+                    cancelText: "取消",
+                    centered: true,
+                    onOk: () => resolve(true),
+                    onCancel: () => resolve(false),
+                })),
+                execute: (expectedQuote) => generateMutation.mutateAsync({ asset, config, expectedQuote, projectStyle }),
+            });
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "三视图生成失败");
+        }
+    };
     return (
         <div>
             <header className="flex min-h-[72px] flex-col gap-4 border-b border-border/70 pb-4 sm:flex-row sm:items-center sm:justify-between">
@@ -158,7 +198,7 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
                 <div className="min-w-0">
                     {(category === "all" || category === "character") && pendingCandidates.length ? <section className="mb-4"><div className="mb-2 flex items-center gap-1.5 text-xs font-medium"><Sparkles className="size-3.5 text-[var(--workspace-accent)]" />剧情识别出的角色</div><div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{pendingCandidates.map((candidate) => <article key={candidate.id} className="flex min-h-28 items-center gap-3 rounded-lg border border-dashed border-border p-3"><span className="grid size-12 shrink-0 place-items-center rounded-md bg-foreground/[.045] text-foreground/25"><UserRound className="size-5" /></span><div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold">{candidate.name}</div><div className="mt-1 text-[10px] text-foreground/42">待确认角色卡 · 来自章节分析</div><div className="mt-2 flex min-w-0 items-center gap-1"><Button type="text" size="small" icon={<Check className="size-3.5" />} loading={confirmMutation.isPending} onClick={() => confirmMutation.mutate({ candidateId: candidate.id })}>确认新角色</Button>{characterAssets.length ? <Dropdown trigger={["click"]} menu={{ items: characterAssets.map((asset) => ({ key: asset.id, label: asset.title })), onClick: ({ key }) => confirmMutation.mutate({ candidateId: candidate.id, targetAssetId: key }) }}><Button type="text" size="small" disabled={confirmMutation.isPending}>归并到角色<ChevronDown className="size-3" /></Button></Dropdown> : null}</div></div></article>)}</div></section> : null}
                     <div className="mb-2 flex items-center justify-between text-xs text-foreground/45"><span>{category === "all" ? "全部资产" : categoryLabel(category)}</span><span>{visibleAssets.length} 项</span></div>
-                    {visibleAssets.length ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">{visibleAssets.map((asset) => asset.category === "character" ? <ProjectCharacterCard key={asset.id} asset={asset} generating={generatingAssetIds.has(asset.id)} removing={unlinkMutation.isPending && unlinkMutation.variables === asset.id} onEdit={() => openCharacterEditor(asset)} onGenerate={() => generateMutation.mutate(asset)} onBindImages={() => openImages(asset)} onBindVoice={() => openVoice(asset)} onRemove={() => unlinkMutation.mutate(asset.id)} /> : <MediaAssetCard key={asset.id} asset={asset} personalAsset={personalAssets.find((item) => item.id === asset.id)} onCategoryChange={(next) => categoryMutation.mutate({ id: asset.id, next })} onVersion={() => versionMutation.mutate(asset.id)} onRemove={() => unlinkMutation.mutate(asset.id)} loading={(categoryMutation.isPending && categoryMutation.variables?.id === asset.id) || (versionMutation.isPending && versionMutation.variables === asset.id) || (unlinkMutation.isPending && unlinkMutation.variables === asset.id)} />)}</div> : <WorkspaceState icon="assets" compact title="这个分类还没有资产" description={category === "character" ? "新建角色，或先从剧情章节提取角色信息。" : "可从个人素材库引用，或切换到其他分类查看。"} />}
+                    {visibleAssets.length ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">{visibleAssets.map((asset) => asset.category === "character" ? <ProjectCharacterCard key={asset.id} asset={asset} generating={generatingAssetIds.has(asset.id)} removing={unlinkMutation.isPending && unlinkMutation.variables === asset.id} onEdit={() => openCharacterEditor(asset)} onGenerate={() => void submitCharacterTurnaround(asset)} onBindImages={() => openImages(asset)} onBindVoice={() => openVoice(asset)} onRemove={() => unlinkMutation.mutate(asset.id)} /> : <MediaAssetCard key={asset.id} asset={asset} personalAsset={personalAssets.find((item) => item.id === asset.id)} onCategoryChange={(next) => categoryMutation.mutate({ id: asset.id, next })} onVersion={() => versionMutation.mutate(asset.id)} onRemove={() => unlinkMutation.mutate(asset.id)} loading={(categoryMutation.isPending && categoryMutation.variables?.id === asset.id) || (versionMutation.isPending && versionMutation.variables === asset.id) || (unlinkMutation.isPending && unlinkMutation.variables === asset.id)} />)}</div> : <WorkspaceState icon="assets" compact title="这个分类还没有资产" description={category === "character" ? "新建角色，或先从剧情章节提取角色信息。" : "可从个人素材库引用，或切换到其他分类查看。"} />}
                 </div>
             </div>
 

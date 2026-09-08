@@ -105,6 +105,7 @@ export type AgentRuntimeView = {
     };
     state: AgentRuntimeState;
     pendingApproval?: AgentPendingApproval;
+    canvasProjectionRevision?: number;
 };
 export type AgentTimelineItemKind = "user_message" | "agent_message" | "status" | "clarification" | "tool_call" | "tool_result" | "approval" | "artifact" | "error";
 export type AgentTimelineItemStatus = "in_progress" | "completed" | "failed" | "declined" | "interrupted";
@@ -161,7 +162,7 @@ export type AgentThreadHistoryItem = {
     activityAt: string;
     turns: AgentThreadHistoryTurn[];
 };
-export type AgentThreadHistoryView = { items: AgentThreadHistoryItem[] };
+export type AgentThreadHistoryView = { items: AgentThreadHistoryItem[]; canvasProjectionRevision?: number };
 export type AgentRuntimeHandle = { threadId: string; activeRunId?: string; lastSequence: number; pendingRun?: { clientRequestId: string; userMessage: string; configuration: AgentRuntimeStartConfiguration } };
 export type AgentRuntimeHandleStorage = {
     load: (canvasId: string) => Promise<AgentRuntimeHandle | null>;
@@ -233,7 +234,7 @@ export class AgentRuntimeRequestError extends Error {
 }
 
 export function parseAgentRuntimeView(value: unknown): AgentRuntimeView {
-    const root = exactObject(value, "Agent Runtime", ["run", "state", "pendingApproval"]);
+    const root = exactObject(value, "Agent Runtime", ["run", "state", "pendingApproval", "canvasProjectionRevision"]);
     const run = object(root.run, "Agent run");
     const state = parseState(root.state);
     const parsedRun: AgentRuntimeView["run"] = {
@@ -315,7 +316,8 @@ export function parseAgentRuntimeView(value: unknown): AgentRuntimeView {
     } else if (pendingApproval) {
         throw new Error("Agent 非等待审批状态携带了冻结提案");
     }
-    return { run: parsedRun, state, ...(pendingApproval ? { pendingApproval } : {}) };
+    const canvasProjectionRevision = root.canvasProjectionRevision === undefined ? undefined : integer(root.canvasProjectionRevision, "canvasProjectionRevision", true);
+    return { run: parsedRun, state, ...(pendingApproval ? { pendingApproval } : {}), ...(canvasProjectionRevision === undefined ? {} : { canvasProjectionRevision }) };
 }
 
 function approvalEffectKindForTool(toolName: AgentToolName): AgentApprovalEffect["kind"] | undefined {
@@ -413,10 +415,11 @@ function validateRunUIEvent(kind: "run.started" | "run.completed" | "run.failed"
 }
 
 export function parseAgentThreadHistory(value: unknown): AgentThreadHistoryView {
-    const root = object(value, "Agent thread history");
+    const root = exactObject(value, "Agent thread history", ["items", "canvasProjectionRevision"]);
     const items = array(root.items, "history.items");
     if (items.length > 20) throw new Error("Agent 会话历史不能超过 20 项");
-    return { items: items.map((item, index) => parseAgentThreadHistoryItem(item, index)) };
+    const canvasProjectionRevision = root.canvasProjectionRevision === undefined ? undefined : integer(root.canvasProjectionRevision, "history.canvasProjectionRevision", true);
+    return { items: items.map((item, index) => parseAgentThreadHistoryItem(item, index)), ...(canvasProjectionRevision === undefined ? {} : { canvasProjectionRevision }) };
 }
 
 function parseAgentThreadHistoryItem(value: unknown, index: number): AgentThreadHistoryItem {

@@ -10,14 +10,17 @@ import {
     createAdminModelPricing,
     getAdminAgentDefaultModelSetting,
     getAdminAgentVisionModelSetting,
+    getAdminImagePromptModelSetting,
     getAdminModelPricingOperationsSetting,
     listAdminModelPricings,
     updateAdminModelPricing,
     updateAdminModelPricingOperationsSetting,
     updateAdminAgentDefaultModelSetting,
     updateAdminAgentVisionModelSetting,
+    updateAdminImagePromptModelSetting,
     type AgentDefaultModelSetting,
     type AgentVisionModelSetting,
+    type ImagePromptModelSetting,
     type ModelPricing,
     type ModelPricingInput,
     type ModelPricingOperationsSetting,
@@ -28,7 +31,7 @@ import { useAdminContext } from "../admin-context";
 import { AdminContentSection, AdminDataLayout, AdminMetric, AdminMetricBand } from "../components/admin-data-layout";
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminContentError, AdminTableEmpty, AdminTableSkeleton } from "../components/admin-ui";
-import { agentDefaultModelOptions, agentVisionModelOptions, pricingContractForModel, supportsTokenUsageBilling } from "./agent-model-options";
+import { agentDefaultModelOptions, agentVisionModelOptions, imagePromptModelOptions, pricingContractForModel, supportsTokenUsageBilling } from "./agent-model-options";
 import { buildInputImageUsagePricing, readInputImageUsagePricing } from "./media-input-usage-pricing";
 import { normalizedPricingTierKey, specificationsForModel, type PricingSpecification } from "./pricing-specifications";
 
@@ -77,6 +80,12 @@ export default function ModelPricingPage() {
     const [agentVisionModelLoadError, setAgentVisionModelLoadError] = useState("");
     const [agentVisionModelSaveError, setAgentVisionModelSaveError] = useState("");
     const [savingAgentVisionModel, setSavingAgentVisionModel] = useState(false);
+    const [imagePromptSetting, setImagePromptSetting] = useState<ImagePromptModelSetting | null>(null);
+    const [imagePromptModelId, setImagePromptModelId] = useState("");
+    const [imagePromptModelLoading, setImagePromptModelLoading] = useState(true);
+    const [imagePromptModelLoadError, setImagePromptModelLoadError] = useState("");
+    const [imagePromptModelSaveError, setImagePromptModelSaveError] = useState("");
+    const [savingImagePromptModel, setSavingImagePromptModel] = useState(false);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState("");
     const [saving, setSaving] = useState(false);
@@ -143,10 +152,25 @@ export default function ModelPricingPage() {
         }
     };
 
+    const reloadImagePromptModelSetting = async () => {
+        setImagePromptModelLoading(true);
+        try {
+            const result = await getAdminImagePromptModelSetting();
+            setImagePromptSetting(result.setting);
+            setImagePromptModelId(result.setting.configured ? result.setting.channelModelId : "");
+            setImagePromptModelLoadError("");
+        } catch (error) {
+            setImagePromptModelLoadError(error instanceof Error ? error.message : "读取图片提示词模型失败");
+        } finally {
+            setImagePromptModelLoading(false);
+        }
+    };
+
     useEffect(() => {
         void reload();
         void reloadAgentModelSetting();
         void reloadAgentVisionModelSetting();
+        void reloadImagePromptModelSetting();
     }, [references.channels]);
 
     const openPricing = (model: CommercialModel) => {
@@ -212,6 +236,7 @@ export default function ModelPricingPage() {
 
     const agentModelOptions = useMemo(() => agentDefaultModelOptions(models), [models]);
     const visionModelOptions = useMemo(() => agentVisionModelOptions(models), [models]);
+    const promptModelOptions = useMemo(() => imagePromptModelOptions(models), [models]);
 
     const saveAgentModel = async () => {
         if (!agentModelId) {
@@ -257,6 +282,27 @@ export default function ModelPricingPage() {
             message.error(reason);
         } finally {
             setSavingAgentVisionModel(false);
+        }
+    };
+
+    const saveImagePromptModel = async () => {
+        if (!imagePromptModelId) {
+            message.error("请选择使用健康版本化凭据的系统文本模型");
+            return;
+        }
+        setImagePromptModelSaveError("");
+        setSavingImagePromptModel(true);
+        try {
+            const result = await updateAdminImagePromptModelSetting(imagePromptModelId);
+            setImagePromptSetting(result.setting);
+            setImagePromptModelId(result.setting.channelModelId);
+            message.success("图片提示词模型已更新");
+        } catch (error) {
+            const reason = error instanceof Error ? error.message : "保存图片提示词模型失败";
+            setImagePromptModelSaveError(reason);
+            message.error(reason);
+        } finally {
+            setSavingImagePromptModel(false);
         }
     };
 
@@ -448,7 +494,7 @@ export default function ModelPricingPage() {
                 </div>
             ) : null}
             <AdminDataLayout>
-                <AdminContentSection className="model-pricing-agent-section" title="Agent 模型配置" description="文本模型负责决策，视觉模型负责图片理解；均由管理员统一配置，失效时显式失败且不自动降级。">
+                <AdminContentSection className="model-pricing-agent-section" title="Agent 模型配置" description="决策、视觉理解与图片提示词模型分别配置；失效时显式失败且不自动降级。">
                     <div className="model-pricing-agent-settings">
                         <AgentModelSettingRow
                             title="文本决策模型"
@@ -491,6 +537,27 @@ export default function ModelPricingPage() {
                             }}
                             onRetry={() => void reloadAgentVisionModelSetting()}
                             onSave={() => void saveAgentVisionModel()}
+                        />
+                        <AgentModelSettingRow
+                            title="图片提示词模型"
+                            description="负责把图片节点的结构化编辑命令转换为可执行提示词，必须使用可审计的版本化供应商凭据。"
+                            selectLabel="全站图片提示词模型"
+                            saveLabel="保存图片提示词模型"
+                            placeholder="选择使用版本化凭据的文本模型"
+                            value={imagePromptModelId}
+                            savedValue={imagePromptSetting?.channelModelId || ""}
+                            options={promptModelOptions}
+                            loading={imagePromptModelLoading}
+                            saving={savingImagePromptModel}
+                            loaded={imagePromptSetting !== null}
+                            loadError={imagePromptModelLoadError}
+                            saveError={imagePromptModelSaveError}
+                            onChange={(value) => {
+                                setImagePromptModelId(value);
+                                setImagePromptModelSaveError("");
+                            }}
+                            onRetry={() => void reloadImagePromptModelSetting()}
+                            onSave={() => void saveImagePromptModel()}
                         />
                     </div>
                 </AdminContentSection>

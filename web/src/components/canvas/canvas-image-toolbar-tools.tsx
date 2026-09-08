@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Brush, Camera, Copy, FileText, Grid2x2, Lock, LockOpen, Maximize2, PencilLine, Scissors, Smile, Sparkles, Upload, ZoomIn } from "lucide-react";
+import { Brush, Camera, Copy, FileText, Grid2x2, Lock, LockOpen, Maximize2, PencilLine, Scissors, Smile, Sparkles, Upload, UserRound, ZoomIn } from "lucide-react";
 
 import type { CanvasImageToolId } from "@/lib/canvas/canvas-tool-registry";
 import type { CanvasNodeData } from "@/types/canvas";
@@ -13,6 +13,7 @@ export type ImageToolHandlers = {
     onAnnotate: (node: CanvasNodeData) => void;
     onMaskEdit: (node: CanvasNodeData) => void;
     onEmotion: (node: CanvasNodeData) => void;
+    onPortraitTexture: (node: CanvasNodeData) => void;
     onCrop: (node: CanvasNodeData) => void;
     onSplit: (node: CanvasNodeData) => void;
     onUpscale: (node: CanvasNodeData) => void;
@@ -34,7 +35,7 @@ export type ImageToolDefinition = {
     run: (node: CanvasNodeData, handlers: ImageToolHandlers) => void;
 };
 
-export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v12";
+export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v13";
 
 const defaultBaseToolIds: ImageQuickToolId[] = ["info", "delete", "saveAsset", "download", "edit"];
 
@@ -104,6 +105,15 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
         run: (node, handlers) => handlers.onEmotion(node),
     },
     {
+        id: "portraitTexture",
+        defaultVisible: true,
+        panelLabel: "人像质感",
+        label: "人像质感",
+        title: "保持身份与构图，优化人像质感",
+        icon: () => <UserRound className="size-3.5" />,
+        run: (node, handlers) => handlers.onPortraitTexture(node),
+    },
+    {
         id: "crop",
         defaultVisible: true,
         panelLabel: "剪裁",
@@ -159,7 +169,7 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
     },
 ];
 
-export const defaultImageQuickToolIds: ImageQuickToolId[] = ["info", "reversePrompt", "annotation", "maskEdit", "emotion", "crop", "angle"];
+export const defaultImageQuickToolIds: ImageQuickToolId[] = ["info", "reversePrompt", "portraitTexture", "annotation", "maskEdit", "emotion", "crop", "angle"];
 
 export function isImageQuickToolId(value: string): value is ImageQuickToolId {
     return defaultBaseToolIds.some((id) => id === value) || imageToolDefinitions.some((tool) => tool.id === value);
@@ -183,7 +193,7 @@ export function normalizeImageQuickToolIds(value: unknown[]) {
 }
 
 export function readImageQuickToolsConfig(value: unknown): ImageQuickToolId[] {
-    return Array.isArray(value) ? normalizeImageQuickToolIds(value).slice(0, 7) : defaultImageQuickToolIds;
+    return Array.isArray(value) ? normalizeImageQuickToolIds(value).slice(0, 8) : defaultImageQuickToolIds;
 }
 
 function resolveToolText(value: string | ((node: CanvasNodeData) => string), node: CanvasNodeData) {

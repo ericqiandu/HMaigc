@@ -44,6 +44,26 @@ func TestSignedOSSObjectURLUsesExpiringQuerySignature(t *testing.T) {
 	}
 }
 
+func TestOSSRequestFailureRedactsSignedURLAndPreservesTimeoutCause(t *testing.T) {
+	failure := newOSSRequestFailure("读取", &url.Error{
+		Op:  "Get",
+		URL: "https://private-bucket.example.com/object.png?OSSAccessKeyId=access-id&Signature=secret-signature",
+		Err: context.DeadlineExceeded,
+	})
+	if failure == nil {
+		t.Fatal("newOSSRequestFailure() = nil")
+	}
+	if failure.Error() != "OSS 读取请求超时" {
+		t.Fatalf("failure.Error() = %q", failure.Error())
+	}
+	if strings.Contains(failure.Error(), "access-id") || strings.Contains(failure.Error(), "secret-signature") {
+		t.Fatalf("failure leaked signed URL credentials: %q", failure.Error())
+	}
+	if !errors.Is(failure, context.DeadlineExceeded) {
+		t.Fatal("failure must preserve context deadline cause")
+	}
+}
+
 func TestDirectResourceURLChecksOwnershipAndSignsOSSResource(t *testing.T) {
 	svc := newResourceTestService(t)
 	settingJSON, _ := json.Marshal(ossSettingValue{

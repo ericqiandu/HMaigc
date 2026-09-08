@@ -79,19 +79,54 @@ test("新建网站 Agent 运行使用足够完成媒体链路与一次冲突重�
     assert.equal(submittedMaxSteps, 24);
 });
 
-async function mount(client: AgentRuntimeClient, storage: AgentRuntimeHandleStorage, onRuntimeEvent: (event: AgentRuntimeEvent) => void) {
+test("恢复终态运行时通知画布读取服务端终态投影", async () => {
+    const terminalView = runtimeView("cancelled", 6);
+    const observedViews: AgentRuntimeView[] = [];
+    const storage: AgentRuntimeHandleStorage = {
+        load: async () => ({ threadId: "thread-1", activeRunId: "run-1", lastSequence: 5 }),
+        save: async () => undefined,
+        clear: async () => undefined,
+    };
+    const client = runtimeClient({ getRun: async () => terminalView });
+
+    await mount(client, storage, () => undefined, (view) => observedViews.push(view));
+
+    assert.deepEqual(observedViews, [terminalView]);
+});
+
+test("历史终态对账提交后通知画布按服务端 revision 刷新", async () => {
+    const observedRevisions: number[] = [];
+    const storage: AgentRuntimeHandleStorage = {
+        load: async () => null,
+        save: async () => undefined,
+        clear: async () => undefined,
+    };
+    const client = runtimeClient({ listThreads: async () => ({ items: [], canvasProjectionRevision: 9 }) });
+
+    await mount(client, storage, () => undefined, undefined, (revision) => observedRevisions.push(revision));
+
+    assert.deepEqual(observedRevisions, [9]);
+});
+
+async function mount(
+    client: AgentRuntimeClient,
+    storage: AgentRuntimeHandleStorage,
+    onRuntimeEvent: (event: AgentRuntimeEvent) => void,
+    onRuntimeView?: (view: AgentRuntimeView) => void,
+    onCanvasProjection?: (revision: number) => void,
+) {
     const host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
-    await act(async () => root?.render(createElement(Harness, { client, storage, onRuntimeEvent })));
+    await act(async () => root?.render(createElement(Harness, { client, storage, onRuntimeEvent, onRuntimeView, onCanvasProjection })));
     await act(async () => {
         await Promise.resolve();
         await new Promise((resolve) => setTimeout(resolve, 0));
     });
 }
 
-function Harness({ client, storage, onRuntimeEvent }: { client: AgentRuntimeClient; storage: AgentRuntimeHandleStorage; onRuntimeEvent: (event: AgentRuntimeEvent) => void }) {
-    runtime = useAgentRuntime({ canvasId: "canvas-1", client, storage, onRuntimeEvent });
+function Harness({ client, storage, onRuntimeEvent, onRuntimeView, onCanvasProjection }: { client: AgentRuntimeClient; storage: AgentRuntimeHandleStorage; onRuntimeEvent: (event: AgentRuntimeEvent) => void; onRuntimeView?: (view: AgentRuntimeView) => void; onCanvasProjection?: (revision: number) => void }) {
+    runtime = useAgentRuntime({ canvasId: "canvas-1", client, storage, onRuntimeEvent, onRuntimeView, onCanvasProjection });
     return createElement("div", { className: "agent-runtime-reconnect-harness" });
 }
 

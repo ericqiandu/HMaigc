@@ -33,19 +33,20 @@ export type CanvasLocalAgentWorkspaceProps = {
     getSelectedNodes: () => CanvasNodeData[];
     activatedSkills: PlatformSkill[];
     onBeforeRun?: () => Promise<void>;
+    onRuntimeView?: (view: AgentRuntimeView) => void;
     onRuntimeEvent?: (event: AgentRuntimeEvent) => void;
     onToolResult?: (result: LocalAgentAuthoritativeToolResult) => void;
     runtimeClient?: AgentRuntimeClient;
 };
 
-export function CanvasLocalAgentWorkspace({ projectId, canvasRevision, selectedNodeIds, getSelectedNodes, activatedSkills, onBeforeRun, onRuntimeEvent, onToolResult, runtimeClient }: CanvasLocalAgentWorkspaceProps) {
+export function CanvasLocalAgentWorkspace({ projectId, canvasRevision, selectedNodeIds, getSelectedNodes, activatedSkills, onBeforeRun, onRuntimeView, onRuntimeEvent, onToolResult, runtimeClient }: CanvasLocalAgentWorkspaceProps) {
     const { message } = App.useApp();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const effectiveConfig = useEffectiveConfig();
     const [draft, setDraft] = useState(createEmptyCanvasAgentDraft);
     const [configurationError, setConfigurationError] = useState("");
     const [historyOpen, setHistoryOpen] = useState(false);
-    const local = useLocalAgentRuntime({ canvasId: projectId, beforeToolProposal: onBeforeRun, onRuntimeEvent, onToolResult, runtimeClient });
+    const local = useLocalAgentRuntime({ canvasId: projectId, beforeToolProposal: onBeforeRun, onRuntimeView, onRuntimeEvent, onToolResult, runtimeClient });
     const [baseUrl, setBaseUrl] = useState(local.savedConnection?.baseUrl ?? "http://127.0.0.1:17371");
     const [token, setToken] = useState(local.savedConnection?.token ?? "");
     const active = local.activeTurn;

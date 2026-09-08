@@ -29,7 +29,7 @@ test("real hover exposes ordered tools and enabled actions invoke their wired ca
     for (const [nodeId, labels] of Object.entries(expectedLabels)) {
         await page.getByTestId(nodeId).hover();
         await expect(page.getByRole("toolbar", { name: "节点快捷工具" })).toBeVisible();
-        expect(await toolbarLabels(page)).toEqual(labels);
+        await expect.poll(() => toolbarLabels(page)).toEqual(labels);
         const info = page.getByRole("toolbar", { name: "节点快捷工具" }).getByRole("button", { name: "查看节点信息" });
         await info.click();
         await expect(page.getByTestId("last-action")).toHaveText(`${nodeId}:info`);
@@ -50,5 +50,20 @@ test("frame extraction is disabled while busy and cannot invoke its callback", a
     await expect(extraction).toBeDisabled();
     await extraction.click({ force: true });
     await expect(page.getByTestId("last-action")).toHaveText("none");
+    expect(browserErrors).toEqual([]);
+});
+
+test("enabled portrait texture rollout exposes the action and invokes its callback", async ({ page }) => {
+    const browserErrors: string[] = [];
+    page.on("console", (message) => { if (message.type() === "error") browserErrors.push(message.text()); });
+    page.on("pageerror", (error) => browserErrors.push(error.message));
+    await page.goto("/perf/canvas-toolbar-fixture.html?portraitTexture=1");
+    await page.getByTestId("fixture-image").hover();
+    const portraitTexture = page
+        .getByRole("toolbar", { name: "节点快捷工具" })
+        .getByRole("button", { name: "保持身份与构图，优化人像质感" });
+    await expect(portraitTexture).toBeVisible();
+    await portraitTexture.click();
+    await expect(page.getByTestId("last-action")).toHaveText("fixture-image:portraitTexture");
     expect(browserErrors).toEqual([]);
 });

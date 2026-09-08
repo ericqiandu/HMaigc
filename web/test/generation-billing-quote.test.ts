@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 import { buildTaskBillingQuoteRequest, prepareGenerationTaskSubmission, taskBillingQuoteMatches, taskPriceChangedQuoteFromEnvelope } from "../src/lib/billing/task-billing-quote";
+import { runBackendCanvasGenerationTask } from "../src/lib/canvas/canvas-project-generation";
 import type { CreateTaskInput, TaskBillingQuote } from "../src/services/api/task-center";
+import { defaultConfig } from "../src/stores/use-config-store";
 
 const providerConfig = {
     channelId: "kuaizi",
@@ -78,7 +80,34 @@ describe("generation billing quote contract", () => {
         });
     });
 
-    test("sends the real reference-image count for image quotes", async () => {
+    test("preserves an empty project id for personal-account billing", async () => {
+        const request = buildTaskBillingQuoteRequest({
+            projectId: "",
+            mode: "video",
+            operation: "text_to_video",
+            batchCount: 1,
+            usage: { referenceImageCount: 0, referenceVideoCount: 0 },
+            config: providerConfig,
+        });
+
+        expect(request.projectId).toBe("");
+
+        const input: CreateTaskInput = {
+            projectId: "",
+            type: "canvas_video",
+            operation: "text_to_video",
+            prompt: "prompt",
+            input: { mode: "video", config: providerConfig },
+        };
+        const submission = await prepareGenerationTaskSubmission(input, { priceVersion: 7, quoteFingerprint: "quote-v7" }, async () => {
+            throw new Error("confirmed submissions must not quote again");
+        });
+        expect(submission.projectId).toBe("");
+        expect(submission.quotePriceVersion).toBe(7);
+        expect(submission.quoteFingerprint).toBe("quote-v7");
+    });
+
+    test("rejects paid image submission without a user-confirmed quote", async () => {
         const input: CreateTaskInput = {
             projectId: "project",
             type: "canvas_image",
@@ -90,20 +119,41 @@ describe("generation billing quote contract", () => {
                 referenceImages: [{ id: "one" }, { id: "two" }, { id: "three" }],
             },
         };
-        const requested: unknown[] = [];
+        let quoteCalls = 0;
 
-        await prepareGenerationTaskSubmission(input, undefined, async (request) => {
-            requested.push(request);
+        const submission = prepareGenerationTaskSubmission(input, undefined, async () => {
+            quoteCalls += 1;
             return { ...currentQuote, amountMicrocredits: currentQuote.perTaskAmountMicrocredits, taskCount: 1 };
         });
 
-        expect(requested[0]).toMatchObject({
-            batchCount: 1,
-            input: { referenceImageCount: 3, referenceVideoCount: 0 },
-        });
+        await expect(submission).rejects.toThrow("付费生成任务缺少用户已确认报价");
+        expect(quoteCalls).toBe(0);
     });
 
-    test("quotes media task creation and submits the confirmed single-task fingerprint", async () => {
+    test("rejects an unconfirmed media task before uploading its references", async () => {
+        const originalFetch = globalThis.fetch;
+        let fetchCalls = 0;
+        globalThis.fetch = (async () => {
+            fetchCalls += 1;
+            return new Response();
+        }) as typeof fetch;
+
+        try {
+            await expect(runBackendCanvasGenerationTask({
+                projectId: "project",
+                nodeId: "node",
+                mode: "image",
+                prompt: "prompt",
+                config: { ...defaultConfig, ...providerConfig },
+                referenceImages: [{ id: "reference", name: "reference.png", type: "image/png", dataUrl: "data:image/png;base64,AA==" }],
+            })).rejects.toThrow("付费生成任务缺少用户已确认报价");
+            expect(fetchCalls).toBe(0);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+
+    test("rejects paid video submission without silently obtaining a quote", async () => {
         const input: CreateTaskInput = {
             projectId: "project",
             type: "canvas_video",
@@ -111,17 +161,15 @@ describe("generation billing quote contract", () => {
             prompt: "prompt",
             input: { mode: "video", config: providerConfig, referenceVideos: [{ id: "reference" }] },
         };
-        const requested: unknown[] = [];
+        let quoteCalls = 0;
 
-        const submission = await prepareGenerationTaskSubmission(input, undefined, async (request) => {
-            requested.push(request);
+        const submission = prepareGenerationTaskSubmission(input, undefined, async () => {
+            quoteCalls += 1;
             return { ...currentQuote, amountMicrocredits: currentQuote.perTaskAmountMicrocredits, taskCount: 1 };
         });
 
-        expect(requested).toHaveLength(1);
-        expect(requested[0]).toMatchObject({ batchCount: 1, input: { referenceVideoCount: 1 } });
-        expect(submission.quotePriceVersion).toBe(7);
-        expect(submission.quoteFingerprint).toBe("quote-v7");
+        await expect(submission).rejects.toThrow("付费生成任务缺少用户已确认报价");
+        expect(quoteCalls).toBe(0);
     });
 
     test("submits the displayed confirmation without a duplicate preflight quote", async () => {

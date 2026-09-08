@@ -35,6 +35,30 @@ const playbackResourceURLTTL = 4 * time.Hour
 
 var errInvalidGeneratedDataURL = errors.New("生成内容 data URL 无效")
 
+type ossRequestFailure struct {
+	operation string
+	err       error
+}
+
+func newOSSRequestFailure(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &ossRequestFailure{operation: operation, err: err}
+}
+
+func (failure *ossRequestFailure) Error() string {
+	if errors.Is(failure.err, context.DeadlineExceeded) {
+		return "OSS " + failure.operation + "请求超时"
+	}
+	if errors.Is(failure.err, context.Canceled) {
+		return "OSS " + failure.operation + "请求已取消"
+	}
+	return "OSS " + failure.operation + "请求失败"
+}
+
+func (failure *ossRequestFailure) Unwrap() error { return failure.err }
+
 type ResourceStream struct {
 	Resource      *model.Resource
 	Body          io.ReadCloser
@@ -742,7 +766,7 @@ func getOSSObjectRange(setting ossSettingValue, objectKey string, rangeHeader st
 	}
 	resp, err := OutboundHTTPClient(2 * time.Minute).Do(req)
 	if err != nil {
-		return nil, err
+		return nil, newOSSRequestFailure("读取", err)
 	}
 	if (resp.StatusCode < 200 || resp.StatusCode >= 300) && resp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
 		defer resp.Body.Close()

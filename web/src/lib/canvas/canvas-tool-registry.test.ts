@@ -16,8 +16,15 @@ function node(type: CanvasNodeType, content = "", metadata: NonNullable<CanvasNo
     };
 }
 
-function visibleToolIds(target: CanvasNodeData, workspaceMode: CanvasWorkspaceMode = "professional", extractingVideoFrame = false): CanvasToolId[] {
-    return resolveCanvasTools({ node: target, workspaceMode, extractingVideoFrame }).filter((tool) => tool.visible).map((tool) => tool.id);
+function visibleToolIds(
+    target: CanvasNodeData,
+    workspaceMode: CanvasWorkspaceMode = "professional",
+    extractingVideoFrame = false,
+    portraitTextureEnabled = false,
+): CanvasToolId[] {
+    return resolveCanvasTools({ node: target, workspaceMode, extractingVideoFrame, portraitTextureEnabled })
+        .filter((tool) => tool.visible)
+        .map((tool) => tool.id);
 }
 
 describe("resolveCanvasTools", () => {
@@ -30,6 +37,12 @@ describe("resolveCanvasTools", () => {
             "info", "delete", "saveAsset", "download", "edit", "copyPrompt", "reversePrompt", "replace", "resize",
             "annotation", "maskEdit", "emotion", "crop", "split", "upscale", "superResolve", "angle", "view",
         ]);
+    });
+
+    test("only exposes portrait texture when the product rollout enables it", () => {
+        const target = node(CanvasNodeType.Image, "https://assets.example.com/image.png");
+        assert.ok(!visibleToolIds(target).includes("portraitTexture"));
+        assert.ok(visibleToolIds(target, "professional", false, true).includes("portraitTexture"));
     });
 
     test("keeps professional video actions and disables frame extraction while busy", () => {
@@ -51,5 +64,6 @@ describe("resolveCanvasTools", () => {
     test("only exposes retry for retryable errors", () => {
         assert.ok(visibleToolIds(node(CanvasNodeType.Text, "draft", { status: "error" })).includes("retry"));
         assert.ok(!visibleToolIds(node(CanvasNodeType.Text, "draft", { status: "error", generationErrorCode: "sensitive_words_detected" })).includes("retry"));
+        assert.ok(!visibleToolIds(node(CanvasNodeType.Image, "", { status: "error", generationErrorCode: "agent_media_settlement_pending" })).includes("retry"));
     });
 });

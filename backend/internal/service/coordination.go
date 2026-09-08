@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -63,6 +65,25 @@ type runtimeCoordinator struct {
 	localMu    sync.Mutex
 	localRate  map[string]localRateEntry
 	localSlots map[string]map[string]time.Time
+}
+
+func (s *Service) claimImagePromptModelRelayNonce(ctx context.Context, serviceID string, nonce string, ttl time.Duration) error {
+	if s.imagePromptModelRelayNonceClaimer != nil {
+		return s.imagePromptModelRelayNonceClaimer(ctx, serviceID, nonce, ttl)
+	}
+	if s.coordinator == nil || s.coordinator.redis == nil {
+		return errors.New("图片提示词模型中继必须使用 Redis 防重放")
+	}
+	digest := sha256.Sum256([]byte(serviceID + "\x00" + nonce))
+	key := "image-prompt-model-relay:nonce:" + hex.EncodeToString(digest[:])
+	claimed, err := s.coordinator.redis.SetNX(ctx, key, "1", ttl).Result()
+	if err != nil {
+		return fmt.Errorf("图片提示词模型中继 nonce 写入失败：%w", err)
+	}
+	if !claimed {
+		return errors.New("图片提示词模型中继 nonce 已使用")
+	}
+	return nil
 }
 
 var fixedWindowScript = redis.NewScript(`

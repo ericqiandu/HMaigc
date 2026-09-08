@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 	"mime/multipart"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -40,31 +41,37 @@ type taskExecutionPayload struct {
 }
 
 type Service struct {
-	repo                      *repository.Repository
-	dataDir                   string
-	cancelMu                  sync.Mutex
-	registrationMu            sync.Mutex
-	emailCodeMu               sync.Mutex
-	redeemBatchMu             sync.Mutex
-	storageMu                 sync.Mutex
-	storageMigrationMu        sync.Mutex
-	storageMigrationOnce      sync.Once
-	sessionCreateMu           sync.Mutex
-	characterTaskMu           sync.Mutex
-	agentRecoveryMu           sync.Mutex
-	agentRecoveryCursor       string
-	siteSettingMu             sync.Mutex
-	voicePreviewGroup         singleflight.Group
-	activeCancels             map[string]context.CancelFunc
-	pendingStorage            map[string]int64
-	pendingTeamStorage        map[string]int64
-	coordinator               *runtimeCoordinator
-	runtimeErr                error
-	workerID                  string
-	operationsClient          opsprotocol.Client
-	mediaDurationProbe        mediaDurationProbe
-	mediaFileProbe            mediaFileProbe
-	agentRuntimeSkillResolver func(context.Context, string, string) (*Skill, error)
+	repo                                  *repository.Repository
+	dataDir                               string
+	cancelMu                              sync.Mutex
+	registrationMu                        sync.Mutex
+	emailCodeMu                           sync.Mutex
+	redeemBatchMu                         sync.Mutex
+	storageMu                             sync.Mutex
+	storageMigrationMu                    sync.Mutex
+	storageMigrationOnce                  sync.Once
+	sessionCreateMu                       sync.Mutex
+	characterTaskMu                       sync.Mutex
+	agentRecoveryMu                       sync.Mutex
+	agentRecoveryCursor                   string
+	siteSettingMu                         sync.Mutex
+	voicePreviewGroup                     singleflight.Group
+	activeCancels                         map[string]context.CancelFunc
+	pendingStorage                        map[string]int64
+	pendingTeamStorage                    map[string]int64
+	coordinator                           *runtimeCoordinator
+	runtimeErr                            error
+	workerID                              string
+	operationsClient                      opsprotocol.Client
+	mediaDurationProbe                    mediaDurationProbe
+	mediaFileProbe                        mediaFileProbe
+	agentRuntimeSkillResolver             func(context.Context, string, string) (*Skill, error)
+	imagePromptSpecialistClient           imagePromptSpecialistClient
+	imagePromptSpecialistEvidenceResolver imagePromptSpecialistEvidenceResolver
+	imagePromptModelRelayAuth             *imagePromptModelRelayAuthConfig
+	imagePromptModelRelayNonceClaimer     func(context.Context, string, string, time.Duration) error
+	imagePromptModelRelayHTTPClient       *http.Client
+	imagePromptModelRelayProvider         func(context.Context, providerConfig, []ImagePromptModelRelayMessageV1) (imagePromptModelRelayProviderResult, error)
 }
 
 const taskWorkerConcurrency = 3
@@ -201,7 +208,9 @@ type agentStoryboardShot struct {
 
 func New(repo *repository.Repository, dataDir string) *Service {
 	coordinator, err := newRuntimeCoordinator(repo.Dialect())
-	return &Service{repo: repo, dataDir: dataDir, activeCancels: make(map[string]context.CancelFunc), coordinator: coordinator, runtimeErr: err, workerID: newID()}
+	imagePromptClient, imagePromptErr := imagePromptSpecialistClientFromEnvironment()
+	relayAuth, relayAuthErr := imagePromptModelRelayAuthFromEnvironment(imagePromptClient != nil, coordinator)
+	return &Service{repo: repo, dataDir: dataDir, activeCancels: make(map[string]context.CancelFunc), coordinator: coordinator, runtimeErr: errors.Join(err, imagePromptErr, relayAuthErr), workerID: newID(), imagePromptSpecialistClient: imagePromptClient, imagePromptModelRelayAuth: relayAuth}
 }
 
 func (s *Service) taskExecutionSigningMaterial() (string, []byte, error) {
@@ -565,9 +574,6 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 		return nil, errors.New("task creation audience is invalid")
 	}
 	prompt := strings.TrimSpace(req.Prompt)
-	if prompt == "" {
-		return nil, errors.New("prompt is required")
-	}
 	if len(identity.TypedInputJSON) > 0 {
 		if req.Input != nil || !json.Valid(identity.TypedInputJSON) {
 			return nil, errors.New("typed task input facts are invalid")
@@ -579,6 +585,10 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 	normalizedInput, err := normalizeTaskInput(req.Input)
 	if err != nil {
 		return nil, err
+	}
+	taskType := req.Type
+	if taskType == "" {
+		taskType = "video_image_to_video"
 	}
 	if containsInlineMediaDataURL(normalizedInput) {
 		return nil, BadAuthRequest("任务输入不能包含内嵌媒体，请先上传到资源存储")
@@ -598,13 +608,17 @@ func (s *Service) createTaskWithIdentity(userID string, req CreateTaskRequest, i
 	if err := s.validateAudioTaskInput(userID, normalizedInput); err != nil {
 		return nil, err
 	}
-	policy, err := s.RuntimePolicy()
+	commandObjective, commandPresent, err := s.freezeCanvasImagePromptCommand(userID, taskType, normalizedInput)
 	if err != nil {
 		return nil, err
 	}
-	taskType := req.Type
-	if taskType == "" {
-		taskType = "video_image_to_video"
+	prompt, err = resolveCanvasImageTaskPrompt(prompt, commandObjective, commandPresent)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := s.RuntimePolicy()
+	if err != nil {
+		return nil, err
 	}
 	task := model.Task{ID: identity.TaskID, UserID: userID, Audience: identity.Audience, SessionID: req.SessionID, ProjectID: req.ProjectID, Type: taskType, Status: model.TaskStatusQueued, Stage: "等待队列调度", Progress: 5, Prompt: prompt, Operation: req.Operation, Provider: req.Provider, Model: req.Model}
 	if err := s.ensureTaskProjectActive(userID, req.ProjectID); err != nil {
@@ -834,6 +848,11 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	var billingInput map[string]any
 	if err := json.Unmarshal([]byte(decryptedInput), &billingInput); err != nil {
 		return nil, err
+	}
+	if task.Type == "canvas_image" {
+		if _, frozenCommand := billingInput["imagePromptCommand"]; frozenCommand {
+			return nil, BadAuthRequest("人像质感任务失败后必须重新执行图片命令并创建新任务，不能复用旧任务重试")
+		}
 	}
 	if err := validateTaskWatermarkInput(billingInput); err != nil {
 		return nil, err
@@ -1392,17 +1411,16 @@ func (s *Service) processClaimedTask(task *model.Task) error {
 		if errors.Is(err, context.Canceled) {
 			return err
 		}
-		if errors.Is(err, context.DeadlineExceeded) {
-			err = errors.New(taskTimeoutMessage(task.Type))
-		}
+		err = normalizeTaskExecutionFailure(ctx, task.Type, err)
 		task.Status = model.TaskStatusFailed
 		task.Stage = "任务失败"
 		task.Error = taskFailureMessage(err)
 		task.CompletedAt = ptr(time.Now())
 		action := repository.FailedTaskBillingRefund
 		visionRequestSent := visionExecution != nil && visionExecution.RequestSent
+		billableProviderNotStarted := billableProviderDispatchNotStarted(err)
 		if providerSucceeded || visionRequestSent || errors.Is(err, errAgentVisionDispatchAmbiguous) ||
-			(!visionTask && !channelSlotFailedBeforeRequest && s.BillingFailureRequiresReview(task.BillingOrderID, task.ID, err)) {
+			(!billableProviderNotStarted && !visionTask && !channelSlotFailedBeforeRequest && s.BillingFailureRequiresReview(task.BillingOrderID, task.ID, err)) {
 			action = repository.FailedTaskBillingUncertain
 		}
 		if finalizeErr := s.repo.FinalizeFailedTaskAndBillingWithOutbox(task, action, task.Error, terminalOutbox); finalizeErr != nil {
@@ -1521,6 +1539,27 @@ func taskFailureMessage(err error) string {
 	return truncateRunes(err.Error(), 2_000)
 }
 
+func normalizeTaskExecutionFailure(ctx context.Context, taskType string, err error) error {
+	if err == nil {
+		return nil
+	}
+	outerDeadlineExpired := errors.Is(ctx.Err(), context.DeadlineExceeded)
+	executionStoppedByDeadline := errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
+	if outerDeadlineExpired && executionStoppedByDeadline {
+		return errors.New(taskTimeoutMessage(taskType))
+	}
+	return err
+}
+
+type billableProviderDispatchNotStartedFailure interface {
+	BillableProviderDispatchNotStarted() bool
+}
+
+func billableProviderDispatchNotStarted(err error) bool {
+	var failure billableProviderDispatchNotStartedFailure
+	return errors.As(err, &failure) && failure.BillableProviderDispatchNotStarted()
+}
+
 func taskExecutionTimeoutWithPolicy(taskType string, policy RuntimeTaskPolicy) time.Duration {
 	switch {
 	case taskType == "agent_storyboard" || taskType == "agent_storyboard_rows":
@@ -1555,6 +1594,24 @@ func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]
 	}
 	task.InputJSON = decryptedInput
 	ctx = withProviderAnalytics(ctx, s, task)
+	var imagePromptEvidence *imagePromptTaskEvidenceV1
+	if task.Type == "canvas_image" {
+		var generationInput canvasGenerationInput
+		if err := json.Unmarshal([]byte(task.InputJSON), &generationInput); err != nil {
+			return nil, nil, fmt.Errorf("任务输入解析失败：%w", err)
+		}
+		if generationInput.ImagePromptCommand != nil {
+			imagePromptEvidence, err = s.prepareCanvasImagePromptSpecialist(ctx, task, &generationInput)
+			if err != nil {
+				return nil, nil, err
+			}
+			preparedInput, marshalErr := json.Marshal(generationInput)
+			if marshalErr != nil {
+				return nil, nil, fmt.Errorf("图片提示词任务输入无法编码：%w", marshalErr)
+			}
+			task.InputJSON = string(preparedInput)
+		}
+	}
 	if task.Type == "agent_storyboard_rows" {
 		return s.processStoryboardRowsTask(ctx, task)
 	}
@@ -1577,10 +1634,18 @@ func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]
 	}
 	if _, ok := kuaiziProviderModelSpec(task.Model); ok {
 		result, err := s.processKuaiziCompatibleTask(ctx, task)
+		if err != nil {
+			return nil, nil, err
+		}
+		result, err = attachImagePromptEvidence(result, imagePromptEvidence)
 		return result, nil, err
 	}
 	if strings.HasPrefix(task.Type, "canvas_") || strings.HasPrefix(task.Type, "video_") {
 		result, err := s.processCanvasGenerationTask(ctx, task)
+		if err != nil {
+			return nil, nil, err
+		}
+		result, err = attachImagePromptEvidence(result, imagePromptEvidence)
 		return result, nil, err
 	}
 	return nil, nil, fmt.Errorf("不支持的任务类型：%s", task.Type)

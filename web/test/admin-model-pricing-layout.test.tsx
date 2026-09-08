@@ -6,7 +6,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { createMemoryRouter, RouterProvider } from "react-router";
 
-import type { AgentDefaultModelSetting, ModelPricingOperationsSetting } from "../src/services/api/auth";
+import type { AgentDefaultModelSetting, ImagePromptModelSetting, ModelPricingOperationsSetting } from "../src/services/api/auth";
 import type { ChannelModel } from "../src/services/api/wallet";
 
 const operationsSetting: ModelPricingOperationsSetting = {
@@ -30,6 +30,14 @@ const agentVisionSetting: AgentDefaultModelSetting = {
     channelId: "channel-kuaizi",
     modelKey: "deepseek-v4-flash-vision-exp",
     displayName: "DeepSeek Vision",
+};
+
+const imagePromptSetting: ImagePromptModelSetting = {
+    configured: false,
+    channelModelId: "",
+    channelId: "",
+    modelKey: "",
+    displayName: "",
 };
 let rejectVisionSetting = false;
 
@@ -66,6 +74,7 @@ mock.module("@/services/api/auth", () => ({
         if (rejectVisionSetting) throw new Error("视觉配置服务暂时不可用");
         return { setting: agentVisionSetting };
     },
+    getAdminImagePromptModelSetting: async () => ({ setting: imagePromptSetting }),
 }));
 
 const walletModule = await import("../src/services/api/wallet");
@@ -101,9 +110,12 @@ describe("admin model pricing layout", () => {
         expect(dataLayout?.querySelector(".model-pricing-table-section .model-pricing-table")?.textContent).toContain("GPT Image 2");
         expect(dataLayout?.querySelector(".model-pricing-agent-section")?.textContent).toContain("文本决策模型");
         expect(dataLayout?.querySelector(".model-pricing-agent-section")?.textContent).toContain("视觉理解模型");
+        expect(dataLayout?.querySelector(".model-pricing-agent-section")?.textContent).toContain("图片提示词模型");
         expect(dataLayout?.querySelector('button[aria-label="保存文本 Agent 模型"]')).not.toBeNull();
         expect(dataLayout?.querySelector('button[aria-label="保存视觉理解模型"]')).not.toBeNull();
+        expect(dataLayout?.querySelector('button[aria-label="保存图片提示词模型"]')).not.toBeNull();
         expect(dataLayout?.querySelector('[aria-label="全站 Agent 默认视觉理解模型"]')).not.toBeNull();
+        expect(dataLayout?.querySelector('[aria-label="全站图片提示词模型"]')).not.toBeNull();
         expect(document.querySelector(".model-pricing-metrics")).toBeNull();
     });
 

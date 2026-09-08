@@ -123,6 +123,72 @@ export type CanvasMediaIntrinsicSize = {
     height: number;
 };
 
+export type CanvasImageCommand = "maskEdit" | "emotion" | "portraitTexture" | "angle" | "crop" | "resize" | "split" | "annotation" | "upscale" | "superResolve";
+
+export type CanvasImagePromptCommandV1 = {
+    schemaVersion: "canvas-image-command/v1";
+    command: "portraitTexture";
+    objective: string;
+    parameters: Record<string, string | number | boolean | null>;
+    sourceNodeId: string;
+    nodeRevision: number;
+};
+
+export type CanvasImagePromptTraceV1 = {
+    requestId: string;
+    correlationId: string;
+    specialist: "image_prompt_specialist";
+    evidenceDigest: string;
+    model: {
+        catalogRecordId: string;
+        modelKey: string;
+        configurationRevision: string;
+        providerEndpointVersionId: string;
+        providerCredentialVersionId: string;
+        effectiveModel: string;
+    };
+    usage: {
+        inputTokens: number;
+        outputTokens: number;
+        totalTokens: number;
+    };
+    startedAt: string;
+    completedAt: string;
+};
+
+export type CanvasImagePromptTaskEvidenceV1 = {
+    schemaVersion: "image-prompt/v1";
+    command: CanvasImagePromptCommandV1;
+    response: {
+        schemaVersion: "image-prompt/v1";
+        imagePrompt: string;
+        trace: CanvasImagePromptTraceV1;
+    };
+    responseDigest: string;
+};
+
+export type CanvasImageCommandEvidence = {
+    version: 1;
+    sourceNodeId: string;
+    command: CanvasImageCommand;
+    parameters: Record<string, unknown>;
+    prompt: string;
+    taskId?: string;
+    billingOrderId?: string;
+    specialist?: {
+        responseDigest: string;
+        requestId: string;
+        correlationId: string;
+        evidenceDigest: string;
+        model: CanvasImagePromptTraceV1["model"];
+        usage: CanvasImagePromptTraceV1["usage"];
+    };
+    resourceId: string;
+    width: number;
+    height: number;
+    createdAt: string;
+};
+
 export type CanvasNodeMetadata = {
     content?: string;
     richText?: Record<string, unknown>;
@@ -133,6 +199,7 @@ export type CanvasNodeMetadata = {
     errorDetails?: string;
     generationErrorCode?: string;
     failedPromptFingerprint?: string;
+    imageCommandEvidence?: CanvasImageCommandEvidence;
     fontSize?: number;
     generationMode?: CanvasGenerationMode;
     generationType?: CanvasImageGenerationType;

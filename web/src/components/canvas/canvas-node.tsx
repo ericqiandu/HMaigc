@@ -9,7 +9,7 @@ import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
 import { applyCanvasLiveResize, calculateCanvasResizePreview, clearCanvasLiveResize, type CanvasResizeCorner, type CanvasResizePreview } from "@/lib/canvas/canvas-interaction-runtime";
 import type { CanvasMediaVisibilityTier } from "@/lib/canvas/canvas-render-index";
 import { formatBytes } from "@/lib/image-utils";
-import { CONTENT_MODERATION_ERROR_CODE, isContentModerationError } from "@/lib/generation-error";
+import { AGENT_MEDIA_SETTLEMENT_PENDING_ERROR_CODE, CONTENT_MODERATION_ERROR_CODE, isContentModerationError } from "@/lib/generation-error";
 import { canvasResourceDisplayUrl } from "@/lib/canvas-media-playback";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasTextDraftEditor, type CanvasTextDraftEditorHandle } from "./canvas-text-draft-editor";
@@ -533,14 +533,15 @@ function shortTaskId(id: string) {
 
 function ErrorContent({ node, theme, onRetry }: Pick<NodeContentRendererProps, "node" | "theme" | "onRetry">) {
     const moderationFailure = node.metadata?.generationErrorCode === CONTENT_MODERATION_ERROR_CODE || isContentModerationError(node.metadata?.errorDetails);
+    const settlementPending = node.metadata?.generationErrorCode === AGENT_MEDIA_SETTLEMENT_PENDING_ERROR_CODE;
     return (
         <CanvasNodeStatusLayout
             icon={<TriangleAlert className="size-5" />}
-            title="生成失败"
+            title={settlementPending ? "费用待核对" : "生成失败"}
             detail={node.metadata?.errorDetails || "生成失败"}
-            meta={moderationFailure ? "修改节点提示词后，可重新点击生成。" : undefined}
-            actions={!moderationFailure ? <CanvasNodeAction icon={<RefreshCw />} label="重试" onClick={() => onRetry?.(node)} /> : undefined}
-            tone="danger"
+            meta={moderationFailure ? "修改节点提示词后，可重新点击生成。" : settlementPending ? "核对完成后系统会自动更新节点。" : undefined}
+            actions={!moderationFailure && !settlementPending ? <CanvasNodeAction icon={<RefreshCw />} label="重试" onClick={() => onRetry?.(node)} /> : undefined}
+            tone={settlementPending ? "neutral" : "danger"}
             theme={theme}
         />
     );

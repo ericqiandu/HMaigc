@@ -33,6 +33,7 @@ type CanvasNodeHoverToolbarProps = {
     onSaveAsset: (node: CanvasNodeData) => void;
     onMaskEdit: (node: CanvasNodeData) => void;
     onEmotion: (node: CanvasNodeData) => void;
+    onPortraitTexture: (node: CanvasNodeData) => void;
     onCrop: (node: CanvasNodeData) => void;
     onSplit: (node: CanvasNodeData) => void;
     onUpscale: (node: CanvasNodeData) => void;
@@ -47,6 +48,7 @@ type CanvasNodeHoverToolbarProps = {
     onToggleLocked: (node: CanvasNodeData) => void;
     onDelete: (node: CanvasNodeData) => void;
     workspaceMode?: CanvasWorkspaceMode;
+    portraitTextureEnabled?: boolean;
 };
 
 type CanvasAssetCategory = NonNullable<NonNullable<CanvasNodeData["metadata"]>["assetCategory"]>;
@@ -72,7 +74,7 @@ type ToolbarTool = {
     disabled?: boolean;
 };
 
-const MAX_IMAGE_QUICK_TOOLS = 7;
+const MAX_IMAGE_QUICK_TOOLS = 8;
 const NODE_DOCK_LABELS_STORAGE_KEY = "canvas-node-dock-show-labels-v1";
 
 export function CanvasNodeHoverToolbar({
@@ -93,6 +95,7 @@ export function CanvasNodeHoverToolbar({
     onSaveAsset,
     onMaskEdit,
     onEmotion,
+    onPortraitTexture,
     onCrop,
     onSplit,
     onUpscale,
@@ -107,6 +110,7 @@ export function CanvasNodeHoverToolbar({
     onToggleLocked,
     onDelete,
     workspaceMode = "professional",
+    portraitTextureEnabled = false,
 }: CanvasNodeHoverToolbarProps) {
     const [quickImageToolIds, setQuickImageToolIds] = useState<ImageQuickToolId[]>(defaultImageQuickToolIds);
     const [draftImageToolIds, setDraftImageToolIds] = useState<ImageQuickToolId[]>(defaultImageQuickToolIds);
@@ -205,7 +209,7 @@ export function CanvasNodeHoverToolbar({
         }
         copyText(prompt, "提示词已复制");
     };
-    const imageTools = buildImageToolbarTools(node, { onUpload, onToggleFreeResize, onAnnotate, onMaskEdit, onEmotion, onCrop, onSplit, onUpscale, onSuperResolve, onAngle, onViewImage, onCopyPrompt: copyImagePrompt, onReversePrompt });
+    const imageTools = buildImageToolbarTools(node, { onUpload, onToggleFreeResize, onAnnotate, onMaskEdit, onEmotion, onPortraitTexture, onCrop, onSplit, onUpscale, onSuperResolve, onAngle, onViewImage, onCopyPrompt: copyImagePrompt, onReversePrompt });
 
     function openImageToolSettings() {
         onKeep(activeNode.id);
@@ -233,7 +237,7 @@ export function CanvasNodeHoverToolbar({
         ...imageTools.map((tool) => ({ id: tool.id, title: tool.title, label: tool.label, icon: tool.icon, active: tool.active, onClick: tool.onClick })),
     ];
     const toolbarToolById = new Map<CanvasToolId, ToolbarTool>(allToolbarTools.map((tool): [CanvasToolId, ToolbarTool] => [tool.id as CanvasToolId, tool]));
-    const resolvedToolbarTools = resolveCanvasTools({ node, workspaceMode, extractingVideoFrame })
+    const resolvedToolbarTools = resolveCanvasTools({ node, workspaceMode, extractingVideoFrame, portraitTextureEnabled })
         .filter((descriptor) => descriptor.visible)
         .map<ToolbarTool | null>((descriptor) => {
             const tool = toolbarToolById.get(descriptor.id);

@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -62,7 +63,8 @@ type AgentThreadHistoryTurnView struct {
 }
 
 type AgentThreadHistoryView struct {
-	Items []AgentThreadHistoryItem `json:"items"`
+	Items                    []AgentThreadHistoryItem `json:"items"`
+	CanvasProjectionRevision *int64                   `json:"canvasProjectionRevision,omitempty"`
 }
 
 type agentHistoricalArtifactTimelinePayload struct {
@@ -104,7 +106,13 @@ func (s *Service) ListAgentThreads(actor *model.User, canvasID string, limit int
 		return nil, err
 	}
 	view := &AgentThreadHistoryView{Items: make([]AgentThreadHistoryItem, 0, len(records))}
+	terminalProjections := make([]agentTerminalCanvasProjection, 0)
 	for _, record := range records {
+		if record.Thread.CanvasID != scope.CanvasID || record.Thread.TenantKind != scope.TenantKind ||
+			record.Thread.TenantID != scope.TenantID || record.Thread.DomainProjectID != scope.DomainProjectID ||
+			record.Thread.CreatedByUserID != scope.ActorUserID {
+			return nil, errors.New("Agent 历史对话作用域与已授权画布不一致")
+		}
 		item := AgentThreadHistoryItem{
 			Thread: AgentThreadHistoryThreadView{
 				ID: record.Thread.ID, CanvasID: record.Thread.CanvasID, Status: record.Thread.Status,
@@ -121,6 +129,12 @@ func (s *Service) ListAgentThreads(actor *model.User, canvasID string, limit int
 			if _, err := agentRuntimeViewFromFacts(recordTurn.Run, state); err != nil {
 				return nil, err
 			}
+			if agentRuntimeRunTerminal(state.Status) {
+				projectionScope := scope
+				projectionScope.ThreadID = record.Thread.ID
+				projectionScope.RunID = recordTurn.Run.ID
+				terminalProjections = append(terminalProjections, agentTerminalCanvasProjection{scope: projectionScope, state: state})
+			}
 			turn, err := agentThreadHistoryTurnView(recordTurn.Run, recordTurn.Items)
 			if err != nil {
 				return nil, err
@@ -128,6 +142,13 @@ func (s *Service) ListAgentThreads(actor *model.User, canvasID string, limit int
 			item.Turns = append(item.Turns, turn)
 		}
 		view.Items = append(view.Items, item)
+	}
+	projection, err := s.projectTerminalAgentRunsCanvas(terminalProjections)
+	if err != nil {
+		return nil, fmt.Errorf("对账 Agent 历史终态画布节点: %w", err)
+	}
+	if len(terminalProjections) > 0 {
+		view.CanvasProjectionRevision = &projection.revision
 	}
 	return view, nil
 }

@@ -6,7 +6,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { createMemoryRouter, RouterProvider } from "react-router";
 
-import type { AgentDefaultModelSetting, ModelPricing, ModelPricingOperationsSetting } from "../src/services/api/auth";
+import type { AgentDefaultModelSetting, ImagePromptModelSetting, ModelPricing, ModelPricingOperationsSetting } from "../src/services/api/auth";
 import type { ChannelModel } from "../src/services/api/wallet";
 
 const channelId = "channel-kuaizi";
@@ -17,6 +17,13 @@ const operationsSetting: ModelPricingOperationsSetting = {
     targetMarginBasisPoints: 3_000,
 };
 const agentSetting: AgentDefaultModelSetting = {
+    configured: false,
+    channelModelId: "",
+    channelId: "",
+    modelKey: "",
+    displayName: "",
+};
+const imagePromptSetting: ImagePromptModelSetting = {
     configured: false,
     channelModelId: "",
     channelId: "",
@@ -119,6 +126,7 @@ mock.module("@/services/api/auth", () => ({
     getAdminModelPricingOperationsSetting: async () => ({ setting: operationsSetting }),
     getAdminAgentDefaultModelSetting: async () => ({ setting: agentSetting }),
     getAdminAgentVisionModelSetting: async () => ({ setting: agentSetting }),
+    getAdminImagePromptModelSetting: async () => ({ setting: imagePromptSetting }),
 }));
 
 const walletModule = await import("../src/services/api/wallet");

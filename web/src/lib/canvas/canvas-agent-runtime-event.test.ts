@@ -26,6 +26,37 @@ function completedEvent(toolName: string, output: Record<string, unknown>): Agen
     };
 }
 
+function failedEvent(toolName: string, errorCode: string): AgentRuntimeEvent {
+    return {
+        protocolVersion: 5,
+        threadId: "thread-1",
+        runId: "run-1",
+        sequence: 5,
+        createdAt: "2026-09-01T00:00:01Z",
+        kind: "item.failed",
+        itemId: "item-1",
+        itemKind: "tool_call",
+        payload: { toolCallId: "call-1", toolName, actionVersion: 1, succeeded: false, output: {}, errorCode },
+    };
+}
+
+function interruptedEvent(): AgentRuntimeEvent {
+    return {
+        protocolVersion: 5,
+        threadId: "thread-1",
+        runId: "run-1",
+        sequence: 6,
+        createdAt: "2026-09-01T00:00:02Z",
+        kind: "run.interrupted",
+        itemId: "item-2",
+        payload: {
+            status: "cancelled",
+            stateVersion: 6,
+            item: { kind: "status", status: "interrupted", content: {} },
+        },
+    };
+}
+
 function validOutput(): Record<string, unknown> {
     return {
         canvasId: "canvas-1",
@@ -106,5 +137,10 @@ describe("agentMediaGeneratedCanvasRefreshDecision", () => {
         const malformed = agentMediaGeneratedCanvasRefreshDecisionFromToolResult({ toolName: "media.generate", succeeded: true, output: { ...output, resources: [] } });
         assert.equal(malformed.kind, "invalid");
         if (malformed.kind === "invalid") assert.match(malformed.message, /resources/);
+    });
+
+    test("leaves failed tools and terminal view refreshes to the authoritative runtime-view callback", () => {
+        assert.deepEqual(agentMediaGeneratedCanvasRefreshDecision(failedEvent("media.generate", "media_settlement_uncertain")), { kind: "not_applicable" });
+        assert.deepEqual(agentMediaGeneratedCanvasRefreshDecision(interruptedEvent()), { kind: "not_applicable" });
     });
 });

@@ -85,3 +85,26 @@ func TestAgentDefaultVisionModelRoutesRequireAdmin(t *testing.T) {
 		t.Fatalf("get status = %d, body = %s", loaded.Code, loaded.Body.String())
 	}
 }
+
+func TestImagePromptModelRoutesRequireAdminAndRejectUnversionedModel(t *testing.T) {
+	fixture := openProviderAccountHandlerFixture(t)
+	now := time.Now().UTC()
+	channel := model.ModelChannel{ID: "direct-prompt-channel", Scope: model.ChannelScopeSystem, Enabled: true, Name: "Direct Prompt", BaseURL: "https://direct.example", APIKey: "secret", InterfaceType: model.ChannelInterfaceOpenAIResponse, CreatedAt: now, UpdatedAt: now}
+	item := model.ChannelModel{ID: "direct-prompt-model", ChannelID: channel.ID, ModelKey: "deepseek-v4-flash", AccessPolicy: model.ModelAccessAuthenticated, Capability: "text", BillingMode: "fixed_request", PriceStrategy: "flat", UnitPriceMicrocredits: 100, PriceConfigured: true, Enabled: true, CreatedAt: now, UpdatedAt: now}
+	if err := fixture.db.Create(&channel).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.db.Create(&item).Error; err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/admin/settings/image-prompt-model"
+	if response := fixture.request(http.MethodGet, path, "", "", ""); response.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if response := fixture.request(http.MethodPut, path, `{"channelModelId":"direct-prompt-model"}`, fixture.userCookie, ""); response.Code != http.StatusForbidden {
+		t.Fatalf("non-admin status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if response := fixture.request(http.MethodPut, path, `{"channelModelId":"direct-prompt-model"}`, fixture.adminCookie, ""); response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "版本化凭据") {
+		t.Fatalf("unversioned model status = %d, body = %s", response.Code, response.Body.String())
+	}
+}

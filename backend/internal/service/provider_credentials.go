@@ -106,10 +106,21 @@ func (s *Service) ResolveSystemProxyRuntime(channel *model.ModelChannel, modelKe
 			return SystemProxyRuntime{}, ServiceUnavailable("Agent 请求只能使用管理员配置且当前健康的全站默认模型")
 		}
 	}
-	family, spec, managed := kuaiziProviderFamilyForModel(modelKey)
 	if !isKuaiziChatChannelID(channel.ID) {
 		return SystemProxyRuntime{BaseURL: channel.BaseURL, HeaderName: systemProxyHeaderName(channel.APIFormat), APIKey: channel.APIKey}, nil
 	}
+	return s.resolveVersionedSystemProxyRuntime(channel, modelKey)
+}
+
+func (s *Service) resolveVersionedSystemProxyRuntime(channel *model.ModelChannel, modelKey string) (SystemProxyRuntime, error) {
+	if channel == nil {
+		return SystemProxyRuntime{}, ServiceUnavailable("系统渠道不存在")
+	}
+	modelKey = strings.TrimPrefix(strings.TrimSpace(modelKey), "models/")
+	if !isKuaiziChatChannelID(channel.ID) {
+		return SystemProxyRuntime{}, ServiceUnavailable("当前模型未使用版本化供应商渠道")
+	}
+	family, spec, managed := kuaiziProviderFamilyForModel(modelKey)
 	if !managed || spec.Capability != "text" || channel.ID != deterministicKuaiziChatChannelID(family) {
 		return SystemProxyRuntime{}, ServiceUnavailable("筷子 Agent 渠道与模型系列不匹配")
 	}

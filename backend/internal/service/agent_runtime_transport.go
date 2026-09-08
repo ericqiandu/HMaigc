@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -25,9 +26,10 @@ type StartScopedAgentRunInput struct {
 }
 
 type AgentRuntimeView struct {
-	Run             model.AgentRun            `json:"run"`
-	State           agentruntime.RuntimeState `json:"state"`
-	PendingApproval *AgentPendingApprovalView `json:"pendingApproval,omitempty"`
+	Run                      model.AgentRun            `json:"run"`
+	State                    agentruntime.RuntimeState `json:"state"`
+	PendingApproval          *AgentPendingApprovalView `json:"pendingApproval,omitempty"`
+	CanvasProjectionRevision *int64                    `json:"canvasProjectionRevision,omitempty"`
 }
 
 type AgentPendingApprovalView struct {
@@ -377,7 +379,7 @@ func (s *Service) readAgentRuntimeView(scope agentruntime.Scope) (*AgentRuntimeV
 	if err != nil {
 		return nil, err
 	}
-	return s.enrichAgentRuntimeView(scope, view)
+	return s.agentRuntimeViewWithCanvasProjection(scope, view)
 }
 
 func (s *Service) readAgentRuntimeStateView(scope agentruntime.Scope) (*AgentRuntimeView, error) {
@@ -556,7 +558,7 @@ func (s *Service) agentRuntimeViewForState(scope agentruntime.Scope, state agent
 	if err != nil {
 		return nil, err
 	}
-	return s.enrichAgentRuntimeView(scope, view)
+	return s.agentRuntimeViewWithCanvasProjection(scope, view)
 }
 
 func (s *Service) mapAgentControlError(scope agentruntime.Scope, err error, errorCode string, message string) error {
@@ -713,7 +715,21 @@ func agentRuntimeView(progress *AgentRuntimeProgress) *AgentRuntimeView {
 }
 
 func (s *Service) agentRuntimeViewForProgress(scope agentruntime.Scope, progress *AgentRuntimeProgress) (*AgentRuntimeView, error) {
-	return s.enrichAgentRuntimeView(scope, agentRuntimeView(progress))
+	return s.agentRuntimeViewWithCanvasProjection(scope, agentRuntimeView(progress))
+}
+
+func (s *Service) agentRuntimeViewWithCanvasProjection(scope agentruntime.Scope, view *AgentRuntimeView) (*AgentRuntimeView, error) {
+	if view == nil {
+		return nil, errors.New("Agent 运行视图为空")
+	}
+	projection, err := s.projectTerminalAgentRunCanvas(scope, view.State)
+	if err != nil {
+		return nil, fmt.Errorf("投影 Agent 终态到画布: %w", err)
+	}
+	if projection.changed {
+		view.CanvasProjectionRevision = &projection.revision
+	}
+	return s.enrichAgentRuntimeView(scope, view)
 }
 
 func (s *Service) enrichAgentRuntimeView(scope agentruntime.Scope, view *AgentRuntimeView) (*AgentRuntimeView, error) {

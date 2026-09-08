@@ -34,7 +34,7 @@ export class TaskPriceChangedError extends Error {
 export function buildTaskBillingQuoteRequest({ projectId, mode, operation, batchCount, usage, config }: BuildTaskBillingQuoteRequestInput): TaskBillingQuoteRequest {
     const fps = finiteNumber(config.videoSuperResolutionFps);
     return {
-        projectId: requiredString(projectId, "画布"),
+        projectId: optionalString(projectId).trim(),
         type: mode === "image" ? "canvas_image" : "canvas_video",
         operation,
         batchCount,
@@ -59,16 +59,12 @@ export function buildTaskBillingQuoteRequest({ projectId, mode, operation, batch
     };
 }
 
-export async function prepareGenerationTaskSubmission(input: CreateTaskInput, expectedQuote: ConfirmedTaskBillingQuote | undefined, loadQuote: TaskBillingQuoteLoader, signal?: AbortSignal): Promise<CreateTaskInput> {
+export async function prepareGenerationTaskSubmission(input: CreateTaskInput, expectedQuote: ConfirmedTaskBillingQuote | undefined, _loadQuote: TaskBillingQuoteLoader, _signal?: AbortSignal): Promise<CreateTaskInput> {
     const quoteRequest = quoteRequestFromTaskInput(input);
     if (!quoteRequest) return input;
 
-    if (expectedQuote) {
-        return { ...input, quotePriceVersion: expectedQuote.priceVersion, quoteFingerprint: expectedQuote.quoteFingerprint };
-    }
-
-    const currentQuote = await loadQuote(quoteRequest, signal);
-    return { ...input, quotePriceVersion: currentQuote.priceVersion, quoteFingerprint: currentQuote.quoteFingerprint };
+    if (!expectedQuote) throw new Error("付费生成任务缺少用户已确认报价");
+    return { ...input, quotePriceVersion: expectedQuote.priceVersion, quoteFingerprint: expectedQuote.quoteFingerprint };
 }
 
 export function taskPriceChangedQuoteFromEnvelope(value: unknown): TaskBillingQuote | null {
@@ -113,7 +109,7 @@ function quoteRequestFromTaskInput(input: CreateTaskInput): TaskBillingQuoteRequ
     const referenceImages = input.input?.referenceImages;
     const referenceVideos = input.input?.referenceVideos;
     return buildTaskBillingQuoteRequest({
-        projectId: requiredString(input.projectId, "画布"),
+        projectId: optionalString(input.projectId).trim(),
         mode,
         operation: input.operation?.trim() || mode,
         batchCount: 1,

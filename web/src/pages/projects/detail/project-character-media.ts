@@ -1,9 +1,10 @@
 import { runBackendCanvasGenerationTask } from "@/lib/canvas/canvas-project-generation";
+import type { ConfirmedTaskBillingQuote } from "@/lib/billing/task-billing-quote";
 import type { AiConfig } from "@/stores/use-config-store";
 
-type ProjectStylePrompt = { id: string; title: string; prompt: string };
+export type ProjectStylePrompt = { id: string; title: string; prompt: string };
 
-export async function generateCharacterTurnaround(input: { projectId: string; assetId: string; versionId: string; name: string; definition: Record<string, unknown>; projectStyle?: ProjectStylePrompt; config: AiConfig }) {
+export async function generateCharacterTurnaround(input: { projectId: string; assetId: string; versionId: string; name: string; definition: Record<string, unknown>; projectStyle?: ProjectStylePrompt; config: AiConfig; expectedQuote: ConfirmedTaskBillingQuote }) {
     const prompt = characterTurnaroundPrompt(input.name, input.definition, input.projectStyle);
     await runBackendCanvasGenerationTask({
         projectId: input.projectId,
@@ -12,6 +13,7 @@ export async function generateCharacterTurnaround(input: { projectId: string; as
         prompt,
         config: { ...input.config, model: input.config.imageModel || input.config.model, count: "1" },
         metadata: { operation: "character_turnaround", characterAssetId: input.assetId, stylePresetId: input.projectStyle?.id, resolvedCharacterVersions: [{ assetId: input.assetId, versionId: input.versionId }] },
+        expectedQuote: input.expectedQuote,
     });
 }
 

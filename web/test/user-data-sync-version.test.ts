@@ -141,10 +141,10 @@ test("画布上传只定向写入当前素材后再建立项目关联", async ()
         }],
     });
 
-    const result = await ensureCanvasNodeAsset({
+    const options = {
         canvasId: "canvas-1",
         domainProjectId: "project-1",
-        source: "canvas-upload",
+        source: "canvas-upload" as const,
         node: {
             id: "uploaded-node",
             type: CanvasNodeType.Image,
@@ -157,11 +157,18 @@ test("画布上传只定向写入当前素材后再建立项目关联", async ()
                 storageKey: "resource:uploaded-resource",
             },
         },
-    });
+    };
+    const result = await ensureCanvasNodeAsset(options);
 
     expect(upsertedAssetIds).not.toContain("unrelated-dirty-asset");
     expect(projectAssetEvents[0]).toBe(`upsert:${result.assetId}`);
     expect(projectAssetEvents).toContain(`link:project-1:${result.assetId}`);
+
+    const firstSyncEvents = [...projectAssetEvents];
+    const replayed = await ensureCanvasNodeAsset(options);
+
+    expect(replayed).toEqual({ assetId: result.assetId, created: false, linkedToProject: true });
+    expect(projectAssetEvents).toEqual(firstSyncEvents);
 });
 
 test("上传完成不等待项目查询失效请求", async () => {

@@ -120,6 +120,9 @@ func initializeAndServe(sqlDB *sql.DB, svc *service.Service) error {
 	r := gin.New()
 	r.Use(handler.PaymentCapabilityHeaders(), requestLogger(gin.DefaultWriter), requestRecovery(gin.DefaultErrorWriter), cors())
 	handler.ConfigureRuntime(svc)
+	if svc.ImagePromptModelRelayEnabled() {
+		handler.RegisterImagePromptModelRelayRoutes(r.Group("/internal/v1"), svc)
+	}
 	api := r.Group("/api")
 	api.GET("/health", healthHandler(sqlDB, svc))
 	handler.RegisterOAuthCallbackRoutes(r, svc)

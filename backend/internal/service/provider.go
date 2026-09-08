@@ -10,6 +10,7 @@ import (
 	"io"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/textproto"
 	"os"
@@ -23,16 +24,18 @@ import (
 )
 
 type canvasGenerationInput struct {
-	Mode            string                    `json:"mode"`
-	Prompt          string                    `json:"prompt"`
-	ImageDetail     agentruntime.VisionDetail `json:"imageDetail,omitempty"`
-	Config          providerConfig            `json:"config"`
-	ReferenceImages []providerMedia           `json:"referenceImages"`
-	ReferenceVideos []providerMedia           `json:"referenceVideos"`
-	ReferenceAudios []providerMedia           `json:"referenceAudios"`
-	Mask            *providerMedia            `json:"mask"`
-	Metadata        map[string]interface{}    `json:"metadata"`
-	Watermark       taskWatermarkRuntime      `json:"-"`
+	Mode               string                               `json:"mode"`
+	Prompt             string                               `json:"prompt"`
+	ImageDetail        agentruntime.VisionDetail            `json:"imageDetail,omitempty"`
+	Config             providerConfig                       `json:"config"`
+	ReferenceImages    []providerMedia                      `json:"referenceImages"`
+	ReferenceVideos    []providerMedia                      `json:"referenceVideos"`
+	ReferenceAudios    []providerMedia                      `json:"referenceAudios"`
+	Mask               *providerMedia                       `json:"mask"`
+	Metadata           map[string]interface{}               `json:"metadata"`
+	ImagePromptCommand *canvasImagePromptCommandV1          `json:"imagePromptCommand,omitempty"`
+	PromptModel        *imagePromptSpecialistModelBindingV1 `json:"promptModel,omitempty"`
+	Watermark          taskWatermarkRuntime                 `json:"-"`
 }
 
 type taskWatermarkRuntime struct {
@@ -127,6 +130,34 @@ type providerHTTPError struct {
 	StatusCode int
 	Status     string
 	Body       string
+}
+
+type preProviderDispatchFailure struct {
+	err error
+}
+
+func newPreProviderDispatchFailure(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &preProviderDispatchFailure{err: err}
+}
+
+func (failure *preProviderDispatchFailure) Error() string { return failure.err.Error() }
+func (failure *preProviderDispatchFailure) Unwrap() error { return failure.err }
+func (*preProviderDispatchFailure) BillableProviderDispatchNotStarted() bool {
+	return true
+}
+
+func classifyProviderDispatchFailure(err error) error {
+	if err == nil {
+		return nil
+	}
+	var networkFailure *net.OpError
+	if errors.As(err, &networkFailure) && networkFailure.Op == "dial" {
+		return newPreProviderDispatchFailure(err)
+	}
+	return err
 }
 
 type providerAnalyticsKey struct{}
@@ -271,7 +302,7 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, task model.Ta
 			input.Config.InterfaceType == string(model.ChannelInterfaceMiniMaxVideo) ||
 			input.Config.InterfaceType == string(model.ChannelInterfaceKlingVideo)
 		if err := s.hydrateGenerationMedia(task.UserID, &input, requirePublicMedia); err != nil {
-			return nil, err
+			return nil, newPreProviderDispatchFailure(fmt.Errorf("准备生成任务参考素材失败：%w", err))
 		}
 	}
 	switch input.Mode {
@@ -1321,6 +1352,7 @@ func doBinary(req *http.Request) ([]byte, string, error) {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		err = classifyProviderDispatchFailure(err)
 		if runtimeService != nil {
 			_ = runtimeService.RecordChannelResult(req.Context(), channelID, !errors.Is(err, context.Canceled))
 		}

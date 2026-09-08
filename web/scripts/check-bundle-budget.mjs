@@ -6,12 +6,17 @@ import {
     collectJavaScriptImportClosure,
     collectStaticAssetClosure,
     evaluateJavaScriptRequestBudget,
+    evaluateSizeBudget,
 } from "./bundle-budget-domain.mjs";
 
 const DIST_DIR = resolve(import.meta.dirname, "../dist");
 const MANIFEST_PATH = resolve(DIST_DIR, ".vite/manifest.json");
 
 const KIB = 1024;
+const WARNING_HEADROOM_RATIO = 0.01;
+// 2026-09-07：纳入已批准的画布图片 Specialist 工具，并保留约 1% 的静态 raw 迭代空间。
+// gzip 传输体积与请求数维持原硬门禁；后续放宽必须记录对应的生产能力变化。
+const CANVAS_CLOSURE_MAX_RAW_BYTES = 2850 * KIB;
 const THREE_FEATURE_ENTRIES = [
     {
         source: "src/components/canvas/director/canvas-director-workbench.tsx",
@@ -39,7 +44,7 @@ const CLOSURE_BUDGETS = [
     { sources: ["index.html", "src/pages/home/index.tsx"], label: "首页依赖闭包", maxRequests: 24, maxRawBytes: 1960 * KIB, maxGzipBytes: 660 * KIB },
     { sources: ["index.html", "src/pages/projects/index.tsx"], label: "项目页依赖闭包", maxRequests: 70, maxRawBytes: 1280 * KIB, maxGzipBytes: 440 * KIB },
     { sources: ["index.html", "src/pages/skills/index.tsx"], label: "技能页依赖闭包", maxRequests: 64, maxRawBytes: 1220 * KIB, maxGzipBytes: 420 * KIB },
-    { sources: ["index.html", "src/pages/canvas/project.tsx"], label: "画布依赖闭包", maxRequests: 135, maxRawBytes: 2820 * KIB, maxGzipBytes: 940 * KIB },
+    { sources: ["index.html", "src/pages/canvas/project.tsx"], label: "画布依赖闭包", maxRequests: 135, maxRawBytes: CANVAS_CLOSURE_MAX_RAW_BYTES, maxGzipBytes: 940 * KIB },
     { sources: ["index.html", "src/pages/admin/index.tsx"], label: "后台外壳依赖闭包", maxRequests: 66, maxRawBytes: 1400 * KIB, maxGzipBytes: 480 * KIB },
 ];
 const DEFERRED_ASSET_BOUNDARIES = [
@@ -76,12 +81,15 @@ function measureChunk(source, label, maxRawBytes, maxGzipBytes) {
     const assetPath = resolve(DIST_DIR, chunk.file);
     const rawBytes = statSync(assetPath).size;
     const gzipBytes = gzipSync(readFileSync(assetPath), { level: 9 }).byteLength;
-    const rawPassed = rawBytes <= maxRawBytes;
-    const gzipPassed = gzipBytes <= maxGzipBytes;
+    const rawBudget = evaluateSizeBudget(rawBytes, maxRawBytes, WARNING_HEADROOM_RATIO);
+    const gzipBudget = evaluateSizeBudget(gzipBytes, maxGzipBytes, WARNING_HEADROOM_RATIO);
+    const passed = rawBudget.passed && gzipBudget.passed;
+    const nearLimit = rawBudget.nearLimit || gzipBudget.nearLimit;
 
-    console.log(`${rawPassed && gzipPassed ? "PASS" : "FAIL"} ${label}: ` + `${formatKib(rawBytes)} raw / ${formatKib(gzipBytes)} gzip ` + `(预算 ${formatKib(maxRawBytes)} / ${formatKib(maxGzipBytes)})`);
+    console.log(`${passed ? nearLimit ? "WARN" : "PASS" : "FAIL"} ${label}: ` + `${formatKib(rawBytes)} raw / ${formatKib(gzipBytes)} gzip ` + `(预算 ${formatKib(maxRawBytes)} / ${formatKib(maxGzipBytes)})`);
+    if (nearLimit) console.warn(`WARN ${label}: 剩余空间不足 1%，新增静态依赖前必须先做按需加载或移除冗余`);
 
-    if (!rawPassed || !gzipPassed) {
+    if (!passed) {
         failures.push(`${label} 超出生产体积预算`);
     }
 }
@@ -101,17 +109,20 @@ function measureClosure(sources, label, maxRequests, maxRawBytes, maxGzipBytes) 
         gzipBytes += gzipSync(content, { level: 9 }).byteLength;
     }
 
-    const rawPassed = rawBytes <= maxRawBytes;
-    const gzipPassed = gzipBytes <= maxGzipBytes;
+    const rawBudget = evaluateSizeBudget(rawBytes, maxRawBytes, WARNING_HEADROOM_RATIO);
+    const gzipBudget = evaluateSizeBudget(gzipBytes, maxGzipBytes, WARNING_HEADROOM_RATIO);
     const requestBudget = evaluateJavaScriptRequestBudget(files, maxRequests);
+    const passed = rawBudget.passed && gzipBudget.passed && requestBudget.passed;
+    const nearLimit = rawBudget.nearLimit || gzipBudget.nearLimit;
     console.log(
-        `${rawPassed && gzipPassed && requestBudget.passed ? "PASS" : "FAIL"} ${label}: ` +
+        `${passed ? nearLimit ? "WARN" : "PASS" : "FAIL"} ${label}: ` +
             `${requestBudget.requestCount} 个 JS（预算 ${requestBudget.maxRequests}），` +
             `${formatKib(rawBytes)} raw / ${formatKib(gzipBytes)} gzip ` +
             `(预算 ${formatKib(maxRawBytes)} / ${formatKib(maxGzipBytes)})`,
     );
+    if (nearLimit) console.warn(`WARN ${label}: 剩余空间不足 1%，新增静态依赖前必须先做按需加载或移除冗余`);
     if (!requestBudget.passed) failures.push(`${label} 超出生产请求数预算`);
-    if (!rawPassed || !gzipPassed) failures.push(`${label} 超出生产体积预算`);
+    if (!rawBudget.passed || !gzipBudget.passed) failures.push(`${label} 超出生产体积预算`);
 }
 
 for (const budget of BUDGETS) {
